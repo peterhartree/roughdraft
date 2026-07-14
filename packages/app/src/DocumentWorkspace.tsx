@@ -307,7 +307,7 @@ export function DocumentWorkspace({
   backend,
 }: DocumentWorkspaceProps) {
   const [documentInteractionMode, setDocumentInteractionMode] =
-    useState<DocumentInteractionMode>("suggesting");
+    useState<DocumentInteractionMode>("editing");
   const [saveState, setSaveState] = useState<DocumentSaveState>("saved");
   const [fileCopyMenuOpen, setFileCopyMenuOpen] = useState(false);
   const [copiedFileAction, setCopiedFileAction] =
@@ -650,6 +650,13 @@ export function DocumentWorkspace({
                       <ActiveDocumentInteractionModeIcon className="size-[0.8rem]" />
                       <span className="truncate">
                         {activeDocumentInteractionMode?.label}
+                      </span>
+                      <span
+                        aria-hidden="true"
+                        data-testid="document-mode-shortcut-hint"
+                        className="ml-0.5 text-[0.62rem] font-normal tracking-normal text-stone-400 dark:text-slate-500"
+                      >
+                        ⌘⌥S
                       </span>
                     </SelectTrigger>
                     <SelectContent>
