@@ -27,20 +27,4 @@ test.describe("in-memory preview", () => {
       persistedStorageKeys: roughdraftStorageKeys.length,
     });
   });
-
-  test("does not show agent handoff controls without a watcher", async ({
-    page,
-  }) => {
-    await page.goto("/preview");
-
-    await expect(page.getByTestId("review-handoff-button")).toHaveCount(0);
-    await expect(page.getByTestId("document-save-status")).toHaveAttribute(
-      "aria-label",
-      "Saved",
-    );
-
-    logE2eEvent("preview.no-handoff-without-watcher", {
-      route: "/preview",
-    });
-  });
 });

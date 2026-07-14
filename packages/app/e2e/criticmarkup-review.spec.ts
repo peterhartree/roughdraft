@@ -114,9 +114,11 @@ test.describe("CriticMarkup review flows", () => {
     await selectRichText(page, "target text");
     await page.getByTestId("selection-menu-action-comment").waitFor();
 
-    const addSamplesPromise = sampleReviewLayoutAnimation(page);
-    await page.getByTestId("selection-menu-action-comment").click();
-    const addSamples = await addSamplesPromise;
+    const addSamples = await sampleReviewLayoutAnimation(page, () =>
+      page
+        .getByTestId("selection-menu-action-comment")
+        .evaluate((element) => (element as HTMLButtonElement).click()),
+    );
 
     expect(hasAnimatedReviewLayout(addSamples)).toBe(true);
     await page
@@ -125,9 +127,11 @@ test.describe("CriticMarkup review flows", () => {
     await page.getByTestId("comment-rail-c1-action-save").click();
 
     await page.getByTestId("comment-rail-c1-action-delete-thread").waitFor();
-    const removeSamplesPromise = sampleReviewLayoutAnimation(page);
-    await page.getByTestId("comment-rail-c1-action-delete-thread").click();
-    const removeSamples = await removeSamplesPromise;
+    const removeSamples = await sampleReviewLayoutAnimation(page, () =>
+      page
+        .getByTestId("comment-rail-c1-action-delete-thread")
+        .evaluate((element) => (element as HTMLButtonElement).click()),
+    );
 
     expect(hasAnimatedReviewLayout(removeSamples)).toBe(true);
 
@@ -218,25 +222,35 @@ type ReviewLayoutAnimationSample = {
   headerTranslateX: number;
 };
 
-async function sampleReviewLayoutAnimation(page: Page) {
-  return page.evaluate(async () => {
+async function sampleReviewLayoutAnimation(
+  page: Page,
+  trigger: () => Promise<void>,
+) {
+  await page.evaluate(() => {
     const readTranslateX = (element: Element | null) => {
       if (!(element instanceof HTMLElement)) return 0;
       const transform = getComputedStyle(element).transform;
       if (transform === "none") return 0;
       return new DOMMatrixReadOnly(transform).m41;
     };
-    const samples: ReviewLayoutAnimationSample[] = [];
+    const state = {
+      done: false,
+      samples: [] as ReviewLayoutAnimationSample[],
+    };
+    const reviewWindow = window as typeof window & {
+      __roughdraftReviewLayoutAnimation?: typeof state;
+    };
+    reviewWindow.__roughdraftReviewLayoutAnimation = state;
     const start = performance.now();
 
-    while (performance.now() - start < 500) {
+    const sample = () => {
       const shell = document.querySelector(
         '[data-testid="document-page-shell"]',
       );
       const header = document.querySelector(
         '[data-testid="document-page-header"]',
       );
-      samples.push({
+      state.samples.push({
         shellAnimating:
           shell instanceof HTMLElement &&
           shell.classList.contains("review-layout-grid--animating"),
@@ -246,9 +260,35 @@ async function sampleReviewLayoutAnimation(page: Page) {
         shellTranslateX: readTranslateX(shell),
         headerTranslateX: readTranslateX(header),
       });
-      await new Promise((resolve) => requestAnimationFrame(resolve));
-    }
+      if (performance.now() - start < 500) {
+        requestAnimationFrame(sample);
+      } else {
+        state.done = true;
+      }
+    };
+    requestAnimationFrame(sample);
+  });
 
+  await trigger();
+  await page.waitForFunction(
+    () =>
+      (
+        window as typeof window & {
+          __roughdraftReviewLayoutAnimation?: { done: boolean };
+        }
+      ).__roughdraftReviewLayoutAnimation?.done === true,
+  );
+
+  return page.evaluate(() => {
+    const reviewWindow = window as typeof window & {
+      __roughdraftReviewLayoutAnimation?: {
+        done: boolean;
+        samples: ReviewLayoutAnimationSample[];
+      };
+    };
+    const samples =
+      reviewWindow.__roughdraftReviewLayoutAnimation?.samples ?? [];
+    delete reviewWindow.__roughdraftReviewLayoutAnimation;
     return samples;
   });
 }

@@ -62,13 +62,6 @@ export class PreviewBackend implements StorageBackend {
     return this.page;
   }
 
-  async completeReview(
-    _relativePath: string,
-    _options?: { overallComment?: string },
-  ): Promise<{ delivered: boolean }> {
-    return { delivered: false };
-  }
-
   async saveAsset(file: File): Promise<StoredAsset> {
     const markdownPath = nextAssetPath(this.assets, file.name);
     const previewUrl = URL.createObjectURL(file);

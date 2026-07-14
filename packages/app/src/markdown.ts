@@ -400,7 +400,13 @@ export function createTurndownService(): TurndownService {
   service.addRule("compactListItem", {
     filter: "li",
     replacement(content, node, options) {
-      const trimmed = content
+      const normalizedContent =
+        (node as HTMLElement).getAttribute("data-type") === "taskItem"
+          ? content
+              .replace(/^(\[[ xX]\])[ \t]*(?:\r?\n[ \t]*)+(?=\S)/, "$1 ")
+              .trimEnd()
+          : content;
+      const trimmed = normalizedContent
         .replace(/^\n+/, "")
         .replace(/\n+$/, "\n")
         .replace(/\n/gm, "\n  ");

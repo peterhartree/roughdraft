@@ -1,7 +1,6 @@
 import {
   AlertTriangle,
   Check,
-  CheckCheck,
   ChevronDown,
   CodeXml,
   Copy,
@@ -28,7 +27,6 @@ import {
   SelectItemText,
   SelectTrigger,
 } from "./components/ui/select";
-import { Textarea } from "./components/ui/textarea";
 import {
   Tooltip,
   TooltipContent,
@@ -45,71 +43,13 @@ import {
   type DocumentSaveState,
   PageCard,
 } from "./PageCard";
-import { RobotsHighFiveToy } from "./RobotsHighFiveToy";
-import type { CompleteReviewOptions, Page, StorageBackend } from "./storage";
+import type { Page, StorageBackend } from "./storage";
 import { useReviewLayoutShiftAnimation } from "./useReviewLayoutShiftAnimation";
+import { getInteractionModeShortcutTarget } from "./workspace-shortcuts";
 
 type DiskChangeState = "clean" | "changed" | "conflict" | "paused";
-type ReviewHandoffState =
-  | "idle"
-  | "notifying"
-  | "notified"
-  | "undelivered"
-  | "error";
 type FileCopyAction = "path" | "filename" | "markdown" | "rich-text";
 const FILE_COPY_PREVIEW_MAX_LENGTH = 34;
-const reviewCompleteTitles = [
-  "Great work!",
-  "Nice one!",
-  "Well done!",
-  "All set!",
-  "Review complete!",
-  "That’ll do!",
-  "Lovely stuff!",
-  "Job done!",
-  "Done and dusted!",
-  "Nailed it!",
-  "Good stuff!",
-  "Sorted!",
-  "Cracking work!",
-  "Top work!",
-  "Brilliant!",
-  "Ace!",
-  "Spot on!",
-  "Beauty!",
-  "Too easy!",
-  "Good on ya!",
-  "You’re golden!",
-  "That’s the ticket!",
-  "And that’s that!",
-  "Wrapped!",
-  "In the bag!",
-  "Shipshape!",
-  "Right as rain!",
-] as const;
-type ReviewCompleteTitle = (typeof reviewCompleteTitles)[number];
-
-function buildReviewHandoffCopyMessage(documentPath: string) {
-  return `I am done reviewing this file: ${documentPath}`;
-}
-
-function getRandomReviewCompleteTitle(random: () => number = Math.random) {
-  const index = Math.floor(random() * reviewCompleteTitles.length);
-  return reviewCompleteTitles[Math.min(index, reviewCompleteTitles.length - 1)];
-}
-
-function getRandomReviewCompleteTitleExcept(
-  currentTitle: ReviewCompleteTitle,
-  random: () => number = Math.random,
-): ReviewCompleteTitle {
-  const otherTitles = reviewCompleteTitles.filter(
-    (title) => title !== currentTitle,
-  );
-  if (otherTitles.length === 0) return currentTitle;
-
-  const index = Math.floor(random() * otherTitles.length);
-  return otherTitles[Math.min(index, otherTitles.length - 1)];
-}
 
 const documentInteractionModeOptions = [
   { value: "editing", label: "Editing", Icon: PencilLine },
@@ -329,54 +269,6 @@ export function DocumentSaveStatusIndicator({
   );
 }
 
-export function isReviewHandoffDisabled({
-  saveState,
-  documentDiskChangeState,
-  reviewHandoffState,
-}: {
-  saveState: DocumentSaveState;
-  documentDiskChangeState: DiskChangeState;
-  reviewHandoffState: ReviewHandoffState;
-}) {
-  // Transient save states ("saving"/"unsaved") intentionally do NOT disable the
-  // button. Disabling on them dims the whole control on every keystroke while
-  // autosave debounces. Instead the button stays enabled and flushes the
-  // pending save on click, so the agent still receives the latest content.
-  return (
-    saveState === "error" ||
-    reviewHandoffState !== "idle" ||
-    documentDiskChangeState !== "clean"
-  );
-}
-
-export function getReviewHandoffButtonLabel({
-  reviewHandoffState,
-  documentChangedSinceOpen,
-}: {
-  reviewHandoffState: ReviewHandoffState;
-  documentChangedSinceOpen: boolean;
-}) {
-  return reviewHandoffState === "notifying"
-    ? "Sending"
-    : reviewHandoffState === "notified"
-      ? "Sent"
-      : reviewHandoffState === "error" || reviewHandoffState === "undelivered"
-        ? "Not sent"
-        : documentChangedSinceOpen
-          ? "I'm done"
-          : "Approve";
-}
-
-export function shouldLatchDocumentChangedSinceOpen({
-  isDirty,
-  documentChangeTrackingReady,
-}: {
-  isDirty: boolean;
-  documentChangeTrackingReady: boolean;
-}) {
-  return isDirty && documentChangeTrackingReady;
-}
-
 interface DocumentWorkspaceProps {
   documentPage: Page | null;
   activeDocumentPath: string | null;
@@ -393,9 +285,6 @@ interface DocumentWorkspaceProps {
   onReloadDocumentFromDisk: () => void | Promise<void>;
   onKeepEditingWithoutAutosave: () => void;
   onOverwriteDocumentOnDisk: () => void | Promise<void>;
-  onCompleteReview: (
-    options?: CompleteReviewOptions,
-  ) => Promise<{ delivered: boolean }>;
   backend: StorageBackend | null;
 }
 
@@ -415,30 +304,16 @@ export function DocumentWorkspace({
   onReloadDocumentFromDisk,
   onKeepEditingWithoutAutosave,
   onOverwriteDocumentOnDisk,
-  onCompleteReview,
   backend,
 }: DocumentWorkspaceProps) {
   const [documentInteractionMode, setDocumentInteractionMode] =
     useState<DocumentInteractionMode>("suggesting");
   const [saveState, setSaveState] = useState<DocumentSaveState>("saved");
-  const [reviewHandoffState, setReviewHandoffState] =
-    useState<ReviewHandoffState>("idle");
-  const [reviewWatcherCount, setReviewWatcherCount] = useState(0);
-  const [reviewHandoffPopoverOpen, setReviewHandoffPopoverOpen] =
-    useState(false);
-  const [reviewCompleteTitle, setReviewCompleteTitle] = useState(() =>
-    getRandomReviewCompleteTitle(),
-  );
   const [fileCopyMenuOpen, setFileCopyMenuOpen] = useState(false);
   const [copiedFileAction, setCopiedFileAction] =
     useState<FileCopyAction | null>(null);
-  const [overallComment, setOverallComment] = useState("");
-  const [documentChangedSinceOpen, setDocumentChangedSinceOpen] =
-    useState(false);
-  const sawNoWatcherAfterNotifiedRef = useRef(false);
   const copiedFileActionTimeoutRef = useRef<number | null>(null);
   const saveControllerRef = useRef<DocumentSaveController | null>(null);
-  const documentChangeTrackingReadyRef = useRef(false);
 
   const handleSaveStateChange = useCallback(
     (state: DocumentSaveState) => {
@@ -464,77 +339,6 @@ export function DocumentWorkspace({
   }, [documentPage?.content]);
 
   useEffect(() => {
-    const documentIdentity = `${activeDocumentPath ?? ""}:${documentPage?.id ?? ""}`;
-    if (!documentIdentity) return;
-    documentChangeTrackingReadyRef.current = false;
-    setReviewHandoffState("idle");
-    setReviewHandoffPopoverOpen(false);
-    setDocumentChangedSinceOpen(false);
-    const readyTimer = window.setTimeout(() => {
-      documentChangeTrackingReadyRef.current = true;
-    }, 0);
-    return () => window.clearTimeout(readyTimer);
-  }, [activeDocumentPath, documentPage?.id]);
-
-  useEffect(() => {
-    if (!backend?.getReviewWatchStatus || !activeDocumentPath) {
-      setReviewWatcherCount(0);
-      return;
-    }
-
-    let cancelled = false;
-    const refreshWatchStatus = async () => {
-      try {
-        const status = await backend.getReviewWatchStatus?.(activeDocumentPath);
-        if (!cancelled) {
-          setReviewWatcherCount(status?.watcherCount ?? 0);
-        }
-      } catch {
-        if (!cancelled) {
-          setReviewWatcherCount(0);
-        }
-      }
-    };
-
-    void refreshWatchStatus();
-    const interval = window.setInterval(refreshWatchStatus, 1500);
-    return () => {
-      cancelled = true;
-      window.clearInterval(interval);
-    };
-  }, [activeDocumentPath, backend]);
-
-  useEffect(() => {
-    if (reviewHandoffState === "undelivered" && reviewWatcherCount > 0) {
-      setReviewHandoffState("idle");
-      return;
-    }
-
-    if (reviewHandoffState !== "notified") {
-      sawNoWatcherAfterNotifiedRef.current = false;
-      return;
-    }
-
-    if (reviewWatcherCount === 0) {
-      sawNoWatcherAfterNotifiedRef.current = true;
-      return;
-    }
-
-    if (sawNoWatcherAfterNotifiedRef.current) {
-      sawNoWatcherAfterNotifiedRef.current = false;
-      setReviewHandoffState("idle");
-    }
-  }, [reviewHandoffState, reviewWatcherCount]);
-
-  useEffect(() => {
-    if (reviewHandoffState === "notified") {
-      setReviewCompleteTitle((currentTitle) =>
-        getRandomReviewCompleteTitleExcept(currentTitle),
-      );
-    }
-  }, [reviewHandoffState]);
-
-  useEffect(() => {
     return () => {
       if (copiedFileActionTimeoutRef.current !== null) {
         window.clearTimeout(copiedFileActionTimeoutRef.current);
@@ -546,6 +350,17 @@ export function DocumentWorkspace({
     if (!documentPage) return;
 
     const handleKeyDown = (event: KeyboardEvent) => {
+      const shortcutMode = getInteractionModeShortcutTarget(
+        event,
+        documentInteractionMode,
+      );
+      if (shortcutMode) {
+        event.preventDefault();
+        event.stopPropagation();
+        setDocumentInteractionMode(shortcutMode);
+        return;
+      }
+
       const isSaveShortcut =
         event.key.toLowerCase() === "s" &&
         (event.metaKey || event.ctrlKey) &&
@@ -565,55 +380,7 @@ export function DocumentWorkspace({
     return () => {
       window.removeEventListener("keydown", handleKeyDown, { capture: true });
     };
-  }, [documentDiskChangeState, documentPage]);
-
-  const handleCompleteReview = useCallback(
-    async (options?: CompleteReviewOptions) => {
-      if (!activeDocumentPath || reviewHandoffState === "notifying") return;
-
-      setReviewHandoffState("notifying");
-      try {
-        // The button stays enabled while autosave is still pending, so make
-        // sure any debounced edits are persisted before handing off.
-        const flushResult = await saveControllerRef.current?.flushSave();
-        if (flushResult && flushResult.status === "error") {
-          throw flushResult.error;
-        }
-
-        const result = await onCompleteReview(options);
-        if (result.delivered) {
-          setReviewWatcherCount(0);
-          setReviewHandoffState("notified");
-          setOverallComment("");
-          setReviewHandoffPopoverOpen(true);
-        } else {
-          setReviewWatcherCount(0);
-          setReviewHandoffState("undelivered");
-          setReviewHandoffPopoverOpen(true);
-        }
-      } catch (error) {
-        console.error("Failed to complete review:", error);
-        setReviewHandoffState("error");
-        setReviewHandoffPopoverOpen(true);
-      }
-    },
-    [activeDocumentPath, onCompleteReview, reviewHandoffState],
-  );
-
-  const handleDocumentDirtyStateChange = useCallback(
-    (isDirty: boolean) => {
-      if (
-        shouldLatchDocumentChangedSinceOpen({
-          isDirty,
-          documentChangeTrackingReady: documentChangeTrackingReadyRef.current,
-        })
-      ) {
-        setDocumentChangedSinceOpen(true);
-      }
-      onDocumentDirtyStateChange(isDirty);
-    },
-    [onDocumentDirtyStateChange],
-  );
+  }, [documentDiskChangeState, documentInteractionMode, documentPage]);
 
   const handleCopyFileMenuAction = useCallback(
     async (action: FileCopyAction) => {
@@ -673,54 +440,16 @@ export function DocumentWorkspace({
     documentDiskChangeState === "clean"
       ? null
       : conflictNoticeCopy[documentDiskChangeState];
-  const showReviewHandoffButton =
-    !!activeDocumentPath &&
-    (reviewWatcherCount > 0 || reviewHandoffState !== "idle");
-  const reviewHandoffButtonLabel = getReviewHandoffButtonLabel({
-    reviewHandoffState,
-    documentChangedSinceOpen,
-  });
-  const ReviewHandoffButtonIcon =
-    reviewHandoffState === "notifying"
-      ? Loader2
-      : reviewHandoffState === "error" || reviewHandoffState === "undelivered"
-        ? AlertTriangle
-        : null;
-  const reviewHandoffStatusTitle =
-    reviewHandoffState === "undelivered"
-      ? "No agent is watching now"
-      : reviewHandoffState === "error"
-        ? "Could not notify agent"
-        : reviewCompleteTitle;
-  const reviewHandoffStatusBody =
-    reviewHandoffState === "undelivered"
-      ? "The handoff was not delivered because the watcher is no longer connected."
-      : reviewHandoffState === "error"
-        ? "Roughdraft could not send the handoff. Check that the local server is still running."
-        : null;
-  const reviewHandoffCopyMessage = buildReviewHandoffCopyMessage(
-    activeDocumentPath ?? documentFilenameLabel,
-  );
-  const reviewHandoffDisabled = isReviewHandoffDisabled({
-    saveState,
-    documentDiskChangeState,
-    reviewHandoffState,
-  });
-  const reviewHandoffButtonDisabled =
-    reviewHandoffDisabled && reviewHandoffState !== "notified";
-  const trimmedOverallComment = overallComment.trim();
 
   return (
-    <div
-      className={cn(
-        "min-h-0 flex-1 overflow-y-auto px-8 pb-8 sm:px-12",
-        conflictNotice ? "pt-40 sm:pt-28" : "pt-10",
-      )}
-    >
+    <div className="min-h-0 flex-1 overflow-y-auto px-8 pb-8 sm:px-12">
       <RemoteSessionBanner backend={backend} />
       {documentPage ? (
         <div
-          className="fixed top-3 left-3 z-[60]"
+          className={cn(
+            "fixed left-3 z-[60]",
+            conflictNotice ? "bottom-3" : "top-3",
+          )}
           data-testid="document-save-status-corner"
         >
           <DocumentSaveStatusIndicator
@@ -729,193 +458,6 @@ export function DocumentWorkspace({
           />
         </div>
       ) : null}
-      <div
-        className={cn(
-          "fixed right-3 z-[60] flex max-w-[min(16rem,calc(100vw-1rem))] flex-col items-end gap-1.5",
-          conflictNotice ? "top-[19rem] sm:top-[7rem]" : "top-3",
-        )}
-        data-testid="document-status-stack"
-        data-document-status-stack="true"
-      >
-        <div className="flex max-w-full items-center justify-end gap-1.5">
-          {showReviewHandoffButton ? (
-            <Popover
-              open={reviewHandoffPopoverOpen}
-              onOpenChange={setReviewHandoffPopoverOpen}
-            >
-              <div
-                data-testid="review-handoff-split-button"
-                className={cn(
-                  "relative flex items-center overflow-hidden rounded-[7px] shadow-[0_10px_28px_rgba(0,0,0,0.18)] transition-opacity after:pointer-events-none after:absolute after:top-px after:right-8 after:bottom-px after:z-10 after:w-px after:bg-[#4a4038] after:content-[''] dark:after:bg-slate-600",
-                  reviewHandoffDisabled && "opacity-50",
-                )}
-              >
-                <Button
-                  type="button"
-                  data-testid="review-handoff-button"
-                  size="lg"
-                  className="h-9 rounded-r-none rounded-l-[7px] border-0 bg-[#2B2420] px-3 text-sm font-bold text-white hover:bg-[#3a322b] focus-visible:ring-slate-300 disabled:opacity-100 dark:bg-slate-700 dark:text-slate-100 dark:hover:bg-slate-600 dark:focus-visible:ring-slate-600"
-                  disabled={reviewHandoffButtonDisabled}
-                  aria-disabled={reviewHandoffButtonDisabled || undefined}
-                  onClick={() => {
-                    if (reviewHandoffState === "notified") {
-                      setReviewHandoffPopoverOpen(true);
-                      return;
-                    }
-
-                    void handleCompleteReview(
-                      trimmedOverallComment
-                        ? { overallComment: trimmedOverallComment }
-                        : undefined,
-                    );
-                  }}
-                >
-                  {ReviewHandoffButtonIcon ? (
-                    <ReviewHandoffButtonIcon
-                      className={cn(
-                        "size-4",
-                        reviewHandoffState === "notifying" && "animate-spin",
-                      )}
-                    />
-                  ) : null}
-                  {reviewHandoffButtonLabel}
-                </Button>
-                <PopoverTrigger
-                  render={
-                    <Button
-                      type="button"
-                      data-testid="review-handoff-comment-trigger"
-                      size="icon-lg"
-                      className="h-9 w-8 rounded-l-none rounded-r-[7px] border-0 bg-[#2B2420] text-white hover:bg-[#3a322b] focus-visible:ring-slate-300 disabled:opacity-100 dark:bg-slate-700 dark:text-slate-100 dark:hover:bg-slate-600 dark:focus-visible:ring-slate-600"
-                      disabled={reviewHandoffDisabled}
-                      aria-label="Add overall handoff comment"
-                    >
-                      <ChevronDown className="size-4" />
-                    </Button>
-                  }
-                />
-              </div>
-              <PopoverContent
-                className={reviewHandoffState === "idle" ? undefined : "pt-0"}
-                aria-label={
-                  reviewHandoffState === "idle"
-                    ? "Review handoff comment"
-                    : "Review handoff status"
-                }
-                data-testid={
-                  reviewHandoffState === "idle"
-                    ? "review-handoff-comment-popover"
-                    : "review-handoff-status"
-                }
-              >
-                {reviewHandoffState === "idle" ? (
-                  <form
-                    className="space-y-3"
-                    onSubmit={(event) => {
-                      event.preventDefault();
-                      void handleCompleteReview({
-                        overallComment: trimmedOverallComment,
-                      });
-                    }}
-                  >
-                    <div>
-                      <Textarea
-                        id="review-handoff-overall-comment"
-                        data-testid="review-handoff-overall-comment"
-                        aria-label="Overall comment"
-                        placeholder="Overall comment"
-                        value={overallComment}
-                        onChange={(event) =>
-                          setOverallComment(event.currentTarget.value)
-                        }
-                        maxLength={4000}
-                        rows={4}
-                        className="min-h-24 resize-none"
-                      />
-                    </div>
-                    <Button
-                      type="submit"
-                      data-testid="review-handoff-submit-comment"
-                      size="lg"
-                      className="w-full rounded-[7px] bg-black text-sm font-bold text-white hover:bg-black/85 focus-visible:ring-black/25 dark:bg-white dark:text-black dark:hover:bg-white/90"
-                      disabled={!trimmedOverallComment}
-                    >
-                      <CheckCheck className="size-4" />
-                      Submit with comment
-                    </Button>
-                  </form>
-                ) : (
-                  <div>
-                    <div className="mb-3 flex h-[170px] items-center justify-center overflow-hidden">
-                      <RobotsHighFiveToy
-                        onHighFive={() =>
-                          setReviewCompleteTitle((currentTitle) =>
-                            getRandomReviewCompleteTitleExcept(currentTitle),
-                          )
-                        }
-                      />
-                    </div>
-                    <div className="flex items-start gap-3">
-                      {reviewHandoffState === "notifying" ||
-                      reviewHandoffState === "error" ||
-                      reviewHandoffState === "undelivered" ? (
-                        <span className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-full bg-black text-white dark:bg-white dark:text-black">
-                          {reviewHandoffState === "notifying" ? (
-                            <Loader2 className="size-4 animate-spin" />
-                          ) : (
-                            <AlertTriangle className="size-4" />
-                          )}
-                        </span>
-                      ) : null}
-                      <div>
-                        <div className="text-xl font-semibold leading-6 text-stone-950 dark:text-slate-50">
-                          {reviewHandoffStatusTitle}
-                        </div>
-                        {reviewHandoffStatusBody ? (
-                          <p className="mt-1 text-sm leading-6 text-stone-600 dark:text-slate-300">
-                            {reviewHandoffStatusBody}
-                          </p>
-                        ) : (
-                          <div className="mt-1">
-                            <p className="text-sm leading-[1.32rem] text-stone-500 dark:text-slate-400">
-                              Your agent is now working in the background on
-                              this, in all likelihood. If our signal didn't make
-                              it, just{" "}
-                              <button
-                                type="button"
-                                data-testid="review-handoff-copy-message"
-                                className="font-normal text-inherit underline decoration-stone-300 underline-offset-4 hover:decoration-stone-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-stone-950/25 dark:decoration-slate-600 dark:hover:decoration-slate-200 dark:focus-visible:ring-slate-50/30"
-                                onClick={() =>
-                                  void writePlainTextToClipboard(
-                                    reviewHandoffCopyMessage,
-                                  )
-                                }
-                              >
-                                click here
-                              </button>{" "}
-                              to copy a line you can send it to keep going.
-                            </p>
-                            <Button
-                              type="button"
-                              data-testid="review-handoff-close-window"
-                              size="lg"
-                              variant="outline"
-                              className="mt-4 w-full rounded-[7px] text-sm font-semibold"
-                              onClick={() => window.close()}
-                            >
-                              Close window
-                            </Button>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </PopoverContent>
-            </Popover>
-          ) : null}
-        </div>
-      </div>
       {conflictNotice ? (
         <div
           data-testid="file-conflict-notice"
@@ -976,13 +518,18 @@ export function DocumentWorkspace({
           </div>
         </div>
       ) : null}
-      <div className="mx-auto min-h-full max-w-[1080px]">
+      <div
+        className={cn(
+          "mx-auto min-h-full max-w-[1080px]",
+          conflictNotice ? "pt-40 sm:pt-28" : "pt-10",
+        )}
+      >
         {documentPage ? (
           <div
             ref={documentHeaderRef}
             data-testid="document-page-header"
             className={cn(
-              "review-layout-grid document-page-shell mb-2 text-[0.62rem] font-medium tracking-[0.01em] text-stone-400",
+              "review-layout-grid document-page-shell sticky top-0 z-40 -mx-2 mb-2 bg-[#FCFCFC]/95 px-2 py-2 text-[0.62rem] font-medium tracking-[0.01em] text-stone-400 backdrop-blur-sm dark:bg-background/95",
               !documentHasComments &&
                 "review-layout-grid--centered document-page-shell-no-comments",
             )}
@@ -1097,6 +644,7 @@ export function DocumentWorkspace({
                     <SelectTrigger
                       data-testid="document-mode-trigger"
                       aria-label="Document mode"
+                      title="Toggle Editing/Suggesting: ⌘⌥S"
                       className="h-[1.5rem] gap-1.5 px-1 text-[0.8rem] leading-[1.25rem] font-medium tracking-[0.01em] text-stone-400 dark:text-slate-400 hover:text-stone-500 dark:hover:text-slate-300"
                     >
                       <ActiveDocumentInteractionModeIcon className="size-[0.8rem]" />
@@ -1140,7 +688,7 @@ export function DocumentWorkspace({
               interactionMode={documentInteractionMode}
               backend={backend}
               onCommentRailPresenceChange={setDocumentHasComments}
-              onDirtyStateChange={handleDocumentDirtyStateChange}
+              onDirtyStateChange={onDocumentDirtyStateChange}
               onLocalContentChange={onDocumentLocalContentChange}
               onSaveControllerChange={(controller) => {
                 saveControllerRef.current = controller;

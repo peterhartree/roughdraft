@@ -1,10 +1,10 @@
+import { spawn, spawnSync } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { spawn, spawnSync } from "node:child_process";
-import { fileURLToPath } from "node:url";
 import { setTimeout as sleep } from "node:timers/promises";
+import { fileURLToPath } from "node:url";
 import {
   type RfmDiagnostic,
   validateRoughdraftMarkdown,
@@ -34,7 +34,6 @@ const KNOWN_COMMANDS = [
   "start",
   "status",
   "stop",
-  "watch",
   "mcp",
   "doctor",
   "help",
@@ -88,17 +87,13 @@ export interface CliDependencies {
   isProcessRunning: (pid: number) => boolean;
   stopProcess: (pid: number) => Promise<void>;
   openUrl: (url: string) => OpenMode;
+  openBrowserUrl: (url: string) => OpenMode;
   resolveUpdateStatus: () => Promise<UpdateStatus>;
   log: (message: string) => void;
   error: (message: string) => void;
 }
 
-type OpenMode =
-  | "browser"
-  | "chrome-app"
-  | "disabled"
-  | "existing-window"
-  | "none";
+type OpenMode = "browser" | "desktop-app" | "disabled" | "none";
 
 interface EnsureRunningResult {
   server: {
@@ -142,31 +137,14 @@ interface ParsedCli {
 
 interface ParsedCommandOptions {
   all: boolean;
-  batchWindowSeconds: number;
   help: boolean;
   json: boolean;
   noOpen: boolean;
-  noWatch: boolean;
   printUrl: boolean;
   port?: string;
-  replay: boolean;
   stateDir?: string;
   stateFile?: string;
-  timeoutSeconds?: number;
-  watch: boolean;
   positionals: string[];
-}
-
-interface ParsedWatchOptions {
-  batchWindowSeconds: number;
-  help: boolean;
-  json: boolean;
-  positionals: string[];
-  replay: boolean;
-  serverUrl?: string;
-  stateDir?: string;
-  stateFile?: string;
-  timeoutSeconds?: number;
 }
 
 const currentServerRoot = path.resolve(
@@ -265,20 +243,15 @@ function parseCommandOptions(
     allowAll?: boolean;
     allowOpen?: boolean;
     allowPort?: boolean;
-    allowWatch?: boolean;
   },
 ): ParsedCommandOptions {
   const parsed: ParsedCommandOptions = {
     all: false,
-    batchWindowSeconds: 0.25,
     help: false,
     json: false,
     noOpen: false,
-    noWatch: false,
     positionals: [],
     printUrl: false,
-    replay: false,
-    watch: false,
   };
 
   for (let index = 0; index < args.length; index += 1) {
@@ -315,58 +288,6 @@ function parseCommandOptions(
       if (!options.allowOpen) throw new Error(`Unknown flag: ${arg}`);
       parsed.printUrl = true;
       parsed.noOpen = true;
-      continue;
-    }
-
-    if (arg === "--watch") {
-      if (!options.allowWatch) throw new Error(`Unknown flag: ${arg}`);
-      parsed.watch = true;
-      continue;
-    }
-
-    if (arg === "--no-watch") {
-      if (!options.allowWatch) throw new Error(`Unknown flag: ${arg}`);
-      parsed.noWatch = true;
-      continue;
-    }
-
-    if (arg === "--replay") {
-      if (!options.allowWatch) throw new Error(`Unknown flag: ${arg}`);
-      parsed.replay = true;
-      continue;
-    }
-
-    if (arg === "--timeout") {
-      if (!options.allowWatch) throw new Error(`Unknown flag: ${arg}`);
-      const next = takeFlagValue(args, index, arg);
-      parsed.timeoutSeconds = parsePositiveNumber(next.value, arg);
-      index = next.nextIndex;
-      continue;
-    }
-
-    if (arg.startsWith("--timeout=")) {
-      if (!options.allowWatch) throw new Error(`Unknown flag: --timeout`);
-      parsed.timeoutSeconds = parsePositiveNumber(
-        arg.slice("--timeout=".length),
-        "--timeout",
-      );
-      continue;
-    }
-
-    if (arg === "--batch-window") {
-      if (!options.allowWatch) throw new Error(`Unknown flag: ${arg}`);
-      const next = takeFlagValue(args, index, arg);
-      parsed.batchWindowSeconds = parsePositiveNumber(next.value, arg);
-      index = next.nextIndex;
-      continue;
-    }
-
-    if (arg.startsWith("--batch-window=")) {
-      if (!options.allowWatch) throw new Error(`Unknown flag: --batch-window`);
-      parsed.batchWindowSeconds = parsePositiveNumber(
-        arg.slice("--batch-window=".length),
-        "--batch-window",
-      );
       continue;
     }
 
@@ -435,126 +356,6 @@ function applyCliEnvOverrides(
   };
 }
 
-function parseWatchOptions(args: string[]): ParsedWatchOptions {
-  const parsed: ParsedWatchOptions = {
-    batchWindowSeconds: 0.25,
-    help: false,
-    json: false,
-    positionals: [],
-    replay: false,
-  };
-
-  for (let index = 0; index < args.length; index += 1) {
-    const arg = args[index];
-
-    if (arg === "--") {
-      parsed.positionals.push(...args.slice(index + 1));
-      break;
-    }
-
-    if (arg === "-h" || arg === "--help") {
-      parsed.help = true;
-      continue;
-    }
-
-    if (arg === "--json") {
-      parsed.json = true;
-      continue;
-    }
-
-    if (arg === "--replay") {
-      parsed.replay = true;
-      continue;
-    }
-
-    if (arg === "--timeout") {
-      const next = takeFlagValue(args, index, arg);
-      parsed.timeoutSeconds = parsePositiveNumber(next.value, arg);
-      index = next.nextIndex;
-      continue;
-    }
-
-    if (arg.startsWith("--timeout=")) {
-      parsed.timeoutSeconds = parsePositiveNumber(
-        arg.slice("--timeout=".length),
-        "--timeout",
-      );
-      continue;
-    }
-
-    if (arg === "--batch-window") {
-      const next = takeFlagValue(args, index, arg);
-      parsed.batchWindowSeconds = parsePositiveNumber(next.value, arg);
-      index = next.nextIndex;
-      continue;
-    }
-
-    if (arg.startsWith("--batch-window=")) {
-      parsed.batchWindowSeconds = parsePositiveNumber(
-        arg.slice("--batch-window=".length),
-        "--batch-window",
-      );
-      continue;
-    }
-
-    if (arg === "--state-file") {
-      const next = takeFlagValue(args, index, arg);
-      parsed.stateFile = next.value;
-      index = next.nextIndex;
-      continue;
-    }
-
-    if (arg.startsWith("--state-file=")) {
-      parsed.stateFile = arg.slice("--state-file=".length);
-      continue;
-    }
-
-    if (arg === "--state-dir") {
-      const next = takeFlagValue(args, index, arg);
-      parsed.stateDir = next.value;
-      index = next.nextIndex;
-      continue;
-    }
-
-    if (arg.startsWith("--state-dir=")) {
-      parsed.stateDir = arg.slice("--state-dir=".length);
-      continue;
-    }
-
-    if (arg.startsWith("-")) {
-      throw new Error(`Unknown flag: ${arg}`);
-    }
-
-    parsed.positionals.push(arg);
-  }
-
-  return parsed;
-}
-
-function parsePositiveNumber(value: string, flag: string): number {
-  const parsed = Number.parseFloat(value);
-  if (!Number.isFinite(parsed) || parsed < 0) {
-    throw new Error(`${flag} must be a positive number.`);
-  }
-  return parsed;
-}
-
-function applyWatchEnvOverrides(
-  deps: CliDependencies,
-  options: ParsedWatchOptions,
-): CliDependencies {
-  return {
-    ...deps,
-    env: {
-      ...deps.env,
-      ...(options.stateDir ? { ROUGHDRAFT_STATE_DIR: options.stateDir } : {}),
-      ...(options.stateFile
-        ? { ROUGHDRAFT_STATE_FILE: options.stateFile }
-        : {}),
-    },
-  };
-}
-
 function isKnownCommand(value: string): value is KnownCommand {
   return (KNOWN_COMMANDS as readonly string[]).includes(value);
 }
@@ -602,18 +403,6 @@ function suggestCommand(command: string): string | null {
 type SpawnSyncCommand = typeof spawnSync;
 type OpenDetachedCommand = typeof openDetached;
 
-function hasChromeAppMode(
-  platform: NodeJS.Platform = process.platform,
-  spawnSyncCommand: SpawnSyncCommand = spawnSync,
-) {
-  if (platform !== "darwin") return false;
-  return (
-    spawnSyncCommand("open", ["-Ra", "Google Chrome"], {
-      stdio: "ignore",
-    }).status === 0
-  );
-}
-
 function openDetached(command: string, args: string[]) {
   const child = spawn(command, args, {
     detached: true,
@@ -621,53 +410,6 @@ function openDetached(command: string, args: string[]) {
     windowsHide: true,
   });
   child.unref();
-}
-
-function resolveDefaultBrowserBundleId(
-  platform: NodeJS.Platform = process.platform,
-  spawnSyncCommand: SpawnSyncCommand = spawnSync,
-): string | null {
-  if (platform !== "darwin") return null;
-
-  const result = spawnSyncCommand(
-    "plutil",
-    [
-      "-extract",
-      "LSHandlers",
-      "json",
-      "-o",
-      "-",
-      path.join(
-        os.homedir(),
-        "Library/Preferences/com.apple.LaunchServices/com.apple.launchservices.secure.plist",
-      ),
-    ],
-    {
-      encoding: "utf8",
-      windowsHide: true,
-    },
-  );
-
-  if (result.status !== 0) return null;
-
-  try {
-    const handlers = JSON.parse(result.stdout) as Array<{
-      LSHandlerRoleAll?: string;
-      LSHandlerURLScheme?: string;
-    }>;
-    return (
-      handlers
-        .find((handler) => handler.LSHandlerURLScheme === "http")
-        ?.LSHandlerRoleAll?.trim()
-        .toLowerCase() ?? null
-    );
-  } catch {
-    return null;
-  }
-}
-
-function isChromeBundleId(bundleId: string | null): boolean {
-  return bundleId === "com.google.chrome";
 }
 
 export function createDefaultOpenUrl({
@@ -686,43 +428,61 @@ export function createDefaultOpenUrl({
       return "disabled";
     }
 
-    if (
-      isChromeBundleId(
-        resolveDefaultBrowserBundleId(platform, spawnSyncCommand),
-      )
-    ) {
-      if (hasChromeAppMode(platform, spawnSyncCommand)) {
-        openDetachedCommand("open", [
-          "-na",
-          "Google Chrome",
-          "--args",
-          `--app=${url}`,
-        ]);
-        return "chrome-app";
+    if (platform === "darwin") {
+      const desktopResult = spawnSyncCommand(
+        "open",
+        ["-b", "is.pjh.roughdraft"],
+        { stdio: "ignore", windowsHide: true },
+      );
+      if (desktopResult.status === 0) {
+        return "desktop-app";
       }
     }
-
-    if (platform === "darwin") {
-      openDetachedCommand("open", [url]);
-      return "browser";
-    }
-
-    if (platform === "linux") {
-      openDetachedCommand("xdg-open", [url]);
-      return "browser";
-    }
-
-    if (platform === "win32") {
-      openDetachedCommand("cmd", ["/c", "start", "", url]);
-      return "browser";
-    }
-
-    return "none";
+    return openUrlInDefaultBrowser(platform, openDetachedCommand, url);
   };
+}
+
+export function createDefaultBrowserOpenUrl({
+  env = process.env,
+  platform = process.platform,
+  openDetachedCommand = openDetached,
+}: {
+  env?: NodeJS.ProcessEnv;
+  platform?: NodeJS.Platform;
+  openDetachedCommand?: OpenDetachedCommand;
+} = {}): (url: string) => OpenMode {
+  return (url: string) => {
+    if (env.ROUGHDRAFT_NO_OPEN === "1") return "disabled";
+    return openUrlInDefaultBrowser(platform, openDetachedCommand, url);
+  };
+}
+
+function openUrlInDefaultBrowser(
+  platform: NodeJS.Platform,
+  openDetachedCommand: OpenDetachedCommand,
+  url: string,
+): OpenMode {
+  if (platform === "darwin") {
+    openDetachedCommand("open", [url]);
+    return "browser";
+  }
+  if (platform === "linux") {
+    openDetachedCommand("xdg-open", [url]);
+    return "browser";
+  }
+  if (platform === "win32") {
+    openDetachedCommand("cmd", ["/c", "start", "", url]);
+    return "browser";
+  }
+  return "none";
 }
 
 function defaultOpenUrl(url: string): OpenMode {
   return createDefaultOpenUrl()(url);
+}
+
+function defaultOpenBrowserUrl(url: string): OpenMode {
+  return createDefaultBrowserOpenUrl()(url);
 }
 
 function defaultIsProcessRunning(pid: number): boolean {
@@ -819,6 +579,8 @@ export function createCliDependencies(
     isProcessRunning: overrides.isProcessRunning ?? defaultIsProcessRunning,
     stopProcess: overrides.stopProcess ?? defaultStopProcess,
     openUrl: overrides.openUrl ?? defaultOpenUrl,
+    openBrowserUrl:
+      overrides.openBrowserUrl ?? overrides.openUrl ?? defaultOpenBrowserUrl,
     resolveUpdateStatus:
       overrides.resolveUpdateStatus ??
       (() => resolveUpdateStatus({ fetchImpl })),
@@ -846,11 +608,10 @@ function printHelp(log: (message: string) => void) {
   log("  roughdraft <path>");
   log("");
   log("Commands:");
-  log("  open <path>        Open a Markdown file and wait for Done Reviewing");
+  log("  open <path>        Open one Markdown file in Roughdraft");
   log("  start              Start or reuse the background server");
   log("  status             Show server status");
   log("  stop               Stop the managed background server");
-  log("  watch <path>       Wait for a Done Reviewing event");
   log("  mcp                Start the experimental stdio MCP server");
   log("  doctor [path]      Diagnose setup or validate Markdown");
   log("  help agent         Print the agent setup prompt");
@@ -868,8 +629,6 @@ function printHelp(log: (message: string) => void) {
   log("  roughdraft open ./draft.md");
   log("  roughdraft open ./draft.md --print-url");
   log("  roughdraft open ./draft.md --json");
-  log("  roughdraft open ./draft.md --no-watch");
-  log("  roughdraft watch ./draft.md --json");
   log("  roughdraft status --json");
   log("");
   log(`Agent setup: ${AGENT_SETUP_URL}`);
@@ -882,13 +641,9 @@ function printCommandHelp(
 ) {
   if (command === "open") {
     log("Usage:");
-    log(
-      "  roughdraft open <path> [--no-open] [--no-watch] [--print-url] [--port <port>]",
-    );
+    log("  roughdraft open <path> [--no-open] [--print-url] [--port <port>]");
     log("");
-    log(
-      "Opens one Markdown file and waits for Done Reviewing. Starts Roughdraft if needed.",
-    );
+    log("Opens one Markdown file. Starts Roughdraft if needed.");
     log("");
     log("Flags:");
     log(
@@ -897,9 +652,6 @@ function printCommandHelp(
     log(
       "  --print-url          Print only the document URL and do not open it",
     );
-    log("  --no-watch           Open the file without waiting");
-    log("  --timeout <seconds>  Maximum watch time; omitted means no timeout");
-    log("  --replay             Allow watch to return retained older events");
     log("  --json               Print machine-readable output");
     log("  --port <port>        Preferred server port");
     log("  --state-file <path>  Server state file");
@@ -967,30 +719,6 @@ function printCommandHelp(
     );
     log("  --state-file <path>  Server state file");
     log("  --state-dir <dir>    Directory containing server.json");
-    return;
-  }
-
-  if (command === "watch") {
-    log("Usage:");
-    log("  roughdraft watch <path> [--json] [--timeout <seconds>]");
-    log("");
-    log(
-      "Waits until Roughdraft receives Done Reviewing for one Markdown file.",
-    );
-    log("");
-    log("Flags:");
-    log("  --json                    Print machine-readable output");
-    log(
-      "  --timeout <seconds>       Maximum wait time; omitted means no timeout",
-    );
-    log(
-      "  --batch-window <seconds>  Small event batching window, default 0.25",
-    );
-    log(
-      "  --replay                  Return retained older events if available",
-    );
-    log("  --state-file <path>       Server state file");
-    log("  --state-dir <dir>         Directory containing server.json");
     return;
   }
 
@@ -1295,7 +1023,7 @@ async function runRemoteOpen(
   }
 
   if (!options.noOpen && deps.env.ROUGHDRAFT_NO_OPEN !== "1") {
-    deps.openUrl(viewerUrl);
+    deps.openBrowserUrl(viewerUrl);
   }
 
   if (options.json) {
@@ -1399,26 +1127,31 @@ async function runRemoteOpen(
 async function sendOpenRequestToExistingWindow(
   deps: CliDependencies,
   baseUrl: string,
-  targetUrl: string,
   openPath: string,
-): Promise<boolean> {
+): Promise<{ accepted: boolean; delivered: boolean }> {
   try {
     const requestUrl = new URL("/api/open-request", baseUrl);
     const response = await deps.fetchImpl(requestUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ path: openPath, url: targetUrl }),
+      body: JSON.stringify({ path: openPath }),
       signal: AbortSignal.timeout(STATUS_TIMEOUT_MS),
     });
 
     if (!response.ok) {
-      return false;
+      return { accepted: false, delivered: false };
     }
 
-    const payload = (await response.json()) as { delivered?: unknown };
-    return payload.delivered === true;
+    const payload = (await response.json()) as {
+      accepted?: unknown;
+      delivered?: unknown;
+    };
+    return {
+      accepted: payload.accepted === true,
+      delivered: payload.delivered === true,
+    };
   } catch {
-    return false;
+    return { accepted: false, delivered: false };
   }
 }
 
@@ -2102,74 +1835,6 @@ async function runMarkdownDoctor(
   return validation.ok ? 0 : 1;
 }
 
-async function runWatch(
-  deps: CliDependencies,
-  targetPath: string,
-  options: ParsedWatchOptions,
-  json: boolean,
-): Promise<number> {
-  const target = resolveTargetPath(targetPath);
-  let serverUrl = options.serverUrl;
-  if (!serverUrl) {
-    const result = await ensureServerRunning(deps, {
-      projectDir: target.projectDir,
-    });
-    serverUrl = result.server.url;
-  }
-  const relativePath = path.relative(target.projectDir, target.openPath);
-  const body: {
-    projectPath: string;
-    path: string;
-    timeoutSeconds?: number;
-    batchWindowSeconds: number;
-    fromNow: boolean;
-  } = {
-    projectPath: target.projectDir,
-    path: relativePath,
-    batchWindowSeconds: options.batchWindowSeconds,
-    fromNow: !options.replay,
-  };
-  if (options.timeoutSeconds !== undefined) {
-    body.timeoutSeconds = options.timeoutSeconds;
-  }
-
-  const response = await deps.fetchImpl(
-    new URL("/api/review-events/watch", serverUrl),
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-      ...(options.timeoutSeconds !== undefined
-        ? { signal: AbortSignal.timeout((options.timeoutSeconds + 5) * 1000) }
-        : {}),
-    },
-  );
-
-  if (!response.ok) {
-    throw new Error(`Failed to watch review events: ${response.status}`);
-  }
-
-  const payload = (await response.json()) as {
-    events?: unknown[];
-    timedOut?: boolean;
-    nextSequence?: number;
-  };
-
-  if (json) {
-    emitJson(deps.log, payload);
-    return payload.timedOut ? 1 : 0;
-  }
-
-  if (payload.timedOut) {
-    deps.log(`No review completed event received for ${target.openPath}.`);
-    return 1;
-  }
-
-  deps.log(`Review completed for ${target.openPath}.`);
-  deps.log(`Received ${(payload.events ?? []).length} event(s).`);
-  return 0;
-}
-
 function isMarkdownPath(targetPath: string): boolean {
   const extension = path.extname(targetPath).toLowerCase();
   return extension === ".md";
@@ -2581,31 +2246,6 @@ export async function runCli(
       return 0;
     }
 
-    if (command === "watch") {
-      let options: ParsedWatchOptions;
-      try {
-        options = parseWatchOptions(rest);
-      } catch (error) {
-        deps.error(error instanceof Error ? error.message : "Invalid usage.");
-        return USAGE_ERROR;
-      }
-
-      if (options.help) {
-        printCommandHelp("watch", deps.log);
-        return 0;
-      }
-
-      if (options.positionals.length !== 1) {
-        deps.error("Usage: roughdraft watch <path> [--json]");
-        return USAGE_ERROR;
-      }
-
-      deps = applyWatchEnvOverrides(deps, options);
-      const json = parsed.global.json || options.json;
-      shouldPrintUpdateNotice = !json;
-      return runWatch(deps, options.positionals[0] ?? "", options, json);
-    }
-
     if (command === "mcp") {
       let options: ParsedCommandOptions;
       try {
@@ -2624,7 +2264,7 @@ export async function runCli(
       }
 
       const { startMcpServer } = await import("./mcp.js");
-      startMcpServer({ env: deps.env, fetchImpl: deps.fetchImpl });
+      startMcpServer();
       return new Promise<number>(() => {});
     }
 
@@ -2663,7 +2303,6 @@ export async function runCli(
         options = parseCommandOptions(rest, {
           allowOpen: true,
           allowPort: true,
-          allowWatch: true,
         });
       } catch (error) {
         deps.error(error instanceof Error ? error.message : "Invalid usage.");
@@ -2683,16 +2322,6 @@ export async function runCli(
 
       if (options.positionals.length > 1) {
         deps.error("Usage: roughdraft open <path>");
-        return USAGE_ERROR;
-      }
-
-      if (options.watch && options.noWatch) {
-        deps.error("Use either --watch or --no-watch, not both.");
-        return USAGE_ERROR;
-      }
-
-      if (options.watch && options.printUrl) {
-        deps.error("Use either --watch or --print-url, not both.");
         return USAGE_ERROR;
       }
 
@@ -2736,14 +2365,18 @@ export async function runCli(
       const targetUrl = buildTargetUrl(baseUrl, openPath);
       let openMode: OpenMode = "disabled";
       if (!options.noOpen && deps.env.ROUGHDRAFT_NO_OPEN !== "1") {
-        openMode = (await sendOpenRequestToExistingWindow(
+        const openRequest = await sendOpenRequestToExistingWindow(
           deps,
           baseUrl,
-          targetUrl,
           openPath,
-        ))
-          ? "existing-window"
-          : deps.openUrl(targetUrl);
+        );
+        openMode = deps.openUrl(targetUrl);
+        if (openMode === "desktop-app" && !openRequest.accepted) {
+          deps.error(
+            "Roughdraft.app was activated, but the server did not accept the document-open request. Restart Roughdraft and try again.",
+          );
+          return 1;
+        }
       }
 
       if (result?.portChanged) {
@@ -2760,37 +2393,6 @@ export async function runCli(
         return 0;
       }
 
-      const shouldWatch = !options.noWatch && !options.printUrl;
-
-      if (shouldWatch) {
-        if (!json) {
-          if (openMode === "chrome-app") {
-            deps.log(`Opened Roughdraft in a Chrome app window: ${targetUrl}`);
-          } else if (openMode === "existing-window") {
-            deps.log(`Reused an existing Roughdraft window: ${targetUrl}`);
-          } else if (openMode === "browser") {
-            deps.log(`Opened Roughdraft in the default browser: ${targetUrl}`);
-          } else {
-            deps.log(`Roughdraft is running at ${targetUrl}`);
-          }
-          deps.log("Waiting for Done Reviewing...");
-        }
-
-        const watchOptions: ParsedWatchOptions = {
-          batchWindowSeconds: options.batchWindowSeconds,
-          help: false,
-          json,
-          positionals: [target],
-          replay: options.replay,
-          serverUrl: liveDevFrontend?.apiUrl ?? undefined,
-          stateDir: options.stateDir,
-          stateFile: options.stateFile,
-          timeoutSeconds: options.timeoutSeconds,
-        };
-        shouldPrintUpdateNotice = false;
-        return runWatch(deps, target, watchOptions, json);
-      }
-
       if (json) {
         emitJson(deps.log, {
           opened: true,
@@ -2803,18 +2405,16 @@ export async function runCli(
       }
 
       shouldPrintUpdateNotice = true;
-      if (openMode === "chrome-app") {
-        deps.log(`Opened Roughdraft in a Chrome app window: ${targetUrl}`);
-        return 0;
-      }
-
-      if (openMode === "existing-window") {
-        deps.log(`Reused an existing Roughdraft window: ${targetUrl}`);
+      if (openMode === "desktop-app") {
+        deps.log(`Opened Roughdraft.app: ${targetUrl}`);
         return 0;
       }
 
       if (openMode === "browser") {
         deps.log(`Opened Roughdraft in the default browser: ${targetUrl}`);
+        deps.log(
+          "Roughdraft.app was unavailable or unsupported. See the README's Local macOS app section to build and install it.",
+        );
         return 0;
       }
 

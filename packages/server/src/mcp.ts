@@ -1,5 +1,4 @@
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import {
   appendRoughdraftReply,
@@ -21,8 +20,6 @@ interface ToolDefinition {
 }
 
 interface McpOptions {
-  env?: NodeJS.ProcessEnv;
-  fetchImpl?: typeof fetch;
   input?: NodeJS.ReadStream;
   output?: NodeJS.WriteStream;
 }
@@ -67,22 +64,6 @@ const tools: ToolDefinition[] = [
     },
   },
   {
-    name: "roughdraft_watch_review_events",
-    description:
-      "Block until Roughdraft receives Done Reviewing for a Markdown file. Overall handoff comments are persisted as document-level YAML endmatter comments before the event is emitted. Omit timeoutSeconds to wait indefinitely.",
-    inputSchema: {
-      type: "object",
-      additionalProperties: false,
-      required: ["documentPath"],
-      properties: {
-        documentPath: { type: "string" },
-        projectPath: { type: "string" },
-        timeoutSeconds: { type: "number" },
-        batchWindowSeconds: { type: "number" },
-      },
-    },
-  },
-  {
     name: "roughdraft_reply_to_comment",
     description:
       "Append a CriticMarkup reply to one existing comment or suggestion id in a local Markdown file.",
@@ -118,8 +99,6 @@ const tools: ToolDefinition[] = [
 export function startMcpServer(options: McpOptions = {}): void {
   const input = options.input ?? process.stdin;
   const output = options.output ?? process.stdout;
-  const fetchImpl = options.fetchImpl ?? fetch;
-  const env = options.env ?? process.env;
   let buffer: Buffer<ArrayBufferLike> = Buffer.alloc(0);
 
   input.on("data", (chunk: Buffer) => {
@@ -128,7 +107,7 @@ export function startMcpServer(options: McpOptions = {}): void {
       const parsed = takeMessage(buffer);
       if (!parsed) break;
       buffer = parsed.rest;
-      void handleMessage(parsed.message, output, env, fetchImpl);
+      void handleMessage(parsed.message, output);
     }
   });
 
@@ -161,8 +140,6 @@ function takeMessage(
 async function handleMessage(
   request: JsonRpcRequest,
   output: NodeJS.WriteStream,
-  env: NodeJS.ProcessEnv,
-  fetchImpl: typeof fetch,
 ): Promise<void> {
   if (!request.id && request.id !== 0) return;
 
@@ -194,8 +171,6 @@ async function handleMessage(
       const result = await callTool(
         String(params?.name ?? ""),
         objectArgs(params?.arguments),
-        env,
-        fetchImpl,
       );
       writeMessage(output, {
         jsonrpc: "2.0",
@@ -232,8 +207,6 @@ async function handleMessage(
 export async function callTool(
   name: string,
   args: Record<string, unknown>,
-  env: NodeJS.ProcessEnv,
-  fetchImpl: typeof fetch,
 ): Promise<unknown> {
   if (name === "roughdraft_get_open_documents") {
     return { documents: [] };
@@ -258,50 +231,6 @@ export async function callTool(
       diagnostics: index.diagnostics,
       summary: index.summary,
     };
-  }
-
-  if (name === "roughdraft_watch_review_events") {
-    const documentPath = requireDocumentPath(args);
-    const projectPath =
-      typeof args.projectPath === "string"
-        ? path.resolve(args.projectPath)
-        : path.dirname(documentPath);
-    const server = readServerState(env);
-    if (!server) {
-      throw new Error("Roughdraft is not running. Start it before watching.");
-    }
-
-    const body: {
-      projectPath: string;
-      path: string;
-      timeoutSeconds?: number;
-      batchWindowSeconds: number;
-      fromNow: boolean;
-    } = {
-      projectPath,
-      path: path.relative(projectPath, documentPath),
-      batchWindowSeconds:
-        typeof args.batchWindowSeconds === "number"
-          ? args.batchWindowSeconds
-          : 0.25,
-      fromNow: true,
-    };
-    if (typeof args.timeoutSeconds === "number") {
-      body.timeoutSeconds = args.timeoutSeconds;
-    }
-
-    const response = await fetchImpl(
-      new URL("/api/review-events/watch", server.url),
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      },
-    );
-    if (!response.ok) {
-      throw new Error(`Review watch failed: ${response.status}`);
-    }
-    return response.json();
   }
 
   if (name === "roughdraft_reply_to_comment") {
@@ -363,31 +292,4 @@ function requireString(args: Record<string, unknown>, key: string): string {
     throw new Error(`${key} is required.`);
   }
   return value;
-}
-
-function readServerState(
-  env: NodeJS.ProcessEnv,
-): { url: string; port: number } | null {
-  const stateFile = getServerStateFilePath(env);
-  try {
-    const parsed = JSON.parse(fs.readFileSync(stateFile, "utf8")) as {
-      url?: unknown;
-      port?: unknown;
-    };
-    if (typeof parsed.url === "string" && typeof parsed.port === "number") {
-      return { url: parsed.url, port: parsed.port };
-    }
-  } catch {}
-
-  return null;
-}
-
-function getServerStateFilePath(env: NodeJS.ProcessEnv): string {
-  const explicitFile = env.ROUGHDRAFT_STATE_FILE?.trim();
-  if (explicitFile) return path.resolve(explicitFile);
-
-  const explicitDir = env.ROUGHDRAFT_STATE_DIR?.trim();
-  if (explicitDir) return path.join(path.resolve(explicitDir), "server.json");
-
-  return path.join(os.homedir(), ".roughdraft", "server.json");
 }

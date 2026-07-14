@@ -4,10 +4,7 @@ import { createServer as createHttpServer } from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import {
-  appendRoughdraftDocumentComment,
-  extractRoughdraftReviewIndex,
-} from "@roughdraft/rfm";
+import { extractRoughdraftReviewIndex } from "@roughdraft/rfm";
 import express, { type Express, type Request, type Response } from "express";
 import {
   hasNonLoopbackHost,
@@ -15,7 +12,7 @@ import {
   ROUGHDRAFT_PUBLIC_HOST,
   resolveBindHosts,
 } from "./network.js";
-import { ReviewEventQueue } from "./review-events.js";
+import { OpenRequestBroker } from "./open-requests.js";
 import { resolveUpdateStatus } from "./update-status.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -74,15 +71,8 @@ interface CreateAppResult {
   port: number;
 }
 
-interface OpenRequestClient {
-  id: number;
-  path: string | null;
-  response: Response;
-}
-
 interface OpenRequestPayload {
   path?: string;
-  url?: string;
 }
 
 interface RemoteSession {
@@ -109,10 +99,6 @@ interface RemoteDocumentSavePayload {
 const REMOTE_SESSION_TTL_MS = 5 * 60 * 1000;
 const REMOTE_SESSION_SWEEP_INTERVAL_MS = 60 * 1000;
 const REMOTE_SESSION_KEEPALIVE_MS = 15 * 1000;
-const MAX_OVERALL_COMMENT_LENGTH = 4_000;
-
-let nextOpenRequestClientId = 1;
-
 function remoteSessionVersion(content: string): string {
   const hash = crypto.createHash("sha256").update(content).digest("hex");
   return `${hash}:${crypto.randomUUID()}`;
@@ -168,12 +154,6 @@ function fileVersionFromFile(filePath: string): string {
   const content = fs.readFileSync(filePath);
   const stats = fs.statSync(filePath);
   return fileVersionFromContent(stats, content);
-}
-
-function normalizeOverallComment(input: unknown): string | undefined {
-  if (typeof input !== "string") return undefined;
-  const trimmed = input.trim();
-  return trimmed.length > 0 ? trimmed : undefined;
 }
 
 function markdownPageFromFile(
@@ -404,8 +384,7 @@ export function createApp(options: CreateAppOptions = {}): CreateAppResult {
       ? options.remoteDocumentToken
       : null;
   const app = express();
-  const openRequestClients = new Set<OpenRequestClient>();
-  const reviewEvents = new ReviewEventQueue();
+  const openRequests = new OpenRequestBroker();
   const remoteSessions = new Map<string, RemoteSession>();
 
   function isAuthorizedRemoteDocumentRequest(req: Request): boolean {
@@ -636,88 +615,6 @@ export function createApp(options: CreateAppOptions = {}): CreateAppResult {
     });
   });
 
-  app.post("/api/review-events", (req, res) => {
-    const target = markdownPathFromRequest(req, res);
-    if (!target) return;
-
-    const overallComment = normalizeOverallComment(req.body?.overallComment);
-    if (
-      overallComment !== undefined &&
-      overallComment.length > MAX_OVERALL_COMMENT_LENGTH
-    ) {
-      res.status(400).json({
-        error: `overallComment must be ${MAX_OVERALL_COMMENT_LENGTH} characters or fewer`,
-      });
-      return;
-    }
-
-    const markdown = fs.readFileSync(target.absolutePath, "utf-8");
-    const persistedMarkdown = overallComment
-      ? appendRoughdraftDocumentComment(markdown, {
-          message: overallComment,
-          author: "user",
-        })
-      : markdown;
-    if (persistedMarkdown !== markdown) {
-      fs.writeFileSync(target.absolutePath, persistedMarkdown);
-    }
-
-    const index = extractRoughdraftReviewIndex(persistedMarkdown);
-    const result = reviewEvents.emit({
-      documentPath: target.absolutePath,
-      projectPath: target.projectDir,
-      relativePath: target.relativePath,
-      version: fileVersionFromFile(target.absolutePath),
-      summary: index.summary,
-      overallComment,
-    });
-
-    res.status(201).json(result);
-  });
-
-  app.post("/api/review-events/watch", async (req, res) => {
-    const target = markdownPathFromRequest(req, res);
-    if (!target) return;
-
-    const fromNow = req.body?.fromNow !== false;
-    const timeoutSeconds =
-      typeof req.body?.timeoutSeconds === "number"
-        ? req.body.timeoutSeconds
-        : undefined;
-    const batchWindowSeconds =
-      typeof req.body?.batchWindowSeconds === "number"
-        ? req.body.batchWindowSeconds
-        : 0.25;
-    const afterSequence =
-      typeof req.body?.afterSequence === "number" ? req.body.afterSequence : 0;
-
-    const result = await reviewEvents.wait({
-      documentPath: target.absolutePath,
-      afterSequence: fromNow ? reviewEvents.latestSequence() : afterSequence,
-      timeoutMs:
-        timeoutSeconds !== undefined ? timeoutSeconds * 1000 : undefined,
-      batchWindowMs: batchWindowSeconds * 1000,
-    });
-
-    res.json(result);
-  });
-
-  app.get("/api/review-events/status", (req, res) => {
-    const target = markdownPathFromRequest(req, res);
-    if (!target) return;
-
-    const watcherCount = reviewEvents.waiterCountForDocument(
-      target.absolutePath,
-    );
-    res.json({
-      documentPath: target.absolutePath,
-      projectPath: target.projectDir,
-      relativePath: target.relativePath,
-      watching: watcherCount > 0,
-      watcherCount,
-    });
-  });
-
   app.put("/api/pages/:id", (req, res) => {
     const projectDir = projectDirFromRequest(req, res);
     if (!projectDir) return;
@@ -820,33 +717,25 @@ export function createApp(options: CreateAppOptions = {}): CreateAppResult {
   });
 
   app.get("/api/open-requests", (req, res) => {
-    const requestedPath =
-      typeof req.query.path === "string" && req.query.path.trim().length > 0
-        ? req.query.path.trim()
-        : null;
-    const client: OpenRequestClient = {
-      id: nextOpenRequestClientId,
-      path: requestedPath,
-      response: res,
-    };
-    nextOpenRequestClientId += 1;
-
     res.setHeader("Content-Type", "text/event-stream");
     res.setHeader("Cache-Control", "no-cache, no-transform");
     res.setHeader("Connection", "keep-alive");
     res.flushHeaders?.();
-    res.write(
-      `event: connected\ndata: ${JSON.stringify({ id: client.id })}\n\n`,
+    const connection = openRequests.connect(
+      (intent) => {
+        res.write(`event: open-request\ndata: ${JSON.stringify(intent)}\n\n`);
+      },
+      (id) => {
+        res.write(`event: connected\ndata: ${JSON.stringify({ id })}\n\n`);
+      },
     );
-
-    openRequestClients.add(client);
     const keepAlive = setInterval(() => {
       res.write(": keep-alive\n\n");
     }, 15_000);
 
     req.on("close", () => {
       clearInterval(keepAlive);
-      openRequestClients.delete(client);
+      connection.disconnect();
     });
   });
 
@@ -856,32 +745,11 @@ export function createApp(options: CreateAppOptions = {}): CreateAppResult {
       typeof payload.path === "string" && payload.path.trim().length > 0
         ? payload.path.trim()
         : null;
-    const targetUrl =
-      typeof payload.url === "string" && payload.url.trim().length > 0
-        ? payload.url.trim()
-        : null;
-
-    if (!targetPath || !targetUrl) {
-      res.status(400).json({ error: "path and url are required" });
+    if (!targetPath) {
+      res.status(400).json({ error: "path is required" });
       return;
     }
-
-    const matchingClient = Array.from(openRequestClients)
-      .reverse()
-      .find((client) => client.path === targetPath);
-
-    if (!matchingClient) {
-      res.json({ delivered: false });
-      return;
-    }
-
-    matchingClient.response.write(
-      `event: open-request\ndata: ${JSON.stringify({
-        path: targetPath,
-        url: targetUrl,
-      })}\n\n`,
-    );
-    res.json({ delivered: true });
+    res.json(openRequests.request({ path: targetPath }));
   });
 
   app.post("/api/remote-document", (req, res) => {

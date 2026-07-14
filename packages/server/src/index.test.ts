@@ -251,228 +251,6 @@ describe("createApp", () => {
     expect(response.body).toEqual({ error: "Markdown file not found" });
   });
 
-  it("accepts review completed events for a markdown file inside the project", async () => {
-    fs.writeFileSync(
-      path.join(projectDir, "draft.md"),
-      [
-        "# Draft",
-        "",
-        'Needs {==support==}{>>Add a source<<}{id="c1" by="user" at="2026-04-28T12:00:00.000Z"}.',
-      ].join("\n"),
-    );
-    const { app } = createApp({
-      homeDir,
-      staticDirPath: projectDir,
-    });
-
-    const response = await request(app).post("/api/review-events").send({
-      projectPath: projectDir,
-      path: "draft.md",
-      overallComment: "Please address the risk section.",
-    });
-
-    expect(response.status).toBe(201);
-    expect(response.body).toMatchObject({
-      delivered: false,
-      event: {
-        type: "review.completed",
-        documentPath: path.join(projectDir, "draft.md"),
-        projectPath: projectDir,
-        relativePath: "draft.md",
-        sequence: 1,
-        overallComment: "Please address the risk section.",
-        summary: {
-          comments: 2,
-          replies: 0,
-          suggestions: 0,
-          unresolved: 2,
-        },
-      },
-    });
-    expect(response.body.event.version).toEqual(expect.any(String));
-    expect(response.body.event.createdAt).toEqual(expect.any(String));
-  });
-
-  it("persists an overall review comment as document-level YAML feedback before emitting the event", async () => {
-    const filePath = path.join(projectDir, "draft.md");
-    fs.writeFileSync(
-      filePath,
-      [
-        "# Draft",
-        "",
-        "Needs {==support==}{>>Add a source<<}{#c1}.",
-        "",
-        "---",
-        "comments:",
-        "  c1:",
-        "    by: user",
-        '    at: "2026-04-28T12:00:00.000Z"',
-        "workflow:",
-        "  owner: editorial",
-        "",
-      ].join("\n"),
-    );
-    const { app } = createApp({
-      homeDir,
-      staticDirPath: projectDir,
-    });
-
-    const response = await request(app).post("/api/review-events").send({
-      projectPath: projectDir,
-      path: "draft.md",
-      overallComment: "Please address the risk section.",
-    });
-
-    const saved = fs.readFileSync(filePath, "utf-8");
-    expect(response.status).toBe(201);
-    expect(saved).toContain("workflow:\n  owner: editorial");
-    expect(saved).toContain("  c1:");
-    expect(saved).toContain("  c2:");
-    expect(saved).toContain("    body: Please address the risk section.");
-    expect(saved).toContain("    by: user");
-    expect(response.body.event.summary).toMatchObject({
-      comments: 2,
-      replies: 0,
-      suggestions: 0,
-      unresolved: 2,
-    });
-  });
-
-  it("omits whitespace-only overall comments from review events", async () => {
-    fs.writeFileSync(path.join(projectDir, "draft.md"), "# Draft\n");
-    const { app } = createApp({
-      homeDir,
-      staticDirPath: projectDir,
-    });
-
-    const response = await request(app).post("/api/review-events").send({
-      projectPath: projectDir,
-      path: "draft.md",
-      overallComment: "   \n\t  ",
-    });
-
-    expect(response.status).toBe(201);
-    expect(response.body.event).not.toHaveProperty("overallComment");
-  });
-
-  it("rejects over-limit overall comments", async () => {
-    fs.writeFileSync(path.join(projectDir, "draft.md"), "# Draft\n");
-    const { app } = createApp({
-      homeDir,
-      staticDirPath: projectDir,
-    });
-
-    const response = await request(app)
-      .post("/api/review-events")
-      .send({
-        projectPath: projectDir,
-        path: "draft.md",
-        overallComment: "x".repeat(4001),
-      });
-
-    expect(response.status).toBe(400);
-    expect(response.body).toEqual({
-      error: "overallComment must be 4000 characters or fewer",
-    });
-  });
-
-  it("rejects review events without a projectPath", async () => {
-    const { app } = createApp({
-      homeDir,
-      staticDirPath: projectDir,
-    });
-
-    const response = await request(app)
-      .post("/api/review-events")
-      .send({ path: "draft.md" });
-
-    expect(response.status).toBe(400);
-    expect(response.body).toEqual({ error: "projectPath is required" });
-  });
-
-  it("rejects review events outside the project", async () => {
-    const outsideFile = path.join(homeDir, "outside.md");
-    fs.writeFileSync(outsideFile, "# Outside\n");
-    const { app } = createApp({
-      homeDir,
-      staticDirPath: projectDir,
-    });
-
-    const response = await request(app)
-      .post("/api/review-events")
-      .send({ projectPath: projectDir, path: "../outside.md" });
-
-    expect(response.status).toBe(404);
-    expect(response.body).toEqual({ error: "Markdown file not found" });
-  });
-
-  it("returns retained review events to watchers", async () => {
-    fs.writeFileSync(path.join(projectDir, "draft.md"), "# Draft\n");
-    const { app } = createApp({
-      homeDir,
-      staticDirPath: projectDir,
-    });
-
-    const emitted = await request(app)
-      .post("/api/review-events")
-      .send({ projectPath: projectDir, path: "draft.md" });
-    const watchResponse = await request(app)
-      .post("/api/review-events/watch")
-      .send({
-        projectPath: projectDir,
-        path: "draft.md",
-        fromNow: false,
-        timeoutSeconds: 1,
-        batchWindowSeconds: 0,
-      });
-
-    expect(emitted.body.delivered).toBe(false);
-    expect(watchResponse.status).toBe(200);
-    expect(watchResponse.body).toMatchObject({
-      timedOut: false,
-      events: [
-        {
-          type: "review.completed",
-          documentPath: path.join(projectDir, "draft.md"),
-          relativePath: "draft.md",
-        },
-      ],
-    });
-  });
-
-  it("reports active review watchers for a markdown file", async () => {
-    fs.writeFileSync(path.join(projectDir, "draft.md"), "# Draft\n");
-    const { app } = createApp({
-      homeDir,
-      staticDirPath: projectDir,
-    });
-
-    const waiting = request(app).post("/api/review-events/watch").send({
-      projectPath: projectDir,
-      path: "draft.md",
-      timeoutSeconds: 1,
-      batchWindowSeconds: 0,
-    });
-    const waitingPromise = waiting.then((response) => response);
-    await new Promise((resolve) => setTimeout(resolve, 10));
-
-    const statusResponse = await request(app)
-      .get("/api/review-events/status")
-      .query({ projectPath: projectDir, path: "draft.md" });
-
-    expect(statusResponse.status).toBe(200);
-    expect(statusResponse.body).toMatchObject({
-      watching: true,
-      watcherCount: 1,
-      documentPath: path.join(projectDir, "draft.md"),
-    });
-
-    await request(app)
-      .post("/api/review-events")
-      .send({ projectPath: projectDir, path: "draft.md" });
-    await waitingPromise;
-  });
-
   it("rejects page ids that resolve outside the project directory", async () => {
     const outsideName = `${path.basename(projectDir)}-secret`;
     const outsideFilePath = path.join(
@@ -690,7 +468,7 @@ describe("createApp", () => {
     expect(fs.statSync(createdDir).isDirectory()).toBe(true);
   });
 
-  it("reports an undelivered open request when no matching window is listening", async () => {
+  it("queues an open request when no window is listening yet", async () => {
     const { app } = createApp({
       homeDir,
       staticDirPath: projectDir,
@@ -701,11 +479,10 @@ describe("createApp", () => {
       .post("/api/open-request")
       .send({
         path: path.join(projectDir, "draft.md"),
-        url: "http://localhost:4312/?path=/tmp/draft.md",
       });
 
     expect(response.status).toBe(200);
-    expect(response.body).toEqual({ delivered: false });
+    expect(response.body).toEqual({ accepted: true, delivered: false });
   });
 
   it("serves local files and stores uploaded assets inside the project", async () => {

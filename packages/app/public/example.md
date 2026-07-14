@@ -8,7 +8,7 @@ Try one of these:
 - Suggest a small edit.
 - Add a note below about a document you want to review next.
 
-When you click **Done Reviewing**, your agent should read this file, reply inline to any comments or questions, and open it in Roughdraft again so you can keep the conversation going in the document.
+When you are finished, close this document and ask your agent to read your Roughdraft comments. It can reply inline and open the file again for another round.
 
 {==Ask a question here, or tell your agent what you want to try next.==}{>>Hi, I am your AI agent. You can leave comments or questions like this, and I will reply inline in the document.<<}{#c1}
 

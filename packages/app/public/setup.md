@@ -32,7 +32,7 @@ roughdraft open "$example_file"
 
 If `curl` is unavailable, create a short Markdown file yourself with a heading, one or two sentences, and an invitation for the user to leave a comment or question.
 
-After `roughdraft open` opens the document, leave the command running. Tell the user they can leave comments, suggested edits, or questions in the document, then click **Done Reviewing**. When Roughdraft exits, read the Markdown file, reply inline to any comments or questions using Roughdraft-flavored CriticMarkup, save the file, and open it in Roughdraft again so the user can continue the conversation in the document.
+After `roughdraft open` opens the document, the command returns. Tell the user they can leave comments, suggested edits, or questions, then close the document when they are finished. Roughdraft does not notify the agent. When the user later asks you to process the review, read the Markdown file, respond to its CriticMarkup feedback, save it, and open it in Roughdraft again if another review round is useful.
 
 ## Update Your Persistent Instructions
 
@@ -120,7 +120,7 @@ Roughdraft is currently a single-file Markdown viewer/editor. Open one `.md` fil
 
 If Roughdraft is not running, `roughdraft open` will start it automatically.
 
-After `roughdraft open` opens the document, leave the command running. Do not interrupt, kill, background, detach, or treat the waiting process as cleanup. The wait is intentional: Roughdraft will exit the command after the user clicks Done Reviewing, and that exit is your signal to resume.
+`roughdraft open` returns after opening the document. Roughdraft does not send a completion signal to the agent, so do not wait for one. Resume the review flow when the user asks you to read the updated file.
 
 After the user finishes reviewing in Roughdraft, read the Markdown file from disk and respond to any CriticMarkup comments or suggested changes. If the user left questions or comments in the document, reply inline in the Markdown file using Roughdraft-flavored CriticMarkup, save it, and open the file in Roughdraft again so the user can continue reviewing.
 

@@ -22,12 +22,12 @@
     "test:selectors": "node scripts/check-test-selectors.mjs",
     "unused": "knip --no-progress",
     "format": "biome format --write .",
-    "test": "pnpm --filter @roughdraft/rfm test && pnpm --filter @roughdraft/app test && pnpm --filter @roughdraft/server test",
+    "test": "pnpm --filter @roughdraft/rfm test && pnpm --filter @roughdraft/app test && pnpm --filter @roughdraft/server test && pnpm --filter @roughdraft/desktop test",
     "test:e2e": "playwright test --config packages/app/playwright.config.ts",
     "test:smoke": "playwright test --config packages/app/playwright.config.ts --grep @smoke",
     "test:coverage": "pnpm --filter @roughdraft/app exec vitest run --coverage && pnpm --filter @roughdraft/server exec vitest run --coverage",
     "check": "pnpm lint && pnpm test:selectors && pnpm test && pnpm build",
-    "build": "pnpm --filter @roughdraft/rfm build && pnpm --filter @roughdraft/app build && pnpm --filter @roughdraft/server build",
+    "build": "pnpm --filter @roughdraft/rfm build && pnpm --filter @roughdraft/app build && pnpm --filter @roughdraft/server build && pnpm --filter @roughdraft/desktop build",
     "preview": "node packages/server/bin/roughdraft.mjs open README.md"
   },
   "files": [
@@ -53,6 +53,7 @@
   },
   "pnpm": {
     "onlyBuiltDependencies": [
+      "electron",
       "esbuild"
     ]
   }

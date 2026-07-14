@@ -56,7 +56,6 @@ import type { DocumentSaveState } from "./PageCard";
 import { PreviewBackend } from "./preview-backend";
 import { RoughdraftFormatDemo } from "./RoughdraftFormatDemo";
 import {
-  type CompleteReviewOptions,
   MarkdownFileConflictError,
   type Page,
   type StorageBackend,
@@ -128,7 +127,7 @@ const HOMEPAGE_WORKFLOW_SCENES = [
     step: "3",
     title: "Roughdraft opens the plan",
     description:
-      "When the file is ready, the agent opens the Markdown plan in Roughdraft and waits while you review.",
+      "When the file is ready, the agent opens the Markdown plan in the Roughdraft desktop app.",
   },
   {
     step: "4",
@@ -138,15 +137,15 @@ const HOMEPAGE_WORKFLOW_SCENES = [
   },
   {
     step: "5",
-    title: "Click I'm done",
+    title: "Close the document",
     description:
-      "Roughdraft hands control back to the agent once you are finished with the blocking review step.",
+      "Your comments and suggested edits are already saved inside the Markdown file, so there is no handoff step.",
   },
   {
     step: "6",
-    title: "The agent resumes",
+    title: "Ask the agent to read it",
     description:
-      "The next agent turn reads the same Markdown file, sees your comments and suggestions, and continues with the corrected plan.",
+      "Tell the agent to read the Roughdraft comments. It reopens the same file, responds, and continues with the corrected plan.",
   },
 ] as const;
 const ROUGHDRAFT_MARKDOWN_SYNTAX = [
@@ -623,7 +622,7 @@ function AgentChatMock({
 }) {
   const showAgentWork = workflowStage >= 2;
   const showRoughdraftCommand = workflowStage >= 3;
-  const showAgentResume = workflowStage >= 6;
+  const showAgentFollowUp = workflowStage >= 6;
 
   return (
     <div
@@ -714,19 +713,19 @@ function AgentChatMock({
           data-testid="homepage-workflow-terminal-command"
         >
           roughdraft open "/workspace/.context/homepage-conversion-plan.md"
-          <div className="mt-2 text-slate-400">Waiting for I'm done...</div>
+          <div className="mt-2 text-slate-400">Opened Roughdraft.app.</div>
         </div>
 
         <div
-          aria-hidden={showAgentResume ? undefined : true}
+          aria-hidden={showAgentFollowUp ? undefined : true}
           className="flex max-h-32 gap-3 overflow-hidden px-4 text-slate-50 opacity-100 transition-[max-height,margin,padding,border-width,opacity,transform] duration-300 data-[terminal-line-visible=false]:mt-[-1rem] data-[terminal-line-visible=false]:max-h-0 data-[terminal-line-visible=false]:translate-y-[-0.35rem] data-[terminal-line-visible=false]:border-0 data-[terminal-line-visible=false]:py-0 data-[terminal-line-visible=false]:pointer-events-none data-[terminal-line-visible=false]:opacity-0 max-[899px]:px-3"
-          data-terminal-line-visible={showAgentResume ? "true" : "false"}
-          data-testid="homepage-workflow-agent-resume"
+          data-terminal-line-visible={showAgentFollowUp ? "true" : "false"}
+          data-testid="homepage-workflow-agent-follow-up"
         >
           <span className="mt-1 size-2 shrink-0 rounded-full bg-emerald-300" />
           <span>
-            I read your comments. I accepted your wording suggestion and moved
-            the workflow story above the Markdown section.
+            Read my Roughdraft comments in the plan. I accepted your wording
+            suggestion and moved the workflow story above the Markdown section.
           </span>
         </div>
 
@@ -752,7 +751,7 @@ function RoughdraftPopupMock({ workflowStage }: { workflowStage: number }) {
   const showUserFeedback = workflowStage >= 4;
   const showAgentReply = workflowStage >= 6;
   const showIncorporatedPlan = workflowStage >= 6;
-  const showDoneButton = workflowStage >= 5 && workflowStage < 6;
+  const showCloseButton = workflowStage >= 5 && workflowStage < 6;
   const documentShellRef = useRef<HTMLDivElement | null>(null);
   const documentPageRef = useRef<HTMLDivElement | null>(null);
   const reviewRailRef = useRef<HTMLDivElement | null>(null);
@@ -965,15 +964,15 @@ function RoughdraftPopupMock({ workflowStage }: { workflowStage: number }) {
           data-homepage-workflow-document-scale=""
           data-testid="homepage-workflow-document-scale"
         >
-          {showDoneButton ? (
+          {showCloseButton ? (
             <Button
               className="absolute top-3 right-3 z-[3] h-12 rounded-[7px] bg-black px-4.5 text-base font-bold text-white shadow-[0_10px_28px_rgba(0,0,0,0.18)] hover:bg-black/85"
-              data-testid="homepage-workflow-handoff-button"
+              data-testid="homepage-workflow-close-button"
               type="button"
               size="sm"
             >
               <Check className="size-6" aria-hidden="true" />
-              I'm done
+              Close document
             </Button>
           ) : null}
           <div
@@ -1040,8 +1039,8 @@ function RoughdraftPopupMock({ workflowStage }: { workflowStage: number }) {
                   )}
                 </p>
                 <p className="m-0 mb-4 text-[clamp(0.95rem,2.25vw,1.12rem)] leading-[1.65] text-stone-700 dark:text-stone-300">
-                  Show the agent pause, the review window, and the resume
-                  signal.
+                  Close the review window, then ask the agent to read the saved
+                  comments.
                 </p>
                 <p className="m-0 mb-4 text-[clamp(0.95rem,2.25vw,1.12rem)] leading-[1.65] text-stone-700 dark:text-stone-300">
                   Keep the format section as proof that the review data is
@@ -1440,15 +1439,6 @@ export function PreviewPage() {
     setPreviewForceResetKey(`preview-reset:${Date.now()}`);
   }, [backend]);
 
-  const handleCompletePreviewReview = useCallback(
-    async (options?: CompleteReviewOptions) => {
-      return backend.completeReview
-        ? backend.completeReview(PREVIEW_DOCUMENT_PATH, options)
-        : { delivered: false };
-    },
-    [backend],
-  );
-
   return (
     <main className="relative flex h-screen min-w-0 flex-col overflow-hidden bg-[#FCFCFC] dark:bg-background text-slate-950 dark:text-slate-50">
       <DocumentWorkspace
@@ -1467,7 +1457,6 @@ export function PreviewPage() {
         onReloadDocumentFromDisk={handleResetPreview}
         onKeepEditingWithoutAutosave={() => {}}
         onOverwriteDocumentOnDisk={() => {}}
-        onCompleteReview={handleCompletePreviewReview}
         backend={backend}
       />
     </main>
@@ -1546,19 +1535,18 @@ export function App() {
 
   useEffect(() => {
     const sourceUrl = new URL("/api/open-requests", window.location.origin);
-    if (requestedPathState.rawPath) {
-      sourceUrl.searchParams.set("path", requestedPathState.rawPath);
-    }
-
-    const source = new EventSource(`${sourceUrl.pathname}${sourceUrl.search}`);
+    const source = new EventSource(sourceUrl.pathname);
     const handleOpenRequest = (event: Event) => {
       try {
         const payload = JSON.parse((event as MessageEvent<string>).data) as {
-          url?: unknown;
+          path?: unknown;
         };
-        if (typeof payload.url !== "string" || !payload.url.trim()) return;
+        if (typeof payload.path !== "string" || !payload.path.trim()) return;
 
-        const nextUrl = new URL(payload.url, window.location.origin);
+        const nextUrl = new URL(window.location.href);
+        nextUrl.pathname = "/";
+        nextUrl.searchParams.set("path", payload.path);
+        nextUrl.hash = "";
         window.focus();
         if (nextUrl.href !== window.location.href) {
           window.location.assign(nextUrl.href);
@@ -1574,7 +1562,7 @@ export function App() {
       source.removeEventListener("open-request", handleOpenRequest);
       source.close();
     };
-  }, [requestedPathState.rawPath]);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -1793,44 +1781,6 @@ export function App() {
     );
   }, [applyDocumentPage, handleDocumentSaveStateChange]);
 
-  const handleCompleteReview = useCallback(
-    async (options?: CompleteReviewOptions) => {
-      const currentBackend = backendRef.current;
-      const currentPath = activeDocumentPathRef.current;
-      const currentDocument = documentPageRef.current;
-      if (!currentBackend || !currentPath || !currentDocument) {
-        return { delivered: false };
-      }
-
-      const content =
-        documentDraftContentRef.current ?? currentDocument.content;
-      const expectedVersion = currentDocument.version;
-      const firstLine = content.split("\n")[0] || "";
-      const fallbackTitle =
-        currentDocument.id.split("/").at(-1) || currentDocument.id;
-      const title = firstLine.replace(/^#*\s*/, "") || fallbackTitle;
-
-      const savedDocument = (await currentBackend.saveMarkdownFile(
-        currentPath,
-        content,
-        expectedVersion,
-      )) ?? {
-        ...currentDocument,
-        content,
-        title,
-      };
-
-      applyDocumentPage(savedDocument);
-      documentDirtyRef.current = false;
-      setDocumentDiskChangeState("clean");
-
-      return currentBackend.completeReview
-        ? currentBackend.completeReview(currentPath, options)
-        : { delivered: false };
-    },
-    [applyDocumentPage],
-  );
-
   useEffect(() => {
     if (!backend?.watchMarkdownFile || !activeDocumentPath) return;
 
@@ -1956,7 +1906,6 @@ export function App() {
         onReloadDocumentFromDisk={handleReloadDocumentFromDisk}
         onKeepEditingWithoutAutosave={handleKeepEditingWithoutAutosave}
         onOverwriteDocumentOnDisk={handleOverwriteDocumentOnDisk}
-        onCompleteReview={handleCompleteReview}
         backend={backend}
       />
     </main>

@@ -102,7 +102,10 @@ test.describe("opening local markdown files", () => {
     });
 
     expect(response.ok()).toBe(true);
-    await expect(response.json()).resolves.toEqual({ delivered: true });
+    await expect(response.json()).resolves.toEqual({
+      accepted: true,
+      delivered: true,
+    });
     await expect(codeEditor(page)).toContainText("Existing window body.");
 
     logE2eEvent("open-file.reused-existing-window", {

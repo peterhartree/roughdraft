@@ -10,7 +10,10 @@ export default defineConfig({
   expect: {
     timeout: 7_500,
   },
-  fullyParallel: true,
+  // Open intents target one renderer by design, so parallel browser pages can
+  // steal each other's navigation requests and create false failures.
+  fullyParallel: false,
+  workers: 1,
   reporter: process.env.CI ? "github" : "list",
   use: {
     baseURL: appUrl,

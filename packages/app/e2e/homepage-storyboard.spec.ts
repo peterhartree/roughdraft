@@ -21,8 +21,8 @@ test.describe("homepage workflow storyboard", () => {
     expect(sceneTexts[1]).toContain("The agent works normally");
     expect(sceneTexts[2]).toContain("Roughdraft opens the plan");
     expect(sceneTexts[3]).toContain("Leave comments and suggestions");
-    expect(sceneTexts[4]).toContain("Click I'm done");
-    expect(sceneTexts[5]).toContain("The agent resumes");
+    expect(sceneTexts[4]).toContain("Close the document");
+    expect(sceneTexts[5]).toContain("Ask the agent to read it");
     await expect(storyboard).toContainText(
       "Let's make the homepage more persuasive. Write a plan first.",
     );
@@ -171,7 +171,7 @@ test.describe("homepage workflow storyboard", () => {
       roughdraftPopup.getByTestId("homepage-workflow-review-comment"),
     ).toHaveCount(0);
     await expect(
-      storyboard.getByTestId("homepage-workflow-handoff-button"),
+      storyboard.getByTestId("homepage-workflow-close-button"),
     ).toHaveCount(0);
     await expect(storyboard).not.toContainText("Review complete");
 
@@ -228,7 +228,7 @@ test.describe("homepage workflow storyboard", () => {
       )
       .toBeLessThanOrEqual(8);
     await expect(
-      storyboard.getByTestId("homepage-workflow-agent-resume"),
+      storyboard.getByTestId("homepage-workflow-agent-follow-up"),
     ).toHaveAttribute("data-terminal-line-visible", "false");
     const commentsLayout = await storyboard.evaluate((element) => {
       const popup = element.querySelector(
@@ -265,7 +265,7 @@ test.describe("homepage workflow storyboard", () => {
       });
     });
     await expect(
-      storyboard.getByTestId("homepage-workflow-handoff-button"),
+      storyboard.getByTestId("homepage-workflow-close-button"),
     ).toBeVisible();
     await expect(storyboard).not.toContainText("Review complete");
 
@@ -300,10 +300,10 @@ test.describe("homepage workflow storyboard", () => {
       });
     });
     await expect(
-      storyboard.getByTestId("homepage-workflow-handoff-button"),
+      storyboard.getByTestId("homepage-workflow-close-button"),
     ).toHaveCount(0);
     await expect(
-      storyboard.getByTestId("homepage-workflow-agent-resume"),
+      storyboard.getByTestId("homepage-workflow-agent-follow-up"),
     ).toHaveAttribute("data-terminal-line-visible", "true");
     await expect(storyboard).toContainText(
       "I accepted your wording suggestion and moved the workflow story above the Markdown section.",
@@ -385,8 +385,8 @@ test.describe("homepage workflow storyboard", () => {
     expect(mobileSceneTexts[1]).toContain("The agent works normally");
     expect(mobileSceneTexts[2]).toContain("Roughdraft opens the plan");
     expect(mobileSceneTexts[3]).toContain("Leave comments and suggestions");
-    expect(mobileSceneTexts[4]).toContain("Click I'm done");
-    expect(mobileSceneTexts[5]).toContain("The agent resumes");
+    expect(mobileSceneTexts[4]).toContain("Close the document");
+    expect(mobileSceneTexts[5]).toContain("Ask the agent to read it");
 
     const stickyVisual = storyboard.getByTestId(
       "homepage-workflow-sticky-visual",
@@ -516,7 +516,7 @@ test.describe("homepage workflow storyboard", () => {
             '[data-testid="homepage-workflow-sticky-visual"]',
           );
           const sceneCopy = element.querySelector(
-            ".homepage-workflow-scene-copy",
+            '[data-testid="homepage-workflow-scene-description"]',
           );
           const documentTitle = document.querySelector(
             '[data-testid="homepage-workflow-document-title"]',
@@ -530,23 +530,22 @@ test.describe("homepage workflow storyboard", () => {
           const popupHeader = document.querySelector(
             ".homepage-workflow-popup .homepage-workflow-panel-header",
           );
+          if (!sticky || !sceneCopy) {
+            throw new Error("Expected sticky visual and scene copy");
+          }
           if (
-            !sticky ||
-            !sceneCopy ||
-            !documentTitle ||
-            !documentScale ||
-            !documentWorkspace
+            stage >= 3 &&
+            (!documentTitle || !documentScale || !documentWorkspace)
           ) {
-            throw new Error(
-              "Expected sticky visual, scene copy, and document preview",
-            );
+            throw new Error("Expected document preview from stage 3 onwards");
           }
 
           const stickyRect = sticky.getBoundingClientRect();
           const copyRect = sceneCopy.getBoundingClientRect();
-          const scaleRect = documentScale.getBoundingClientRect();
-          const titleRect = documentTitle.getBoundingClientRect();
-          const workspaceRect = documentWorkspace.getBoundingClientRect();
+          const scaleRect = documentScale?.getBoundingClientRect() ?? null;
+          const titleRect = documentTitle?.getBoundingClientRect() ?? null;
+          const workspaceRect =
+            documentWorkspace?.getBoundingClientRect() ?? null;
           const popupHeaderRect = popupHeader?.getBoundingClientRect() ?? null;
           const headerHitTarget = popupHeaderRect
             ? document.elementFromPoint(
@@ -558,9 +557,12 @@ test.describe("homepage workflow storyboard", () => {
             copyBottom: copyRect.bottom,
             copyTop: copyRect.top,
             documentSurfaceGap:
-              stage >= 3 ? scaleRect.top - workspaceRect.top : null,
-            documentTitleBottom: stage >= 3 ? titleRect.bottom : null,
-            documentTitleTop: stage >= 3 ? titleRect.top : null,
+              stage >= 3 && scaleRect && workspaceRect
+                ? scaleRect.top - workspaceRect.top
+                : null,
+            documentTitleBottom:
+              stage >= 3 && titleRect ? titleRect.bottom : null,
+            documentTitleTop: stage >= 3 && titleRect ? titleRect.top : null,
             popupHeaderIsPaintedAboveDock:
               stage >= 3 && popupHeaderRect
                 ? popupHeaderRect.top < stickyRect.top &&

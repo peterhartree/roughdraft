@@ -228,7 +228,7 @@ test.describe("stale writes", () => {
     ).toBeVisible();
   });
 
-  test("keeps conflict banner and save status stack from overlapping", async ({
+  test("keeps conflict banner and save status indicator from overlapping", async ({
     page,
   }) => {
     await page.route("**/api/markdown-file/events**", (route) => route.abort());
@@ -252,24 +252,24 @@ test.describe("stale writes", () => {
       await appendInCodeEditor(page, `\nLocal body ${viewport.width}.\n`);
 
       const conflictNotice = fileConflictNotice(page);
-      const statusStack = page.getByTestId("document-status-stack");
+      const statusIndicator = page.getByTestId("document-save-status-corner");
       await expect(conflictNotice).toBeVisible();
-      await expect(statusStack).toBeVisible();
+      await expect(statusIndicator).toBeVisible();
 
       const conflictBox = await conflictNotice.boundingBox();
-      const stackBox = await statusStack.boundingBox();
+      const statusBox = await statusIndicator.boundingBox();
       expect(conflictBox).not.toBeNull();
-      expect(stackBox).not.toBeNull();
+      expect(statusBox).not.toBeNull();
 
-      if (!conflictBox || !stackBox) {
-        throw new Error("Expected conflict and status stack bounds");
+      if (!conflictBox || !statusBox) {
+        throw new Error("Expected conflict and save status bounds");
       }
 
       const intersects =
-        conflictBox.x < stackBox.x + stackBox.width &&
-        conflictBox.x + conflictBox.width > stackBox.x &&
-        conflictBox.y < stackBox.y + stackBox.height &&
-        conflictBox.y + conflictBox.height > stackBox.y;
+        conflictBox.x < statusBox.x + statusBox.width &&
+        conflictBox.x + conflictBox.width > statusBox.x &&
+        conflictBox.y < statusBox.y + statusBox.height &&
+        conflictBox.y + conflictBox.height > statusBox.y;
 
       expect(intersects).toBe(false);
       await page.getByTestId("file-conflict-action-reload").click();

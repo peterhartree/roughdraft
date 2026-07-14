@@ -113,13 +113,6 @@ export class LocalStorageBackend implements StorageBackend {
     return undefined;
   }
 
-  async completeReview(
-    _relativePath: string,
-    _options?: { overallComment?: string },
-  ): Promise<{ delivered: boolean }> {
-    return { delivered: false };
-  }
-
   async saveAsset(file: File): Promise<StoredAsset> {
     const assets = readAssets();
     const markdownPath = nextAssetPath(assets, file.name);

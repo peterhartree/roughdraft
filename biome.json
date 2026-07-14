@@ -6,6 +6,7 @@
       "!.context",
       "!.roughdraft-state",
       "!**/coverage",
+      "!**/out",
       "!**/playwright-report",
       "!**/test-results",
       "!**/node_modules",

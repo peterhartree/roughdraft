@@ -7,6 +7,7 @@ import { validateRoughdraftMarkdown } from "@roughdraft/rfm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   createCliDependencies,
+  createDefaultBrowserOpenUrl,
   createDefaultOpenUrl,
   ensureServerRunning,
   getServerStateFilePath,
@@ -249,10 +250,7 @@ describe("cli", () => {
     const documentPath = path.join(projectDir, "draft.md");
     fs.writeFileSync(documentPath, "# Draft\n");
 
-    const exitCode = await runCli(
-      ["open", documentPath, "--no-watch"],
-      test.deps,
-    );
+    const exitCode = await runCli(["open", documentPath], test.deps);
     const persisted = JSON.parse(
       fs.readFileSync(getServerStateFilePath(test.deps.env), "utf8"),
     ) as { port: number };
@@ -270,7 +268,7 @@ describe("cli", () => {
     const documentPath = path.join(projectDir, "draft.md");
     fs.writeFileSync(documentPath, "# Draft\n");
 
-    const exitCode = await runCli(["open", documentPath, "--no-watch"], {
+    const exitCode = await runCli(["open", documentPath], {
       ...test.deps,
       resolveUpdateStatus: async () => ({
         packageName: "roughdraft",
@@ -292,19 +290,16 @@ describe("cli", () => {
     const documentPath = path.join(projectDir, "draft.md");
     fs.writeFileSync(documentPath, "# Draft\n");
 
-    const exitCode = await runCli(
-      ["open", documentPath, "--no-watch", "--json"],
-      {
-        ...test.deps,
-        resolveUpdateStatus: async () => ({
-          packageName: "roughdraft",
-          currentVersion: "0.1.1",
-          latestVersion: "0.1.3",
-          updateAvailable: true,
-          updateCommand: "npm i -g roughdraft@latest",
-        }),
-      },
-    );
+    const exitCode = await runCli(["open", documentPath, "--json"], {
+      ...test.deps,
+      resolveUpdateStatus: async () => ({
+        packageName: "roughdraft",
+        currentVersion: "0.1.1",
+        latestVersion: "0.1.3",
+        updateAvailable: true,
+        updateCommand: "npm i -g roughdraft@latest",
+      }),
+    });
     const payload = parseOnlyJsonLog<{ opened: boolean }>(test.logs);
 
     expect(exitCode).toBe(0);
@@ -316,7 +311,7 @@ describe("cli", () => {
     const documentPath = path.join(projectDir, "draft.md");
     fs.writeFileSync(documentPath, "# Draft\n");
 
-    const exitCode = await runCli(["open", documentPath, "--no-watch"], {
+    const exitCode = await runCli(["open", documentPath], {
       ...test.deps,
       resolveUpdateStatus: async () => {
         throw new Error("registry unavailable");
@@ -327,11 +322,11 @@ describe("cli", () => {
     expect(test.logs).not.toContain("registry unavailable");
   });
 
-  it("reuses a connected document window before opening another browser window", async () => {
+  it("queues the document intent before activating Roughdraft.app", async () => {
     const documentPath = path.join(projectDir, "draft.md");
     fs.writeFileSync(documentPath, "# Draft\n");
 
-    let postedOpenRequest: { path?: string; url?: string } | null = null;
+    let postedOpenRequest: { path?: string } | null = null;
     let lastOpenedUrl: string | null = null;
     const deps = createCliDependencies({
       env: {
@@ -368,10 +363,13 @@ describe("cli", () => {
 
         if (url.pathname === "/api/open-request" && init?.method === "POST") {
           postedOpenRequest = JSON.parse(String(init.body));
-          return new Response(JSON.stringify({ delivered: true }), {
-            status: 200,
-            headers: { "Content-Type": "application/json" },
-          });
+          return new Response(
+            JSON.stringify({ accepted: true, delivered: true }),
+            {
+              status: 200,
+              headers: { "Content-Type": "application/json" },
+            },
+          );
         }
 
         throw new Error("connect ECONNREFUSED");
@@ -383,54 +381,93 @@ describe("cli", () => {
       },
       openUrl: (url) => {
         lastOpenedUrl = url;
-        return "browser";
+        return "desktop-app";
       },
       log: () => {},
       error: () => {},
     });
 
-    const exitCode = await runCli(["open", documentPath, "--no-watch"], deps);
+    const exitCode = await runCli(["open", documentPath], deps);
 
     expect(exitCode).toBe(0);
-    expect(postedOpenRequest).toEqual({
-      path: documentPath,
-      url: expectedOpenUrl(
+    expect(postedOpenRequest).toEqual({ path: documentPath });
+    expect(lastOpenedUrl).toBe(
+      expectedOpenUrl(
         `http://localhost:${ROUGHDRAFT_DEFAULT_PORT}`,
         documentPath,
       ),
-    });
-    expect(lastOpenedUrl).toBeNull();
+    );
   });
 
-  it("opens the default browser on macOS when Chrome is installed but not the default browser", () => {
+  it("does not report success when the desktop app cannot receive the open intent", async () => {
+    const test = createTestDependencies();
+    const documentPath = path.join(projectDir, "draft.md");
+    fs.writeFileSync(documentPath, "# Draft\n");
+    const fetchImpl = test.deps.fetchImpl;
+
+    const exitCode = await runCli(["open", documentPath], {
+      ...test.deps,
+      fetchImpl: async (input, init) => {
+        const url =
+          input instanceof URL
+            ? input
+            : new URL(typeof input === "string" ? input : input.url);
+        if (url.pathname === "/api/open-request") {
+          return new Response(JSON.stringify({ error: "unavailable" }), {
+            status: 503,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        return fetchImpl(input, init);
+      },
+      openUrl: () => "desktop-app",
+    });
+
+    expect(exitCode).toBe(1);
+    expect(test.errors).toContain(
+      "Roughdraft.app was activated, but the server did not accept the document-open request. Restart Roughdraft and try again.",
+    );
+    expect(test.logs).not.toContain(
+      expect.stringContaining("Opened Roughdraft.app"),
+    );
+  });
+
+  it("activates Roughdraft.app on macOS when it is installed", () => {
     const opened: Array<{ command: string; args: string[] }> = [];
     const openUrl = createDefaultOpenUrl({
       env: {},
       platform: "darwin",
       spawnSyncCommand: (command, args) => {
-        if (command === "plutil") {
-          expect(args?.join(" ")).toContain(
-            "com.apple.launchservices.secure.plist",
-          );
-          return {
-            status: 0,
-            stdout: JSON.stringify([
-              {
-                LSHandlerURLScheme: "http",
-                LSHandlerRoleAll: "com.apple.Safari",
-              },
-            ]),
-          } as ReturnType<typeof import("node:child_process").spawnSync>;
-        }
+        expect(command).toBe("open");
+        expect(args).toEqual(["-b", "is.pjh.roughdraft"]);
+        return {
+          status: 0,
+          stdout: "",
+        } as ReturnType<typeof import("node:child_process").spawnSync>;
+      },
+      openDetachedCommand: (command, args) => {
+        opened.push({ command, args });
+      },
+    });
 
-        if (command === "open" && args?.[0] === "-Ra") {
-          return {
-            status: 0,
-            stdout: "",
-          } as ReturnType<typeof import("node:child_process").spawnSync>;
-        }
+    const mode = openUrl("http://localhost:4020/?file=draft.md");
 
-        throw new Error(`unexpected spawnSync command ${command}`);
+    expect(mode).toBe("desktop-app");
+    expect(opened).toEqual([]);
+  });
+
+  it("falls back to the default browser when Roughdraft.app is not installed", () => {
+    const opened: Array<{ command: string; args: string[] }> = [];
+    const openUrl = createDefaultOpenUrl({
+      env: {},
+      platform: "darwin",
+      spawnSyncCommand: (command, args) => {
+        expect(command).toBe("open");
+        expect(args).toEqual(["-b", "is.pjh.roughdraft"]);
+        return {
+          status: 1,
+          stdout: "",
+        } as ReturnType<typeof import("node:child_process").spawnSync>;
       },
       openDetachedCommand: (command, args) => {
         opened.push({ command, args });
@@ -441,54 +478,28 @@ describe("cli", () => {
 
     expect(mode).toBe("browser");
     expect(opened).toEqual([
-      { command: "open", args: ["http://localhost:4020/?file=draft.md"] },
+      {
+        command: "open",
+        args: ["http://localhost:4020/?file=draft.md"],
+      },
     ]);
   });
 
-  it("opens a Chrome app window on macOS when Chrome is the default browser", () => {
+  it("opens remote-session URLs in the browser without activating Roughdraft.app", () => {
     const opened: Array<{ command: string; args: string[] }> = [];
-    const openUrl = createDefaultOpenUrl({
+    const openBrowserUrl = createDefaultBrowserOpenUrl({
       env: {},
       platform: "darwin",
-      spawnSyncCommand: (command, args) => {
-        if (command === "plutil") {
-          return {
-            status: 0,
-            stdout: JSON.stringify([
-              {
-                LSHandlerURLScheme: "http",
-                LSHandlerRoleAll: "com.google.Chrome",
-              },
-            ]),
-          } as ReturnType<typeof import("node:child_process").spawnSync>;
-        }
-
-        if (command === "open" && args?.[0] === "-Ra") {
-          return {
-            status: 0,
-            stdout: "",
-          } as ReturnType<typeof import("node:child_process").spawnSync>;
-        }
-
-        throw new Error(`unexpected spawnSync command ${command}`);
-      },
       openDetachedCommand: (command, args) => {
         opened.push({ command, args });
       },
     });
 
-    const mode = openUrl("http://localhost:4020/?file=draft.md");
-
-    expect(mode).toBe("chrome-app");
+    expect(openBrowserUrl("https://remote.example/session/1")).toBe("browser");
     expect(opened).toEqual([
       {
         command: "open",
-        args: [
-          "-na",
-          "Google Chrome",
-          "--args",
-          "--app=http://localhost:4020/?file=draft.md",
-        ],
+        args: ["https://remote.example/session/1"],
       },
     ]);
   });
@@ -561,15 +572,12 @@ describe("cli", () => {
     expect(test.getLastOpenedUrl()).toBeNull();
   });
 
-  it("emits JSON from open --no-watch --json without scraping human prose", async () => {
+  it("emits JSON from open --json without scraping human prose", async () => {
     const test = createTestDependencies();
     const documentPath = path.join(projectDir, "draft.md");
     fs.writeFileSync(documentPath, "# Draft\n");
 
-    const exitCode = await runCli(
-      ["open", documentPath, "--no-watch", "--json"],
-      test.deps,
-    );
+    const exitCode = await runCli(["open", documentPath, "--json"], test.deps);
     const persisted = JSON.parse(
       fs.readFileSync(getServerStateFilePath(test.deps.env), "utf8"),
     ) as { port: number };
@@ -667,112 +675,13 @@ describe("cli", () => {
       error: () => {},
     });
 
-    const exitCode = await runCli(["open", documentPath, "--no-watch"], deps);
+    const exitCode = await runCli(["open", documentPath], deps);
 
     expect(exitCode).toBe(0);
     expect(spawnCount).toBe(0);
     expect(lastOpenedUrl).toBe(
       expectedOpenUrl("http://localhost:5173", documentPath),
     );
-  });
-
-  it("posts the default open watcher to the dev API behind the live frontend", async () => {
-    const documentPath = path.join(projectDir, "draft.md");
-    fs.writeFileSync(documentPath, "# Draft\n");
-    fs.writeFileSync(
-      devFrontendStateFile,
-      `${JSON.stringify(
-        {
-          apiPort: 3000,
-          appPort: 5173,
-          mode: "full-dev",
-          repoRoot: serverRoot,
-          startedAt: new Date().toISOString(),
-          url: "http://localhost:5173",
-        },
-        null,
-        2,
-      )}\n`,
-    );
-
-    let lastOpenedUrl: string | null = null;
-    let watchUrl: string | null = null;
-    let spawnCount = 0;
-
-    const deps = createCliDependencies({
-      env: {
-        ...process.env,
-        ROUGHDRAFT_STATE_DIR: stateDir,
-        ROUGHDRAFT_DEV_FRONTEND_STATE_FILE: devFrontendStateFile,
-      },
-      cwd: projectDir,
-      fetchImpl: async (input, _init) => {
-        const url =
-          input instanceof URL
-            ? input
-            : new URL(
-                typeof input === "string" ? input : input.url,
-                "http://localhost",
-              );
-
-        if (url.pathname === "/api/status" && url.port === "5173") {
-          return new Response(
-            JSON.stringify({
-              backend: "local-files",
-              port: 3000,
-              projectDir,
-              serverRoot,
-            }),
-            {
-              status: 200,
-              headers: { "Content-Type": "application/json" },
-            },
-          );
-        }
-
-        if (url.pathname === "/api/review-events/watch") {
-          watchUrl = url.toString();
-          return new Response(
-            JSON.stringify({
-              events: [{ documentPath, type: "review.completed" }],
-              timedOut: false,
-              nextSequence: 2,
-            }),
-            {
-              status: 200,
-              headers: { "Content-Type": "application/json" },
-            },
-          );
-        }
-
-        throw new Error(`Unexpected request: ${url.toString()}`);
-      },
-      spawnServerProcess: async () => {
-        spawnCount += 1;
-        throw new Error("should not spawn");
-      },
-      isProcessRunning: () => false,
-      stopProcess: async () => {},
-      openUrl: (url) => {
-        lastOpenedUrl = url;
-        return "disabled";
-      },
-      log: () => {},
-      error: () => {},
-      resolveUpdateStatus: noUpdateStatus,
-    });
-
-    const exitCode = await runCli(
-      ["open", documentPath, "--json", "--batch-window", "0"],
-      deps,
-    );
-
-    expect(exitCode).toBe(0);
-    expect(spawnCount).toBe(0);
-    expect(lastOpenedUrl).toBe(
-      expectedOpenUrl("http://localhost:5173", documentPath),
-    );
-    expect(watchUrl).toBe("http://localhost:3000/api/review-events/watch");
   });
 
   it("falls back to the api server URL when the dev frontend hint is stale", async () => {
@@ -795,10 +704,7 @@ describe("cli", () => {
     );
 
     const test = createTestDependencies();
-    const exitCode = await runCli(
-      ["open", documentPath, "--no-watch"],
-      test.deps,
-    );
+    const exitCode = await runCli(["open", documentPath], test.deps);
     const persisted = JSON.parse(
       fs.readFileSync(getServerStateFilePath(test.deps.env), "utf8"),
     ) as { port: number };
@@ -871,7 +777,7 @@ describe("cli", () => {
       error: () => {},
     });
 
-    const exitCode = await runCli(["open", documentPath, "--no-watch"], deps);
+    const exitCode = await runCli(["open", documentPath], deps);
 
     expect(exitCode).toBe(0);
     expect(spawnCount).toBe(0);
@@ -950,159 +856,15 @@ describe("cli", () => {
     });
   });
 
-  it("prints watch and mcp in top-level help", async () => {
+  it("prints mcp and omits the removed watch command in top-level help", async () => {
     const test = createTestDependencies();
 
     const exitCode = await runCli(["--help"], test.deps);
 
     expect(exitCode).toBe(0);
-    expect(test.logs.join("\n")).toContain("watch <path>");
+    expect(test.logs.join("\n")).not.toContain("watch <path>");
     expect(test.logs.join("\n")).toContain("mcp");
   });
-
-  it("waits for a review completed event from watch --json", async () => {
-    const test = createTestDependencies();
-    const documentPath = path.join(projectDir, "draft.md");
-    fs.writeFileSync(documentPath, "# Draft\n");
-
-    const watchPromise = runCli(
-      [
-        "watch",
-        documentPath,
-        "--json",
-        "--timeout",
-        "2",
-        "--batch-window",
-        "0",
-      ],
-      test.deps,
-    );
-
-    let persisted: { port: number } | null = null;
-    for (let attempt = 0; attempt < 20; attempt += 1) {
-      const stateFile = getServerStateFilePath(test.deps.env);
-      if (fs.existsSync(stateFile)) {
-        persisted = JSON.parse(fs.readFileSync(stateFile, "utf8")) as {
-          port: number;
-        };
-        break;
-      }
-      await new Promise((resolve) => setTimeout(resolve, 10));
-    }
-
-    expect(persisted).not.toBeNull();
-    await fetch(`http://localhost:${persisted?.port}/api/review-events`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        projectPath: projectDir,
-        path: "draft.md",
-        overallComment: "Please prioritize the CLI contract.",
-      }),
-    });
-
-    const exitCode = await watchPromise;
-    const payload = parseOnlyJsonLog<{
-      timedOut: boolean;
-      events: Array<{
-        documentPath: string;
-        overallComment?: string;
-        type: string;
-      }>;
-    }>(test.logs);
-
-    expect(exitCode).toBe(0);
-    expect(payload.timedOut).toBe(false);
-    expect(payload.events).toHaveLength(1);
-    expect(payload.events[0]).toMatchObject({
-      documentPath,
-      overallComment: "Please prioritize the CLI contract.",
-      type: "review.completed",
-    });
-  });
-
-  it("opens a document and waits for the next review event by default from open --json", async () => {
-    const test = createTestDependencies();
-    const documentPath = path.join(projectDir, "draft.md");
-    fs.writeFileSync(documentPath, "# Draft\n");
-    let watchRequestBody: {
-      timeoutSeconds?: number;
-      batchWindowSeconds?: number;
-    } | null = null;
-    const deps = {
-      ...test.deps,
-      fetchImpl: async (input: Parameters<typeof fetch>[0], init) => {
-        const url =
-          input instanceof URL
-            ? input
-            : new URL(
-                typeof input === "string" ? input : input.url,
-                "http://localhost",
-              );
-        if (
-          url.pathname === "/api/review-events/watch" &&
-          typeof init?.body === "string"
-        ) {
-          watchRequestBody = JSON.parse(init.body) as {
-            timeoutSeconds?: number;
-            batchWindowSeconds?: number;
-          };
-        }
-        return test.deps.fetchImpl(input, init);
-      },
-    };
-
-    const watchPromise = runCli(
-      ["open", documentPath, "--json", "--batch-window", "0"],
-      deps,
-    );
-
-    let persisted: { port: number } | null = null;
-    for (let attempt = 0; attempt < 20; attempt += 1) {
-      const stateFile = getServerStateFilePath(test.deps.env);
-      if (fs.existsSync(stateFile)) {
-        persisted = JSON.parse(fs.readFileSync(stateFile, "utf8")) as {
-          port: number;
-        };
-        break;
-      }
-      await new Promise((resolve) => setTimeout(resolve, 10));
-    }
-
-    expect(persisted).not.toBeNull();
-    for (let attempt = 0; attempt < 20; attempt += 1) {
-      if (watchRequestBody) break;
-      await new Promise((resolve) => setTimeout(resolve, 10));
-    }
-    expect(watchRequestBody).toMatchObject({
-      batchWindowSeconds: 0,
-    });
-    expect(watchRequestBody).not.toHaveProperty("timeoutSeconds");
-    await fetch(`http://localhost:${persisted?.port}/api/review-events`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ projectPath: projectDir, path: "draft.md" }),
-    });
-
-    const exitCode = await watchPromise;
-    const payload = parseOnlyJsonLog<{
-      timedOut: boolean;
-      events: Array<{ documentPath: string; type: string }>;
-    }>(test.logs);
-
-    expect(exitCode).toBe(0);
-    expect(test.getLastOpenedUrl()).toContain(encodeURIComponent(documentPath));
-    expect(payload).toMatchObject({
-      timedOut: false,
-      events: [
-        {
-          documentPath,
-          type: "review.completed",
-        },
-      ],
-    });
-  });
-
   it("cleans stale state during status checks", async () => {
     const test = createTestDependencies();
     const stateFilePath = getServerStateFilePath(test.deps.env);
@@ -1188,10 +950,7 @@ describe("cli", () => {
     fs.writeFileSync(documentPath, "# Draft\n");
 
     const statusExitCode = await runCli(["status"], deps);
-    const openExitCode = await runCli(
-      ["open", documentPath, "--no-watch"],
-      deps,
-    );
+    const openExitCode = await runCli(["open", documentPath], deps);
 
     expect(statusExitCode).toBe(0);
     expect(openExitCode).toBe(0);
@@ -1471,13 +1230,7 @@ describe("cli", () => {
 
     expect(exitCode).toBe(0);
     expect(test.logs).toContain(
-      "  roughdraft open <path> [--no-open] [--no-watch] [--print-url] [--port <port>]",
-    );
-    expect(test.logs).toContain(
-      "  --no-watch           Open the file without waiting",
-    );
-    expect(test.logs).toContain(
-      "  --timeout <seconds>  Maximum watch time; omitted means no timeout",
+      "  roughdraft open <path> [--no-open] [--print-url] [--port <port>]",
     );
   });
 

@@ -2,10 +2,10 @@ import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
+  rawMarkdownBlockAttribute,
   splitYamlFrontmatter,
   toHtml,
   toMarkdown,
-  rawMarkdownBlockAttribute,
 } from "./markdown";
 
 function readMarkdownFixture(name: string): string {
@@ -139,6 +139,20 @@ describe("normalizeBlockSpacing", () => {
     const html = "<ul><li>Alpha</li><li>Beta</li></ul>";
 
     expect(toMarkdown(html)).toBe("- Alpha\n- Beta\n");
+  });
+
+  it.each([
+    "- [ ] Task text\n",
+    "- [x] Completed task\n",
+  ])("keeps GFM task-item checkbox markers and text on one line: %s", (markdown) => {
+    expect(toMarkdown(toHtml(markdown))).toBe(markdown);
+  });
+
+  it("keeps adjacent GFM task items tight", () => {
+    const markdown =
+      "- [ ] Task text\n- [x] Completed task\n\nFollowing paragraph.\n";
+
+    expect(toMarkdown(toHtml(markdown))).toBe(markdown);
   });
 });
 

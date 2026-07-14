@@ -10,6 +10,7 @@ import {
   readProjectFile,
   removeMarkdownProject,
   richTextEditor,
+  selectRichText,
   writeProjectFile,
 } from "./helpers";
 
@@ -166,6 +167,43 @@ test.describe("markdown round-trips", () => {
     logE2eEvent("markdown-roundtrip.rich-manual-save", {
       file: "rich-save.md",
       size: fs.statSync(filePath).size,
+    });
+  });
+
+  test("keeps GFM task text on the checkbox line after a rich-text save", async ({
+    page,
+  }) => {
+    const filePath = writeProjectFile(
+      projectDir,
+      "task-list.md",
+      "- [ ] Task text\n- [x] Finished task\n\nFollowing paragraph.\n",
+    );
+
+    await openMarkdownFile(page, filePath, "rich-text");
+    const editor = richTextEditor(page);
+    await editor.click();
+    await page.keyboard.press(
+      process.platform === "darwin" ? "Meta+Alt+S" : "Control+Alt+S",
+    );
+    await expect(page.getByTestId("document-mode-trigger")).toContainText(
+      "Editing",
+    );
+
+    await selectRichText(page, "Following paragraph.");
+    await page.keyboard.press("ArrowRight");
+    await page.keyboard.type(" Updated.");
+    await page.keyboard.press(
+      process.platform === "darwin" ? "Meta+S" : "Control+S",
+    );
+
+    await expect
+      .poll(() => readProjectFile(projectDir, "task-list.md"))
+      .toBe(
+        "- [ ] Task text\n- [x] Finished task\n\nFollowing paragraph. Updated.\n",
+      );
+
+    logE2eEvent("markdown-roundtrip.task-list-preserved", {
+      file: "task-list.md",
     });
   });
 

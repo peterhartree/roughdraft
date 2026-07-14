@@ -82,16 +82,10 @@ That makes an agent-friendly workflow possible:
   
 4. You read, edit, leave comments, and suggest changes.
   
-5. You click **Done Reviewing** in Roughdraft, and the AI can respond to your comments or revise the document.
+5. You close the document and ask the AI to read the Roughdraft comments saved in the Markdown file.
   
 
-Agents can watch that handoff directly:
-
-```bash
-roughdraft open ./path/to/my-essay/draft.md --json
-```
-
-`roughdraft open` starts or reuses the local server, opens the document, registers a fresh watcher, blocks until the next `review.completed` event, then prints event JSON with the document path, file version, feedback counts, and any optional `overallComment` you submit at handoff. By default there is no watch timeout; pass `--timeout <seconds>` when you want one. Use `--no-watch` when you only want to open the document and return immediately. If no watcher is active when you click **Done Reviewing**, Roughdraft shows a fallback prompt you can copy into the agent. Overall comments are written to Markdown as document-level YAML endmatter comments before the handoff event is emitted, so Markdown remains the durable source of truth.
+`roughdraft open` starts or reuses the local server, opens the document, and returns. Comments and suggested edits are saved as CriticMarkup in the Markdown file. Roughdraft does not send a completion signal; close the document when you are finished and ask the agent to read the updated file.
 
 Experimental MCP clients can start the stdio server with:
 
@@ -99,7 +93,7 @@ Experimental MCP clients can start the stdio server with:
 roughdraft mcp
 ```
 
-The MCP server exposes tools to read the review index, list pending feedback, watch review events, append replies, and mark items resolved. CriticMarkup in the Markdown file remains the durable source of truth.
+The MCP server exposes tools to read the review index, list pending feedback, append replies, and mark items resolved. CriticMarkup in the Markdown file remains the durable source of truth.
 ## Local development
 ```bash
 ./scripts/setup.sh
@@ -111,6 +105,29 @@ The MCP server exposes tools to read the review index, list pending feedback, wa
 The two scripts coordinate through a lock file, so it's safe to start `./scripts/run.sh` while `./scripts/setup.sh` is still in progress. `run` will wait for setup to finish, or trigger setup itself if nothing has been built yet.
 
 If you prefer package scripts, the same commands are available as `pnpm setup` and `pnpm start`.
+
+### Local macOS app
+
+Build and install the personal desktop app with:
+
+```bash
+pnpm --filter @roughdraft/desktop package
+mkdir -p /Users/ph/Applications
+ditto packages/desktop/out/Roughdraft-darwin-arm64/Roughdraft.app /Users/ph/Applications/Roughdraft.app
+```
+
+The local app is named `Roughdraft` and uses bundle identifier `is.pjh.roughdraft`. It is unsigned and intended only for local use. `roughdraft open <file.md>` first sends the document to the managed server and then launches or activates this app. If the bundle cannot be found, the command opens the document URL in the default browser instead; it does not use Chrome app mode.
+
+The writable fork is `origin`; the read-only upstream source is `upstream`. To incorporate upstream changes deliberately:
+
+```bash
+git fetch upstream
+git merge upstream/main
+pnpm check
+pnpm test:smoke
+```
+
+Resolve any local-workflow conflicts before rebuilding and reinstalling the app. Do not automate upstream merges—the Markdown round-trip, CLI and desktop checks are the compatibility gate.
 
 Running `pnpm setup` also installs a per-worktree dev CLI wrapper into `~/.local/bin` by default, using the current worktree directory name. For example, this checkout might install `roughdraft-dev-lyon-v2`, which points at this worktree's local code while leaving the published global `roughdraft` command untouched.
 
@@ -178,11 +195,10 @@ roughdraft <path>
 Commands:
 
 ```text
-open <path>        Open one Markdown file and wait for Done Reviewing
+open <path>        Open one Markdown file in Roughdraft
 start              Start or reuse the background server
 status             Show server status
 stop               Stop the managed background server
-watch <path>       Wait for a Done Reviewing event
 mcp                Start the experimental stdio MCP server
 doctor [path]      Diagnose setup or validate Markdown
 help agent         Print the agent setup prompt
@@ -206,11 +222,9 @@ Useful command flags:
 roughdraft open <path> --no-open
 roughdraft open <path> --print-url
 roughdraft open <path> --json
-roughdraft open <path> --no-watch
 roughdraft start --port <port>
 roughdraft status --json
 roughdraft stop --all
-roughdraft watch ./draft.md --json
 roughdraft doctor --json
 roughdraft doctor ./draft.md
 roughdraft doctor ./draft.md --json

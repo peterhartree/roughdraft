@@ -1,7 +1,7 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { TooltipProvider } from "@/components/ui/tooltip";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import {
   Homepage,
   HomepageSubtitle,
@@ -419,8 +419,8 @@ describe("Homepage", () => {
       "The agent works normally",
       "Roughdraft opens the plan",
       "Leave comments and suggestions",
-      "Click I'm done",
-      "The agent resumes",
+      "Close the document",
+      "Ask the agent to read it",
     ];
 
     const sceneNodes = [
@@ -546,7 +546,7 @@ describe("Homepage", () => {
       'Move the workflow story above "It\'s just Markdown."',
     );
     expect(storyboard.textContent).toContain(
-      "Show the agent pause, the review window, and the resume signal.",
+      "Close the review window, then ask the agent to read the saved comments.",
     );
     expect(storyboard.textContent).toContain(
       "Keep the format section as proof that the review data is portable Markdown.",
@@ -558,11 +558,13 @@ describe("Homepage", () => {
       'This should go above "It\'s just Markdown."',
     );
     expect(storyboard.textContent).not.toContain("Review complete");
-    expect(storyboard.textContent).toContain("I read your comments.");
-    expect(storyboard.textContent).toContain("Waiting for I'm done...");
+    expect(storyboard.textContent).toContain(
+      "Read my Roughdraft comments in the plan.",
+    );
+    expect(storyboard.textContent).toContain("Opened Roughdraft.app.");
   });
 
-  it("shows user-authored review feedback before the agent responds after handoff", async () => {
+  it("shows user-authored feedback before the agent responds on request", async () => {
     Object.defineProperty(document.documentElement, "scrollHeight", {
       configurable: true,
       value: 2200,
@@ -619,7 +621,7 @@ describe("Homepage", () => {
       getByTestId(storyboard, "homepage-workflow-review-rail").textContent,
     ).not.toContain("AI");
     expect(
-      getByTestId(storyboard, "homepage-workflow-agent-resume").getAttribute(
+      getByTestId(storyboard, "homepage-workflow-agent-follow-up").getAttribute(
         "data-terminal-line-visible",
       ),
     ).toBe("false");
@@ -635,9 +637,11 @@ describe("Homepage", () => {
         "data-homepage-workflow-terminal-stage",
       ),
     ).toBe("6");
-    expect(storyboard.textContent).toContain("I read your comments.");
+    expect(storyboard.textContent).toContain(
+      "Read my Roughdraft comments in the plan.",
+    );
     expect(
-      getByTestId(storyboard, "homepage-workflow-agent-resume").getAttribute(
+      getByTestId(storyboard, "homepage-workflow-agent-follow-up").getAttribute(
         "data-terminal-line-visible",
       ),
     ).toBe("true");
@@ -824,7 +828,6 @@ describe("Homepage", () => {
     expect(container.textContent).toContain("Live Preview");
     expect(container.textContent).toContain("This draft only lives in memory.");
     expect(container.textContent).toContain("Select this sentence");
-    expect(container.textContent).not.toContain("I'm done");
     expect(container.textContent).not.toContain("Review ready");
     expect(container.textContent).not.toContain("Copy prompt");
     expect(setItem).not.toHaveBeenCalled();

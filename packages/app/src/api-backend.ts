@@ -1,11 +1,8 @@
 import {
   type BackendInfo,
-  type CompleteReviewOptions,
-  type CompleteReviewResult,
   type MarkdownFileChangeEvent,
   MarkdownFileConflictError,
   type Page,
-  type ReviewWatchStatus,
   type StorageBackend,
   type StoredAsset,
 } from "./storage";
@@ -108,56 +105,6 @@ export class ApiBackend implements StorageBackend {
 
     return () => {
       source.close();
-    };
-  }
-
-  async completeReview(
-    relativePath: string,
-    options: CompleteReviewOptions = {},
-  ): Promise<CompleteReviewResult> {
-    const overallComment = options.overallComment?.trim();
-    const res = await fetch(
-      this.buildUrl("/api/review-events", { path: relativePath }),
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          projectPath: this.info.projectPath,
-          path: relativePath,
-          ...(overallComment ? { overallComment } : {}),
-        }),
-      },
-    );
-
-    if (!res.ok) {
-      throw new Error(
-        `Failed to complete review ${relativePath}: ${res.status}`,
-      );
-    }
-
-    const payload = (await res.json()) as { delivered?: unknown };
-    return { delivered: payload.delivered === true };
-  }
-
-  async getReviewWatchStatus(relativePath: string): Promise<ReviewWatchStatus> {
-    const res = await fetch(
-      this.buildUrl("/api/review-events/status", { path: relativePath }),
-    );
-
-    if (!res.ok) {
-      throw new Error(
-        `Failed to get review watch status ${relativePath}: ${res.status}`,
-      );
-    }
-
-    const payload = (await res.json()) as {
-      watching?: unknown;
-      watcherCount?: unknown;
-    };
-    return {
-      watching: payload.watching === true,
-      watcherCount:
-        typeof payload.watcherCount === "number" ? payload.watcherCount : 0,
     };
   }
 
