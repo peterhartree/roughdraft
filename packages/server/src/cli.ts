@@ -1438,6 +1438,32 @@ async function normalizeTrackedState(
   return normalizedState;
 }
 
+function retrackDiscoveredServer(
+  stateFilePath: string,
+  port: number,
+  statusPayload: StatusPayload,
+): ReusableServer | null {
+  if (typeof statusPayload.pid !== "number") {
+    return null;
+  }
+
+  const state: RoughdraftServerState = {
+    port,
+    pid: statusPayload.pid,
+    startedAt: new Date().toISOString(),
+    url: buildPublicBaseUrl(port),
+  };
+  writeServerStateToDisk(stateFilePath, state);
+
+  return {
+    port: state.port,
+    url: state.url,
+    tracked: true,
+    pid: state.pid,
+    startedAt: state.startedAt,
+  };
+}
+
 async function findReusableServer(
   deps: CliDependencies,
   options: { serverRoot?: string } = {},
@@ -1475,13 +1501,19 @@ async function findReusableServer(
     removeServerStateFile(stateFilePath);
 
     if (statusPayload && matchesServerRoot(statusPayload)) {
-      return {
-        port: persistedState.port,
-        url: buildPublicBaseUrl(persistedState.port),
-        tracked: false,
-        pid: null,
-        startedAt: null,
-      };
+      return (
+        retrackDiscoveredServer(
+          stateFilePath,
+          persistedState.port,
+          statusPayload,
+        ) ?? {
+          port: persistedState.port,
+          url: buildPublicBaseUrl(persistedState.port),
+          tracked: false,
+          pid: null,
+          startedAt: null,
+        }
+      );
     }
   }
 
@@ -1490,13 +1522,15 @@ async function findReusableServer(
     return null;
   }
 
-  return {
-    port: preferredPort,
-    url: buildPublicBaseUrl(preferredPort),
-    tracked: false,
-    pid: null,
-    startedAt: null,
-  };
+  return (
+    retrackDiscoveredServer(stateFilePath, preferredPort, preferredStatus) ?? {
+      port: preferredPort,
+      url: buildPublicBaseUrl(preferredPort),
+      tracked: false,
+      pid: null,
+      startedAt: null,
+    }
+  );
 }
 
 export async function readRunningServerState(

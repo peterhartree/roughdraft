@@ -963,6 +963,77 @@ describe("cli", () => {
     expect(fs.existsSync(stateFilePath)).toBeFalsy();
   });
 
+  it("re-tracks a discovered server that reports its pid so the desktop app can find it", async () => {
+    const stateFilePath = path.join(stateDir, "server.json");
+    const unmanagedPid = 515151;
+
+    const deps = createCliDependencies({
+      env: {
+        ...process.env,
+        ROUGHDRAFT_STATE_DIR: stateDir,
+      },
+      cwd: projectDir,
+      fetchImpl: async (input) => {
+        const url =
+          input instanceof URL
+            ? input
+            : new URL(
+                typeof input === "string" ? input : input.url,
+                "http://localhost",
+              );
+
+        if (
+          url.pathname === "/api/status" &&
+          url.port === String(ROUGHDRAFT_DEFAULT_PORT)
+        ) {
+          return new Response(
+            JSON.stringify({
+              backend: "local-files",
+              pid: unmanagedPid,
+              port: ROUGHDRAFT_DEFAULT_PORT,
+              projectDir,
+              serverRoot,
+            }),
+            {
+              status: 200,
+              headers: { "Content-Type": "application/json" },
+            },
+          );
+        }
+
+        throw new Error("connect ECONNREFUSED");
+      },
+      isProcessRunning: (pid) => pid === unmanagedPid,
+      stopProcess: async () => {},
+      spawnServerProcess: async () => {
+        throw new Error("should not spawn");
+      },
+      openUrl: () => "disabled",
+      log: () => {},
+      error: () => {},
+    });
+
+    const documentPath = path.join(projectDir, "draft.md");
+    fs.writeFileSync(documentPath, "# Draft\n");
+
+    const exitCode = await runCli(["open", documentPath], deps);
+
+    expect(exitCode).toBe(0);
+    expect(fs.existsSync(stateFilePath)).toBeTruthy();
+    const persisted = JSON.parse(fs.readFileSync(stateFilePath, "utf8")) as {
+      port: number;
+      pid: number;
+      startedAt: string;
+      url: string;
+    };
+    expect(persisted).toMatchObject({
+      port: ROUGHDRAFT_DEFAULT_PORT,
+      pid: unmanagedPid,
+      url: `http://localhost:${ROUGHDRAFT_DEFAULT_PORT}`,
+    });
+    expect(typeof persisted.startedAt).toBe("string");
+  });
+
   it("rejects directories before opening", async () => {
     const test = createTestDependencies();
 
