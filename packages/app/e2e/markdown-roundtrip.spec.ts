@@ -64,6 +64,33 @@ test.describe("markdown round-trips", () => {
     });
   });
 
+  test("renders tables with inline code in adjacent cells @smoke", async ({
+    page,
+  }) => {
+    const markdown = [
+      "| Raw display name | Text reaching transforms |",
+      "| --- | --- |",
+      "| `80000_Hours` | `80000 Hours` |",
+      "",
+    ].join("\n");
+    const filePath = writeProjectFile(
+      projectDir,
+      "inline-code-table.md",
+      markdown,
+    );
+
+    await openMarkdownFile(page, filePath);
+    const editor = richTextEditor(page);
+
+    await expect(editor.locator("table")).toHaveCount(1); // selector-check-ignore -- semantic output is the contract
+    await expect(editor).toContainText("80000_Hours");
+    await expect(editor).toContainText("80000 Hours");
+
+    logE2eEvent("markdown-roundtrip.inline-code-table-rendered", {
+      file: "inline-code-table.md",
+    });
+  });
+
   test("saves code-mode edits to disk while preserving fenced CriticMarkup examples @smoke", async ({
     page,
   }) => {

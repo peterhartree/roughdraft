@@ -194,6 +194,46 @@ describe("createApp", () => {
     );
   });
 
+  it("accepts an idempotent save after the expected version becomes stale", async () => {
+    const filePath = path.join(projectDir, "draft.md");
+    fs.writeFileSync(filePath, "# Original\n");
+
+    const { app } = createApp({
+      homeDir,
+      staticDirPath: projectDir,
+    });
+
+    const readResponse = await request(app).get("/api/markdown-file").query({
+      projectPath: projectDir,
+      path: "draft.md",
+    });
+
+    const firstSaveResponse = await request(app)
+      .put("/api/markdown-file")
+      .query({ projectPath: projectDir, path: "draft.md" })
+      .send({
+        content: "# Saved\n",
+        expectedVersion: readResponse.body.version,
+      });
+    expect(firstSaveResponse.status).toBe(200);
+
+    const repeatedSaveResponse = await request(app)
+      .put("/api/markdown-file")
+      .query({ projectPath: projectDir, path: "draft.md" })
+      .send({
+        content: "# Saved\n",
+        expectedVersion: readResponse.body.version,
+      });
+
+    expect(repeatedSaveResponse.status).toBe(200);
+    expect(repeatedSaveResponse.body).toMatchObject({
+      id: "draft",
+      title: "Saved",
+      content: "# Saved\n",
+    });
+    expect(fs.readFileSync(filePath, "utf-8")).toBe("# Saved\n");
+  });
+
   it("rejects stale markdown-file writes when file metadata is unchanged", async () => {
     const filePath = path.join(projectDir, "draft.md");
     const fixedTimestamp = new Date("2026-01-01T00:00:00.000Z");

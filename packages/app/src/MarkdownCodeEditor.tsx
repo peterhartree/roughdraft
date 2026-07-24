@@ -4,6 +4,11 @@ import { yamlFrontmatter } from "@codemirror/lang-yaml";
 import { EditorState, type Extension } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { useEffect, useRef } from "react";
+import type {
+  DocumentEditorViewController,
+  DocumentEditorViewState,
+} from "./document-view-state";
+import { getDocumentEditorSelectionForMode } from "./document-view-state";
 import { cn } from "./lib/utils";
 
 interface MarkdownCodeEditorProps {
@@ -13,6 +18,9 @@ interface MarkdownCodeEditorProps {
   readOnly?: boolean;
   className?: string;
   testId?: string;
+  onViewControllerChange?: (
+    controller: DocumentEditorViewController | null,
+  ) => void;
 }
 
 export function createMarkdownCodeEditorExtensions(
@@ -91,16 +99,22 @@ export function MarkdownCodeEditor({
   readOnly = false,
   className,
   testId,
+  onViewControllerChange,
 }: MarkdownCodeEditorProps) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const editorViewRef = useRef<EditorView | null>(null);
   const onChangeRef = useRef(onChange);
   const initialValueRef = useRef(value);
   const lastValueRef = useRef(value);
+  const onViewControllerChangeRef = useRef(onViewControllerChange);
 
   useEffect(() => {
     onChangeRef.current = onChange;
   }, [onChange]);
+
+  useEffect(() => {
+    onViewControllerChangeRef.current = onViewControllerChange;
+  }, [onViewControllerChange]);
 
   useEffect(() => {
     const hostElement = hostRef.current;
@@ -121,11 +135,33 @@ export function MarkdownCodeEditor({
     editorViewRef.current = view;
     lastValueRef.current = view.state.doc.toString();
 
+    const viewController: DocumentEditorViewController = {
+      capture: () => ({
+        mode: "code",
+        anchor: view.state.selection.main.anchor,
+        head: view.state.selection.main.head,
+      }),
+      restore: (state: DocumentEditorViewState | null) => {
+        const documentLength = view.state.doc.length;
+        const selection = getDocumentEditorSelectionForMode(
+          state,
+          "code",
+          documentLength,
+        );
+        const anchor = selection?.anchor ?? 0;
+        const head = selection?.head ?? anchor;
+        view.dispatch({ selection: { anchor, head } });
+        view.focus();
+      },
+    };
+    onViewControllerChangeRef.current?.(viewController);
+
     if (autoFocus) {
       view.focus();
     }
 
     return () => {
+      onViewControllerChangeRef.current?.(null);
       editorViewRef.current = null;
       view.destroy();
     };

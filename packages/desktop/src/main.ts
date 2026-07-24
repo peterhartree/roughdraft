@@ -1,4 +1,5 @@
 import { app, BrowserWindow, type Event, session, shell } from "electron";
+import { shouldSuppressNativeCloseShortcut } from "./document-shortcuts.js";
 import {
   isAllowedExternalUrl,
   isAllowedNavigation,
@@ -76,6 +77,16 @@ async function createMainWindow(): Promise<void> {
   };
   mainWindow.webContents.on("will-navigate", preventDisallowedNavigation);
   mainWindow.webContents.on("will-redirect", preventDisallowedNavigation);
+  mainWindow.webContents.on("before-input-event", (_event, input) => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    mainWindow.webContents.setIgnoreMenuShortcuts(
+      shouldSuppressNativeCloseShortcut(
+        input,
+        mainWindow.webContents.getURL(),
+        validatedOrigin,
+      ),
+    );
+  });
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     if (isAllowedExternalUrl(url)) {
       void shell.openExternal(url);

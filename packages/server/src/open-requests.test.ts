@@ -9,7 +9,7 @@ describe("OpenRequestBroker", () => {
     broker.connect((intent) => first.push(intent.path));
     broker.connect((intent) => second.push(intent.path));
 
-    expect(broker.request({ path: "/tmp/draft.md" })).toEqual({
+    expect(broker.request({ path: "/tmp/draft.md", modifiedAt: 100 })).toEqual({
       accepted: true,
       delivered: true,
     });
@@ -20,7 +20,7 @@ describe("OpenRequestBroker", () => {
   it("holds a cold-start intent until a client connects", () => {
     const broker = new OpenRequestBroker();
 
-    expect(broker.request({ path: "/tmp/draft.md" })).toEqual({
+    expect(broker.request({ path: "/tmp/draft.md", modifiedAt: 100 })).toEqual({
       accepted: true,
       delivered: false,
     });
@@ -32,8 +32,8 @@ describe("OpenRequestBroker", () => {
 
   it("keeps only the newest pending intent", () => {
     const broker = new OpenRequestBroker();
-    broker.request({ path: "/tmp/first.md" });
-    broker.request({ path: "/tmp/latest.md" });
+    broker.request({ path: "/tmp/first.md", modifiedAt: 100 });
+    broker.request({ path: "/tmp/latest.md", modifiedAt: 200 });
 
     const received: string[] = [];
     broker.connect((intent) => received.push(intent.path));
@@ -42,7 +42,7 @@ describe("OpenRequestBroker", () => {
 
   it("does not replay a consumed intent on reconnect", () => {
     const broker = new OpenRequestBroker();
-    broker.request({ path: "/tmp/draft.md" });
+    broker.request({ path: "/tmp/draft.md", modifiedAt: 100 });
     const first: string[] = [];
     const firstConnection = broker.connect((intent) => first.push(intent.path));
     firstConnection.disconnect();
@@ -63,7 +63,7 @@ describe("OpenRequestBroker", () => {
     connection.disconnect();
     broker.connect((intent) => active.push(intent.path));
 
-    broker.request({ path: "/tmp/draft.md" });
+    broker.request({ path: "/tmp/draft.md", modifiedAt: 100 });
     expect(disconnected).toEqual([]);
     expect(active).toEqual(["/tmp/draft.md"]);
   });

@@ -110,6 +110,7 @@ interface EnsureRunningResult {
 interface ResolvedTargetPath {
   projectDir: string;
   openPath: string;
+  modifiedAt: number;
 }
 
 interface ReusableServer {
@@ -1128,13 +1129,14 @@ async function sendOpenRequestToExistingWindow(
   deps: CliDependencies,
   baseUrl: string,
   openPath: string,
+  modifiedAt: number,
 ): Promise<{ accepted: boolean; delivered: boolean }> {
   try {
     const requestUrl = new URL("/api/open-request", baseUrl);
     const response = await deps.fetchImpl(requestUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ path: openPath }),
+      body: JSON.stringify({ path: openPath, modifiedAt }),
       signal: AbortSignal.timeout(STATUS_TIMEOUT_MS),
     });
 
@@ -1173,6 +1175,7 @@ function resolveTargetPath(inputPath: string): ResolvedTargetPath {
       return {
         projectDir: path.dirname(resolvedPath),
         openPath: resolvedPath,
+        modifiedAt: stat.mtimeMs,
       };
     }
   } catch (error) {
@@ -2369,7 +2372,7 @@ export async function runCli(
         return 1;
       }
 
-      const { projectDir, openPath } = resolvedTarget;
+      const { projectDir, openPath, modifiedAt } = resolvedTarget;
 
       const remoteHost =
         typeof deps.env.ROUGHDRAFT_HOST === "string"
@@ -2403,6 +2406,7 @@ export async function runCli(
           deps,
           baseUrl,
           openPath,
+          modifiedAt,
         );
         openMode = deps.openUrl(targetUrl);
         if (openMode === "desktop-app" && !openRequest.accepted) {

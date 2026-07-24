@@ -1,8 +1,11 @@
+const path = require("node:path");
+
 module.exports = {
   packagerConfig: {
     name: "Roughdraft",
     executableName: "Roughdraft",
     appBundleId: "is.pjh.roughdraft",
+    icon: path.resolve(__dirname, "assets/icon.icns"),
     asar: true,
     prune: false,
     ignore: [

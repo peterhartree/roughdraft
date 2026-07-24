@@ -3,6 +3,8 @@ dist
 coverage
 playwright-report
 test-results
+.context/
+skills-lock.json
 .DS_Store
 *.tsbuildinfo
 sandbox

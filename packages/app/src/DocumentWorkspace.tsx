@@ -36,6 +36,12 @@ import {
   criticMarkdownHasReviewRail,
   criticMarkdownToRenderedHtml,
 } from "./critic-markup";
+import {
+  type DocumentEditorViewController,
+  type DocumentViewController,
+  type DocumentViewRestoreRequest,
+  getRestorableDocumentViewStateForMode,
+} from "./document-view-state";
 import { cn } from "./lib/utils";
 import {
   type DocumentInteractionMode,
@@ -282,10 +288,13 @@ interface DocumentWorkspaceProps {
   onDocumentLocalContentChange: (markdown: string) => void;
   documentDiskChangeState: DiskChangeState;
   documentForceResetKey: string | null;
+  documentViewRestoreRequest?: DocumentViewRestoreRequest | null;
   onReloadDocumentFromDisk: () => void | Promise<void>;
   onKeepEditingWithoutAutosave: () => void;
   onOverwriteDocumentOnDisk: () => void | Promise<void>;
   backend: StorageBackend | null;
+  onSaveControllerChange?: (controller: DocumentSaveController | null) => void;
+  onViewControllerChange?: (controller: DocumentViewController | null) => void;
 }
 
 export function DocumentWorkspace({
@@ -301,10 +310,13 @@ export function DocumentWorkspace({
   onDocumentLocalContentChange,
   documentDiskChangeState,
   documentForceResetKey,
+  documentViewRestoreRequest = null,
   onReloadDocumentFromDisk,
   onKeepEditingWithoutAutosave,
   onOverwriteDocumentOnDisk,
   backend,
+  onSaveControllerChange,
+  onViewControllerChange,
 }: DocumentWorkspaceProps) {
   const [documentInteractionMode, setDocumentInteractionMode] =
     useState<DocumentInteractionMode>("editing");
@@ -314,6 +326,12 @@ export function DocumentWorkspace({
     useState<FileCopyAction | null>(null);
   const copiedFileActionTimeoutRef = useRef<number | null>(null);
   const saveControllerRef = useRef<DocumentSaveController | null>(null);
+  const workspaceScrollRef = useRef<HTMLDivElement | null>(null);
+  const lastRestoreRequestIdRef = useRef<number | null>(null);
+  const [editorViewControllerEntry, setEditorViewControllerEntry] = useState<{
+    path: string | null;
+    controller: DocumentEditorViewController;
+  } | null>(null);
 
   const handleSaveStateChange = useCallback(
     (state: DocumentSaveState) => {
@@ -322,6 +340,86 @@ export function DocumentWorkspace({
     },
     [onDocumentSaveStateChange],
   );
+  const handleSaveControllerChange = useCallback(
+    (controller: DocumentSaveController | null) => {
+      saveControllerRef.current = controller;
+      onSaveControllerChange?.(controller);
+    },
+    [onSaveControllerChange],
+  );
+  const handleViewControllerChange = useCallback(
+    (controller: DocumentEditorViewController | null) => {
+      setEditorViewControllerEntry((current) => {
+        if (controller) return { path: documentCopyPath, controller };
+        return current?.path === documentCopyPath ? null : current;
+      });
+    },
+    [documentCopyPath],
+  );
+
+  useEffect(() => {
+    if (!editorViewControllerEntry) {
+      onViewControllerChange?.(null);
+      return;
+    }
+
+    const controller: DocumentViewController = {
+      path: editorViewControllerEntry.path,
+      capture: (capturedAt = Date.now()) => {
+        const scrollContainer = workspaceScrollRef.current;
+        if (!scrollContainer) return null;
+
+        return {
+          capturedAt,
+          scrollTop: scrollContainer.scrollTop,
+          editor: editorViewControllerEntry.controller.capture(),
+        };
+      },
+    };
+    onViewControllerChange?.(controller);
+    return () => onViewControllerChange?.(null);
+  }, [editorViewControllerEntry, onViewControllerChange]);
+
+  useEffect(() => {
+    if (
+      !documentViewRestoreRequest ||
+      documentViewRestoreRequest.path !== documentCopyPath ||
+      !editorViewControllerEntry ||
+      editorViewControllerEntry.path !== documentCopyPath ||
+      lastRestoreRequestIdRef.current === documentViewRestoreRequest.id
+    ) {
+      return;
+    }
+
+    const state = getRestorableDocumentViewStateForMode(
+      documentViewRestoreRequest.state,
+      documentEditorViewMode,
+    );
+    const editorState = state?.editor ?? null;
+    const scrollTop = state?.scrollTop ?? 0;
+    const scrollContainer = workspaceScrollRef.current;
+    if (scrollContainer) scrollContainer.scrollTop = scrollTop;
+
+    let settleFrame = 0;
+    const focusFrame = requestAnimationFrame(() => {
+      editorViewControllerEntry.controller.restore(editorState);
+      if (scrollContainer) scrollContainer.scrollTop = scrollTop;
+      lastRestoreRequestIdRef.current = documentViewRestoreRequest.id;
+      settleFrame = requestAnimationFrame(() => {
+        if (scrollContainer) scrollContainer.scrollTop = scrollTop;
+      });
+    });
+
+    return () => {
+      cancelAnimationFrame(focusFrame);
+      if (settleFrame) cancelAnimationFrame(settleFrame);
+    };
+  }, [
+    documentCopyPath,
+    documentEditorViewMode,
+    documentViewRestoreRequest,
+    editorViewControllerEntry,
+  ]);
 
   const [documentHasComments, setDocumentHasComments] = useState(
     () =>
@@ -442,12 +540,16 @@ export function DocumentWorkspace({
       : conflictNoticeCopy[documentDiskChangeState];
 
   return (
-    <div className="min-h-0 flex-1 overflow-y-auto px-8 pb-8 sm:px-12">
+    <div
+      ref={workspaceScrollRef}
+      data-testid="document-workspace-scroll"
+      className="min-h-0 flex-1 overflow-y-auto px-8 pb-8 sm:px-12"
+    >
       <RemoteSessionBanner backend={backend} />
       {documentPage ? (
         <div
           className={cn(
-            "fixed left-3 z-[60]",
+            "fixed left-[calc(var(--roughdraft-sidebar-width,0px)+0.75rem)] z-[60]",
             conflictNotice ? "bottom-3" : "top-3",
           )}
           data-testid="document-save-status-corner"
@@ -685,7 +787,7 @@ export function DocumentWorkspace({
         {documentPage ? (
           backend ? (
             <PageCard
-              key={`${documentPage.id}:${activeDocumentPath ?? ""}`}
+              key={`${documentPage.id}:${documentCopyPath ?? activeDocumentPath ?? ""}`}
               page={documentPage}
               activeDocumentPath={activeDocumentPath}
               selected
@@ -697,9 +799,8 @@ export function DocumentWorkspace({
               onCommentRailPresenceChange={setDocumentHasComments}
               onDirtyStateChange={onDocumentDirtyStateChange}
               onLocalContentChange={onDocumentLocalContentChange}
-              onSaveControllerChange={(controller) => {
-                saveControllerRef.current = controller;
-              }}
+              onSaveControllerChange={handleSaveControllerChange}
+              onViewControllerChange={handleViewControllerChange}
               saveBlocked={documentDiskChangeState !== "clean"}
               forceResetKey={documentForceResetKey}
             />

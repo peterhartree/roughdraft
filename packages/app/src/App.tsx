@@ -12,6 +12,7 @@ import {
   Terminal,
 } from "lucide-react";
 import {
+  type CSSProperties,
   type ReactNode,
   type Ref,
   useCallback,
@@ -28,6 +29,7 @@ import {
   getDocumentEditorViewModeFromLocation,
   getPathLeaf,
   getRequestedPathState,
+  getRequestedPathStateForPath,
   joinPath,
   PREVIEW_PATH,
   ROUGHDRAFT_FLAVORED_MARKDOWN_PATH,
@@ -51,12 +53,44 @@ import {
   normalizeCommentMeasurement,
   resolveAnchoredRailLayouts,
 } from "./document-comments";
+import {
+  type DocumentViewController,
+  type DocumentViewRestoreRequest,
+  type DocumentViewState,
+  getRestorableDocumentViewState,
+} from "./document-view-state";
 import { cn } from "./lib/utils";
-import type { DocumentSaveState } from "./PageCard";
+import { OpenFileSidebar } from "./OpenFileSidebar";
+import { OpenFileSwitcher } from "./OpenFileSwitcher";
+import {
+  getOpenFileCloseCandidates,
+  getOpenFileShortcut,
+  isCloseOpenFileShortcut,
+  isOpenFileSwitcherShortcut,
+  markOpenFileRead,
+  type OpenFileItem,
+  shouldHandleOpenRequestInSession,
+  upsertOpenFile,
+} from "./open-file-navigation";
+import {
+  clearOpenFileSession,
+  readOpenFileSession,
+  writeOpenFileSession,
+} from "./open-file-session";
+import type { DocumentSaveController, DocumentSaveState } from "./PageCard";
 import { PreviewBackend } from "./preview-backend";
+import { RecentDocumentsPage } from "./RecentDocumentsPage";
 import { RoughdraftFormatDemo } from "./RoughdraftFormatDemo";
 import {
+  type RecentDocument,
+  readRecentDocuments,
+  removeRecentDocument,
+  touchRecentDocument,
+  writeRecentDocuments,
+} from "./recent-documents";
+import {
   MarkdownFileConflictError,
+  MarkdownFileNotFoundError,
   type Page,
   type StorageBackend,
 } from "./storage";
@@ -1464,15 +1498,56 @@ export function PreviewPage() {
 }
 
 export function App() {
-  const initialRequestedPathState = getRequestedPathState();
-  const [requestedPathState] = useState(initialRequestedPathState);
+  const [startupState] = useState(() => {
+    const locationPathState = getRequestedPathState();
+    const hasRemoteSession = new URLSearchParams(window.location.search).has(
+      "session",
+    );
+    const restoredSession =
+      window.location.pathname === "/" && !hasRemoteSession
+        ? readOpenFileSession(window.localStorage)
+        : null;
+    const restoringSession =
+      locationPathState.rawPath === null && restoredSession !== null;
+    return {
+      requestedPathState: restoringSession
+        ? getRequestedPathStateForPath(restoredSession.activePath)
+        : locationPathState,
+      restoredFiles: restoredSession?.files ?? [],
+      restoredViewStates: restoredSession?.viewStates ?? {},
+      recentDocuments: readRecentDocuments(window.localStorage),
+      restoringSession,
+    };
+  });
+  const { requestedPathState } = startupState;
   const isRoughdraftFlavoredMarkdownRoute =
     window.location.pathname === ROUGHDRAFT_FLAVORED_MARKDOWN_PATH;
   const isPreviewRoute = window.location.pathname === PREVIEW_PATH;
+  const isWelcomeRoute = window.location.pathname === "/welcome";
   const [backend, setBackend] = useState<StorageBackend | null>(null);
   const [documentPage, setDocumentPage] = useState<Page | null>(null);
   const [activeDocumentPath, setActiveDocumentPath] = useState<string | null>(
-    initialRequestedPathState.documentPath,
+    requestedPathState.documentPath,
+  );
+  const [activeDocumentAbsolutePath, setActiveDocumentAbsolutePath] = useState<
+    string | null
+  >(requestedPathState.documentPath ? requestedPathState.rawPath : null);
+  const [openFiles, setOpenFiles] = useState<OpenFileItem[]>(
+    startupState.restoredFiles,
+  );
+  const [recentDocuments, setRecentDocuments] = useState(
+    startupState.recentDocuments,
+  );
+  const [fileSwitcherOpen, setFileSwitcherOpen] = useState(false);
+  const [pendingOpenRequestPath, setPendingOpenRequestPath] = useState<
+    string | null
+  >(null);
+  const [fileSwitchPending, setFileSwitchPending] = useState(false);
+  const [fileSwitchError, setFileSwitchError] = useState<string | null>(null);
+  const [documentViewRestoreRequest, setDocumentViewRestoreRequest] =
+    useState<DocumentViewRestoreRequest | null>(null);
+  const [documentViewStates, setDocumentViewStates] = useState(
+    () => new Map(Object.entries(startupState.restoredViewStates)),
   );
   const [documentSaveState, setDocumentSaveState] =
     useState<DocumentSaveState>("saved");
@@ -1490,6 +1565,17 @@ export function App() {
   const backendRef = useRef<StorageBackend | null>(null);
   const documentPageRef = useRef<Page | null>(null);
   const activeDocumentPathRef = useRef<string | null>(activeDocumentPath);
+  const activeDocumentAbsolutePathRef = useRef<string | null>(
+    activeDocumentAbsolutePath,
+  );
+  const documentSaveControllerRef = useRef<DocumentSaveController | null>(null);
+  const documentViewControllerRef = useRef<DocumentViewController | null>(null);
+  const documentViewRestoreIdRef = useRef(0);
+  const documentViewStatesRef =
+    useRef<Map<string, DocumentViewState>>(documentViewStates);
+  const recentDocumentsRef = useRef(recentDocuments);
+  const openFilesRef = useRef(openFiles);
+  const fileSwitchPendingRef = useRef(false);
   const documentDirtyRef = useRef(false);
   const documentSaveStateRef = useRef<DocumentSaveState>("saved");
   const documentDraftContentRef = useRef<string | null>(null);
@@ -1497,23 +1583,133 @@ export function App() {
   backendRef.current = backend;
   documentPageRef.current = documentPage;
   activeDocumentPathRef.current = activeDocumentPath;
+  activeDocumentAbsolutePathRef.current = activeDocumentAbsolutePath;
   documentSaveStateRef.current = documentSaveState;
+  openFilesRef.current = openFiles;
+  recentDocumentsRef.current = recentDocuments;
 
   const applyDocumentPage = useCallback((nextDocument: Page) => {
+    documentPageRef.current = nextDocument;
     setDocumentPage(nextDocument);
     documentDraftContentRef.current = nextDocument.content;
   }, []);
 
+  const updateRecentDocuments = useCallback(
+    (update: (current: RecentDocument[]) => RecentDocument[]) => {
+      const current = recentDocumentsRef.current;
+      const next = update(current);
+      if (next === current) return;
+
+      recentDocumentsRef.current = next;
+      writeRecentDocuments(window.localStorage, next);
+      setRecentDocuments(next);
+    },
+    [],
+  );
+
+  const forgetRecentDocument = useCallback(
+    (path: string) => {
+      updateRecentDocuments((current) => removeRecentDocument(current, path));
+    },
+    [updateRecentDocuments],
+  );
+
+  const rememberRecentDocument = useCallback(
+    (absolutePath: string, nextDocument: Page) => {
+      updateRecentDocuments((current) =>
+        touchRecentDocument(current, {
+          path: absolutePath,
+          modifiedAt: nextDocument.modifiedAt ?? Date.now(),
+        }),
+      );
+    },
+    [updateRecentDocuments],
+  );
+
+  const refreshActiveOpenFile = useCallback(
+    (nextDocument: Page) => {
+      const absolutePath = activeDocumentAbsolutePathRef.current;
+      if (!absolutePath) return;
+
+      setOpenFiles((current) =>
+        upsertOpenFile(current, {
+          path: absolutePath,
+          modifiedAt: nextDocument.modifiedAt ?? Date.now(),
+          unread: false,
+        }),
+      );
+      rememberRecentDocument(absolutePath, nextDocument);
+    },
+    [rememberRecentDocument],
+  );
+
   const loadDocument = useCallback(
-    async (nextBackend: StorageBackend, relativePath: string) => {
+    async (
+      nextBackend: StorageBackend,
+      relativePath: string,
+      absolutePath?: string | null,
+    ) => {
       const nextDocument = await nextBackend.getMarkdownFile(relativePath);
       applyDocumentPage(nextDocument);
       setActiveDocumentPath(relativePath);
+      if (absolutePath) {
+        setActiveDocumentAbsolutePath(absolutePath);
+        setOpenFiles((current) =>
+          upsertOpenFile(current, {
+            path: absolutePath,
+            modifiedAt: nextDocument.modifiedAt ?? 0,
+            unread: false,
+          }),
+        );
+        rememberRecentDocument(absolutePath, nextDocument);
+      }
       documentDirtyRef.current = false;
       setDocumentDiskChangeState("clean");
       return nextDocument;
     },
-    [applyDocumentPage],
+    [applyDocumentPage, rememberRecentDocument],
+  );
+
+  const getViewStateForPath = useCallback((path: string) => {
+    const storedState = documentViewStatesRef.current.get(path);
+    const restorableState = getRestorableDocumentViewState(storedState);
+    if (storedState && !restorableState) {
+      const nextStates = new Map(documentViewStatesRef.current);
+      nextStates.delete(path);
+      documentViewStatesRef.current = nextStates;
+      setDocumentViewStates(nextStates);
+    }
+    return restorableState;
+  }, []);
+
+  const requestDocumentViewRestore = useCallback(
+    (path: string, state: DocumentViewState | null) => {
+      documentViewRestoreIdRef.current += 1;
+      setDocumentViewRestoreRequest({
+        id: documentViewRestoreIdRef.current,
+        path,
+        state,
+      });
+    },
+    [],
+  );
+
+  const captureCurrentDocumentView = useCallback(
+    (capturedAt = Date.now(), notify = true) => {
+      const path = activeDocumentAbsolutePathRef.current;
+      if (!path) return null;
+      const controller = documentViewControllerRef.current;
+      if (controller?.path !== path) return null;
+      const state = controller.capture(capturedAt);
+      if (!state) return null;
+
+      const nextStates = new Map(documentViewStatesRef.current);
+      nextStates.set(path, state);
+      documentViewStatesRef.current = nextStates;
+      if (notify) setDocumentViewStates(nextStates);
+      return state;
+    },
+    [],
   );
 
   useEffect(() => {
@@ -1540,12 +1736,37 @@ export function App() {
       try {
         const payload = JSON.parse((event as MessageEvent<string>).data) as {
           path?: unknown;
+          modifiedAt?: unknown;
         };
         if (typeof payload.path !== "string" || !payload.path.trim()) return;
 
+        const targetPath = payload.path.trim();
+        const isActive = targetPath === activeDocumentAbsolutePathRef.current;
+
+        if (
+          shouldHandleOpenRequestInSession(
+            backendRef.current?.info.kind,
+            activeDocumentAbsolutePathRef.current,
+          )
+        ) {
+          // Stays unread only when activation below is blocked, e.g. by a
+          // disk conflict on the current file.
+          setOpenFiles((current) =>
+            upsertOpenFile(current, {
+              path: targetPath,
+              modifiedAt:
+                typeof payload.modifiedAt === "number" ? payload.modifiedAt : 0,
+              unread: !isActive,
+            }),
+          );
+          window.focus();
+          setPendingOpenRequestPath(targetPath);
+          return;
+        }
+
         const nextUrl = new URL(window.location.href);
         nextUrl.pathname = "/";
-        nextUrl.searchParams.set("path", payload.path);
+        nextUrl.searchParams.set("path", targetPath);
         nextUrl.hash = "";
         window.focus();
         if (nextUrl.href !== window.location.href) {
@@ -1592,8 +1813,6 @@ export function App() {
           return;
         }
 
-        syncRequestedPathInUrl(requestedPathState.rawPath);
-
         if (
           !requestedPathState.projectPath ||
           !requestedPathState.documentPath
@@ -1604,20 +1823,69 @@ export function App() {
           return;
         }
 
-        if (detectedBackend.canManageProjects) {
-          await detectedBackend.openProject(requestedPathState.projectPath);
+        const candidatePaths = startupState.restoringSession
+          ? Array.from(
+              new Set([
+                requestedPathState.rawPath,
+                ...startupState.restoredFiles.map((file) => file.path),
+              ]),
+            )
+          : [requestedPathState.rawPath];
+        let lastOpenError: unknown = new Error(
+          "No restorable Markdown files were available.",
+        );
+
+        for (const candidatePath of candidatePaths) {
+          const candidate = getRequestedPathStateForPath(candidatePath);
+          if (!candidate.projectPath || !candidate.documentPath) {
+            setOpenFiles((current) =>
+              current.filter((file) => file.path !== candidatePath),
+            );
+            continue;
+          }
+
+          try {
+            if (detectedBackend.canManageProjects) {
+              await detectedBackend.openProject(candidate.projectPath);
+            }
+            if (cancelled) return;
+
+            await loadDocument(
+              detectedBackend,
+              candidate.documentPath,
+              candidate.rawPath,
+            );
+            if (cancelled) return;
+
+            syncRequestedPathInUrl(candidatePath);
+            requestDocumentViewRestore(
+              candidatePath,
+              getViewStateForPath(candidatePath),
+            );
+            setLoading(false);
+            return;
+          } catch (error) {
+            lastOpenError = error;
+            if (error instanceof MarkdownFileNotFoundError) {
+              forgetRecentDocument(candidatePath);
+            }
+            if (!startupState.restoringSession) throw error;
+            setOpenFiles((current) =>
+              current.filter((file) => file.path !== candidatePath),
+            );
+          }
         }
 
-        if (cancelled) return;
-
-        await loadDocument(detectedBackend, requestedPathState.documentPath);
-        if (cancelled) return;
-
-        setLoading(false);
+        throw lastOpenError;
       } catch (error) {
         if (cancelled) return;
 
         console.error("Failed to open markdown file:", error);
+        if (startupState.restoringSession) {
+          clearOpenFileSession(window.localStorage);
+          setOpenFiles([]);
+          setActiveDocumentAbsolutePath(null);
+        }
         setActiveDocumentPath(null);
         setLoadError("Could not open that markdown file.");
         setLoading(false);
@@ -1631,17 +1899,81 @@ export function App() {
     };
   }, [
     loadDocument,
+    forgetRecentDocument,
+    getViewStateForPath,
     requestedPathState.documentPath,
     requestedPathState.projectPath,
     requestedPathState.rawPath,
+    startupState.restoredFiles,
+    startupState.restoringSession,
+    requestDocumentViewRestore,
   ]);
+
+  useEffect(() => {
+    const openPaths = new Set(openFiles.map((file) => file.path));
+    const currentStates = documentViewStatesRef.current;
+    if ([...currentStates.keys()].every((path) => openPaths.has(path))) return;
+
+    const nextStates = new Map(
+      [...currentStates].filter(([path]) => openPaths.has(path)),
+    );
+    documentViewStatesRef.current = nextStates;
+    setDocumentViewStates(nextStates);
+  }, [openFiles]);
+
+  useEffect(() => {
+    if (
+      backend?.info.kind !== "local-files" ||
+      !activeDocumentAbsolutePath ||
+      !openFiles.some((file) => file.path === activeDocumentAbsolutePath)
+    ) {
+      return;
+    }
+
+    writeOpenFileSession(window.localStorage, {
+      activePath: activeDocumentAbsolutePath,
+      files: openFiles,
+      viewStates: documentViewStates,
+    });
+  }, [
+    activeDocumentAbsolutePath,
+    backend?.info.kind,
+    documentViewStates,
+    openFiles,
+  ]);
+
+  useEffect(() => {
+    const handlePageHide = () => {
+      const currentBackend = backendRef.current;
+      const currentActivePath = activeDocumentAbsolutePathRef.current;
+      const currentOpenFiles = openFilesRef.current;
+      if (
+        currentBackend?.info.kind !== "local-files" ||
+        !currentActivePath ||
+        !currentOpenFiles.some((file) => file.path === currentActivePath)
+      ) {
+        return;
+      }
+      captureCurrentDocumentView(Date.now(), false);
+
+      writeOpenFileSession(window.localStorage, {
+        activePath: currentActivePath,
+        files: currentOpenFiles,
+        viewStates: documentViewStatesRef.current,
+      });
+    };
+
+    window.addEventListener("pagehide", handlePageHide);
+    return () => window.removeEventListener("pagehide", handlePageHide);
+  }, [captureCurrentDocumentView]);
 
   useEffect(() => {
     const workspaceTitlePath = activeDocumentPath
       ? formatWorkspacePathForDisplay(
-          backend?.info.projectPath
-            ? joinPath(backend.info.projectPath, activeDocumentPath)
-            : requestedPathState.rawPath,
+          activeDocumentAbsolutePath ??
+            (backend?.info.projectPath
+              ? joinPath(backend.info.projectPath, activeDocumentPath)
+              : requestedPathState.rawPath),
         )
       : null;
 
@@ -1652,6 +1984,7 @@ export function App() {
         : (workspaceTitlePath ?? "Roughdraft");
   }, [
     activeDocumentPath,
+    activeDocumentAbsolutePath,
     backend,
     isRoughdraftFlavoredMarkdownRoute,
     isPreviewRoute,
@@ -1691,10 +2024,11 @@ export function App() {
       };
 
       applyDocumentPage(nextDocument);
+      refreshActiveOpenFile(nextDocument);
       documentDirtyRef.current = false;
       setDocumentDiskChangeState("clean");
     },
-    [activeDocumentPath, applyDocumentPage],
+    [activeDocumentPath, applyDocumentPage, refreshActiveOpenFile],
   );
 
   const handleDocumentDirtyStateChange = useCallback((isDirty: boolean) => {
@@ -1712,6 +2046,20 @@ export function App() {
   const handleDocumentLocalContentChange = useCallback((markdown: string) => {
     documentDraftContentRef.current = markdown;
   }, []);
+
+  const handleDocumentSaveControllerChange = useCallback(
+    (controller: DocumentSaveController | null) => {
+      documentSaveControllerRef.current = controller;
+    },
+    [],
+  );
+
+  const handleDocumentViewControllerChange = useCallback(
+    (controller: DocumentViewController | null) => {
+      documentViewControllerRef.current = controller;
+    },
+    [],
+  );
 
   useEffect(() => {
     const handleBeforeUnload = (event: BeforeUnloadEvent) => {
@@ -1741,12 +2089,13 @@ export function App() {
 
     const nextDocument = await currentBackend.getMarkdownFile(currentPath);
     applyDocumentPage(nextDocument);
+    refreshActiveOpenFile(nextDocument);
     documentDirtyRef.current = false;
     setDocumentDiskChangeState("clean");
     setDocumentForceResetKey(
       `${currentPath}:${nextDocument.version ?? Date.now()}`,
     );
-  }, [applyDocumentPage]);
+  }, [applyDocumentPage, refreshActiveOpenFile]);
 
   const handleKeepEditingWithoutAutosave = useCallback(() => {
     setDocumentDiskChangeState("paused");
@@ -1773,18 +2122,280 @@ export function App() {
     };
 
     applyDocumentPage(savedDocument);
+    refreshActiveOpenFile(savedDocument);
     documentDirtyRef.current = false;
     handleDocumentSaveStateChange("saved");
     setDocumentDiskChangeState("clean");
     setDocumentForceResetKey(
       `${currentPath}:${savedDocument.version ?? Date.now()}:overwrite`,
     );
-  }, [applyDocumentPage, handleDocumentSaveStateChange]);
+  }, [applyDocumentPage, handleDocumentSaveStateChange, refreshActiveOpenFile]);
+
+  const switchToOpenFileResult = useCallback(
+    async (
+      absolutePath: string,
+      action: "switch" | "close" = "switch",
+    ): Promise<"switched" | "blocked" | "unavailable"> => {
+      if (absolutePath === activeDocumentAbsolutePathRef.current) {
+        setOpenFiles((current) => markOpenFileRead(current, absolutePath));
+        const currentViewState =
+          captureCurrentDocumentView() ?? getViewStateForPath(absolutePath);
+        requestDocumentViewRestore(absolutePath, currentViewState);
+        return "switched";
+      }
+
+      if (fileSwitchPendingRef.current || documentDiskChangeState !== "clean") {
+        return "blocked";
+      }
+
+      const target = getRequestedPathStateForPath(absolutePath);
+      const currentBackend = backendRef.current;
+      if (
+        currentBackend?.info.kind !== "local-files" ||
+        !target.projectPath ||
+        !target.documentPath
+      ) {
+        return "blocked";
+      }
+
+      const previousProjectPath = currentBackend.info.projectPath;
+      fileSwitchPendingRef.current = true;
+      setFileSwitchPending(true);
+      setFileSwitchError(null);
+
+      try {
+        const saveResult = await documentSaveControllerRef.current?.flushSave();
+        if (saveResult && saveResult.status !== "saved") {
+          setFileSwitchError(
+            saveResult.status === "error"
+              ? `The current file could not be saved, so it remains open.`
+              : `Resolve the current file changes before ${action === "switch" ? "switching files" : "closing it"}.`,
+          );
+          return "blocked";
+        }
+
+        captureCurrentDocumentView();
+
+        await currentBackend.openProject(target.projectPath);
+        const nextDocument = await loadDocument(
+          currentBackend,
+          target.documentPath,
+          absolutePath,
+        );
+
+        activeDocumentPathRef.current = target.documentPath;
+        activeDocumentAbsolutePathRef.current = absolutePath;
+        documentSaveStateRef.current = "saved";
+        setDocumentSaveState("saved");
+        setDocumentForceResetKey(
+          `${absolutePath}:${nextDocument.version ?? Date.now()}:switch`,
+        );
+        syncRequestedPathInUrl(absolutePath);
+        requestDocumentViewRestore(
+          absolutePath,
+          getViewStateForPath(absolutePath),
+        );
+        return "switched";
+      } catch (error) {
+        if (previousProjectPath) {
+          try {
+            await currentBackend.openProject(previousProjectPath);
+          } catch (restoreError) {
+            console.error(
+              "Failed to restore the current Markdown project:",
+              restoreError,
+            );
+            setFileSwitchError(
+              "Could not restore the current file after the next file failed to open.",
+            );
+            return "blocked";
+          }
+        }
+        console.error("Failed to switch markdown files:", error);
+        if (error instanceof MarkdownFileNotFoundError) {
+          forgetRecentDocument(absolutePath);
+        }
+        setFileSwitchError(
+          `Could not open ${getPathLeaf(absolutePath) ?? "that file"}. The current file is still open.`,
+        );
+        return error instanceof MarkdownFileNotFoundError
+          ? "unavailable"
+          : "blocked";
+      } finally {
+        fileSwitchPendingRef.current = false;
+        setFileSwitchPending(false);
+      }
+    },
+    [
+      captureCurrentDocumentView,
+      documentDiskChangeState,
+      forgetRecentDocument,
+      getViewStateForPath,
+      loadDocument,
+      requestDocumentViewRestore,
+    ],
+  );
+
+  // Activate the most recent open request once startup and any in-flight
+  // switch have finished; in an idle session this fires on the next render,
+  // i.e. immediately.
+  useEffect(() => {
+    if (!pendingOpenRequestPath || loading || fileSwitchPending) return;
+    if (backend?.info.kind !== "local-files") return;
+    const targetPath = pendingOpenRequestPath;
+    // Only clear the request this run consumes; a newer request may already
+    // have replaced it.
+    setPendingOpenRequestPath((current) =>
+      current === targetPath ? null : current,
+    );
+    void switchToOpenFileResult(targetPath);
+  }, [
+    pendingOpenRequestPath,
+    loading,
+    fileSwitchPending,
+    backend,
+    switchToOpenFileResult,
+  ]);
+
+  const switchToOpenFile = useCallback(
+    async (absolutePath: string) =>
+      (await switchToOpenFileResult(absolutePath)) === "switched",
+    [switchToOpenFileResult],
+  );
+
+  const pruneOpenFileSessionEntries = useCallback((paths: string[]) => {
+    const removedPaths = new Set(paths);
+    openFilesRef.current = openFilesRef.current.filter(
+      (file) => !removedPaths.has(file.path),
+    );
+    setOpenFiles((files) =>
+      files.filter((file) => !removedPaths.has(file.path)),
+    );
+
+    const nextViewStates = new Map(documentViewStatesRef.current);
+    for (const path of removedPaths) nextViewStates.delete(path);
+    documentViewStatesRef.current = nextViewStates;
+    setDocumentViewStates(nextViewStates);
+  }, []);
+
+  const closeActiveOpenFile = useCallback(async (): Promise<boolean> => {
+    const closingPath = activeDocumentAbsolutePathRef.current;
+    const currentFiles = openFilesRef.current;
+    if (
+      !closingPath ||
+      !currentFiles.some((file) => file.path === closingPath) ||
+      fileSwitchPendingRef.current ||
+      documentDiskChangeState !== "clean"
+    ) {
+      return false;
+    }
+
+    const unavailablePaths: string[] = [];
+    const closeCandidates = getOpenFileCloseCandidates(
+      currentFiles,
+      closingPath,
+    );
+    for (const candidatePath of closeCandidates) {
+      const result = await switchToOpenFileResult(candidatePath, "close");
+      if (result === "blocked") return false;
+      if (result === "unavailable") {
+        unavailablePaths.push(candidatePath);
+        continue;
+      }
+
+      pruneOpenFileSessionEntries([closingPath, ...unavailablePaths]);
+      setFileSwitcherOpen(false);
+      return true;
+    }
+
+    if (closeCandidates.length === 0) {
+      fileSwitchPendingRef.current = true;
+      setFileSwitchPending(true);
+      setFileSwitchError(null);
+
+      try {
+        const saveResult = await documentSaveControllerRef.current?.flushSave();
+        if (saveResult && saveResult.status !== "saved") {
+          setFileSwitchError(
+            saveResult.status === "error"
+              ? "Could not close the file because it could not be saved."
+              : "Resolve the current file changes before closing it.",
+          );
+          return false;
+        }
+      } catch (error) {
+        console.error("Failed to save the closing Markdown file:", error);
+        setFileSwitchError(
+          "Could not close the file because it could not be saved.",
+        );
+        return false;
+      } finally {
+        fileSwitchPendingRef.current = false;
+        setFileSwitchPending(false);
+      }
+    }
+
+    pruneOpenFileSessionEntries([closingPath, ...unavailablePaths]);
+    activeDocumentPathRef.current = null;
+    activeDocumentAbsolutePathRef.current = null;
+    setActiveDocumentPath(null);
+    setActiveDocumentAbsolutePath(null);
+    documentPageRef.current = null;
+    setDocumentPage(null);
+    clearOpenFileSession(window.localStorage);
+    setFileSwitcherOpen(false);
+    window.location.assign("/");
+    return true;
+  }, [
+    documentDiskChangeState,
+    pruneOpenFileSessionEntries,
+    switchToOpenFileResult,
+  ]);
+
+  useEffect(() => {
+    if (backend?.info.kind !== "local-files" || openFiles.length === 0) return;
+
+    const handleFileNavigationShortcut = (event: KeyboardEvent) => {
+      if (isCloseOpenFileShortcut(event)) {
+        event.preventDefault();
+        event.stopPropagation();
+        void closeActiveOpenFile();
+        return;
+      }
+
+      if (isOpenFileSwitcherShortcut(event)) {
+        event.preventDefault();
+        event.stopPropagation();
+        setFileSwitcherOpen(true);
+        return;
+      }
+
+      const shortcut = getOpenFileShortcut(event, openFiles.length);
+      if (!shortcut) return;
+
+      const target = openFiles[shortcut.index];
+      if (!target) return;
+      event.preventDefault();
+      event.stopPropagation();
+      void switchToOpenFile(target.path);
+    };
+
+    window.addEventListener("keydown", handleFileNavigationShortcut, {
+      capture: true,
+    });
+    return () =>
+      window.removeEventListener("keydown", handleFileNavigationShortcut, {
+        capture: true,
+      });
+  }, [backend?.info.kind, closeActiveOpenFile, openFiles, switchToOpenFile]);
 
   useEffect(() => {
     if (!backend?.watchMarkdownFile || !activeDocumentPath) return;
 
     let disposed = false;
+    const watchedBackend = backend;
+    const watchedProjectPath = backend.info.projectPath;
+    const watchedAbsolutePath = activeDocumentAbsolutePath;
     const stopWatching = backend.watchMarkdownFile(
       activeDocumentPath,
       (event) => {
@@ -1810,15 +2421,19 @@ export function App() {
         }
 
         void (async () => {
-          const currentBackend = backendRef.current;
-          const currentPath = activeDocumentPathRef.current;
-          if (!currentBackend || !currentPath || disposed) return;
+          const stillWatchingActiveFile = () =>
+            !disposed &&
+            backendRef.current === watchedBackend &&
+            watchedBackend.info.projectPath === watchedProjectPath &&
+            activeDocumentAbsolutePathRef.current === watchedAbsolutePath;
+          if (!stillWatchingActiveFile()) return;
 
           try {
             const nextDocument =
-              await currentBackend.getMarkdownFile(currentPath);
-            if (disposed) return;
+              await watchedBackend.getMarkdownFile(activeDocumentPath);
+            if (!stillWatchingActiveFile()) return;
             applyDocumentPage(nextDocument);
+            refreshActiveOpenFile(nextDocument);
             setDocumentDiskChangeState("clean");
           } catch (error) {
             console.error("Failed to reload changed markdown file:", error);
@@ -1831,7 +2446,14 @@ export function App() {
       disposed = true;
       stopWatching();
     };
-  }, [activeDocumentPath, applyDocumentPage, backend, documentDiskChangeState]);
+  }, [
+    activeDocumentAbsolutePath,
+    activeDocumentPath,
+    applyDocumentPage,
+    backend,
+    documentDiskChangeState,
+    refreshActiveOpenFile,
+  ]);
 
   const handleDocumentEditorViewModeChange = useCallback(
     (nextMode: DocumentEditorViewMode) => {
@@ -1847,6 +2469,12 @@ export function App() {
     },
     [],
   );
+
+  const handleOpenRecentDocument = useCallback((path: string) => {
+    const nextUrl = new URL(window.location.origin);
+    nextUrl.searchParams.set("path", path);
+    window.location.assign(nextUrl.href);
+  }, []);
 
   if (loading) {
     return (
@@ -1865,49 +2493,94 @@ export function App() {
     return <PreviewPage />;
   }
 
+  if (isWelcomeRoute) {
+    return (
+      <Homepage message={<HomepageSubtitle />} updateStatus={updateStatus} />
+    );
+  }
+
   if (!requestedPathState.rawPath || loadError) {
     return (
-      <Homepage
-        message={loadError ?? <HomepageSubtitle />}
-        updateStatus={updateStatus}
+      <RecentDocumentsPage
+        documents={recentDocuments}
+        error={loadError}
+        onOpen={handleOpenRecentDocument}
+        updateNotice={
+          updateStatus ? <UpdateNotice updateStatus={updateStatus} /> : null
+        }
       />
     );
   }
 
   const documentAbsolutePath =
-    activeDocumentPath && backend?.info.projectPath
+    activeDocumentAbsolutePath ??
+    (activeDocumentPath && backend?.info.projectPath
       ? joinPath(backend.info.projectPath, activeDocumentPath)
-      : requestedPathState.rawPath;
+      : requestedPathState.rawPath);
   const documentFilenameLabel =
     getPathLeaf(documentAbsolutePath ?? activeDocumentPath) ?? "Untitled.md";
 
+  const showOpenFileSidebar =
+    backend?.info.kind === "local-files" && openFiles.length > 0;
+
   return (
-    <main className="relative flex h-screen min-w-0 flex-col overflow-hidden bg-[#FCFCFC] dark:bg-background text-slate-950 dark:text-slate-50">
-      {updateStatus ? (
-        <div className="pointer-events-none absolute top-4 right-4 z-40 max-w-sm">
-          <div className="pointer-events-auto">
-            <UpdateNotice updateStatus={updateStatus} />
-          </div>
-        </div>
+    <main
+      className="relative flex h-screen min-w-0 overflow-hidden bg-[#FCFCFC] text-slate-950 dark:bg-background dark:text-slate-50"
+      style={
+        showOpenFileSidebar
+          ? ({ "--roughdraft-sidebar-width": "14rem" } as CSSProperties)
+          : undefined
+      }
+    >
+      {showOpenFileSidebar ? (
+        <OpenFileSidebar
+          files={openFiles}
+          activePath={activeDocumentAbsolutePath}
+          disabled={fileSwitchPending || documentDiskChangeState !== "clean"}
+          error={fileSwitchError}
+          onSelect={(path) => void switchToOpenFile(path)}
+        />
       ) : null}
-      <DocumentWorkspace
-        documentPage={documentPage}
-        activeDocumentPath={activeDocumentPath}
-        documentCopyPath={documentAbsolutePath}
-        documentFilenameLabel={documentFilenameLabel}
-        documentEditorViewMode={documentEditorViewMode}
-        onDocumentEditorViewModeChange={handleDocumentEditorViewModeChange}
-        onSaveDocument={handleSaveDocument}
-        onDocumentSaveStateChange={handleDocumentSaveStateChange}
-        onDocumentDirtyStateChange={handleDocumentDirtyStateChange}
-        onDocumentLocalContentChange={handleDocumentLocalContentChange}
-        documentDiskChangeState={documentDiskChangeState}
-        documentForceResetKey={documentForceResetKey}
-        onReloadDocumentFromDisk={handleReloadDocumentFromDisk}
-        onKeepEditingWithoutAutosave={handleKeepEditingWithoutAutosave}
-        onOverwriteDocumentOnDisk={handleOverwriteDocumentOnDisk}
-        backend={backend}
-      />
+      {showOpenFileSidebar ? (
+        <OpenFileSwitcher
+          files={openFiles}
+          activePath={activeDocumentAbsolutePath}
+          disabled={fileSwitchPending || documentDiskChangeState !== "clean"}
+          open={fileSwitcherOpen}
+          onOpenChange={setFileSwitcherOpen}
+          onSelect={switchToOpenFile}
+        />
+      ) : null}
+      <div className="relative flex min-w-0 flex-1 flex-col overflow-hidden">
+        {updateStatus ? (
+          <div className="pointer-events-none absolute top-4 right-4 z-40 max-w-sm">
+            <div className="pointer-events-auto">
+              <UpdateNotice updateStatus={updateStatus} />
+            </div>
+          </div>
+        ) : null}
+        <DocumentWorkspace
+          documentPage={documentPage}
+          activeDocumentPath={activeDocumentPath}
+          documentCopyPath={documentAbsolutePath}
+          documentFilenameLabel={documentFilenameLabel}
+          documentEditorViewMode={documentEditorViewMode}
+          onDocumentEditorViewModeChange={handleDocumentEditorViewModeChange}
+          onSaveDocument={handleSaveDocument}
+          onDocumentSaveStateChange={handleDocumentSaveStateChange}
+          onDocumentDirtyStateChange={handleDocumentDirtyStateChange}
+          onDocumentLocalContentChange={handleDocumentLocalContentChange}
+          onSaveControllerChange={handleDocumentSaveControllerChange}
+          onViewControllerChange={handleDocumentViewControllerChange}
+          documentDiskChangeState={documentDiskChangeState}
+          documentForceResetKey={documentForceResetKey}
+          documentViewRestoreRequest={documentViewRestoreRequest}
+          onReloadDocumentFromDisk={handleReloadDocumentFromDisk}
+          onKeepEditingWithoutAutosave={handleKeepEditingWithoutAutosave}
+          onOverwriteDocumentOnDisk={handleOverwriteDocumentOnDisk}
+          backend={backend}
+        />
+      </div>
     </main>
   );
 }

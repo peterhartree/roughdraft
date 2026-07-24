@@ -1144,11 +1144,28 @@ describe("Markdown rich-text round-trip regressions", () => {
     expect(richTextRoundTrip(input)).toBe(input);
   });
 
-  it("preserves table cells containing escaped pipes and inline code pipes", () => {
+  it("renders tables with inline code in adjacent cells as editable tables", () => {
+    const input = [
+      "| Raw display name | Text reaching transforms |",
+      "| --- | --- |",
+      "| `80000_Hours` | `80000 Hours` |",
+      "",
+    ].join("\n");
+
+    const { doc } = criticMarkdownToEditorState(input);
+
+    expect(doc.content?.map((node) => node.type)).toEqual(["table"]);
+  });
+
+  it.each([
+    { label: "escaped pipes", value: "plain a \\| b" },
+    { label: "single-backtick code pipes", value: "`a | b`" },
+    { label: "multi-backtick code pipes", value: "``a | `b` ``" },
+  ])("preserves table cells containing $label", ({ value }) => {
     const input = [
       "| Column | Value |",
       "| --- | --- |",
-      "| Escaped | `a | b` and plain a \\| b |",
+      `| Pipe-sensitive | ${value} |`,
       "",
     ].join("\n");
 

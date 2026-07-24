@@ -74,7 +74,35 @@ function protectIndentedCodeAfterLists(markdown: string): string {
 }
 
 function codeSpanContainsPipe(value: string): boolean {
-  return /`[^`\n]*\|[^`\n]*`/.test(value);
+  const fences = Array.from(value.matchAll(/`+/g), (match) => ({
+    start: match.index,
+    length: match[0].length,
+  }));
+
+  for (let openingIndex = 0; openingIndex < fences.length; openingIndex += 1) {
+    const opening = fences[openingIndex];
+    if (!opening) continue;
+
+    for (
+      let closingIndex = openingIndex + 1;
+      closingIndex < fences.length;
+      closingIndex += 1
+    ) {
+      const closing = fences[closingIndex];
+      if (!closing || closing.length !== opening.length) continue;
+
+      if (
+        value.slice(opening.start + opening.length, closing.start).includes("|")
+      ) {
+        return true;
+      }
+
+      openingIndex = closingIndex;
+      break;
+    }
+  }
+
+  return false;
 }
 
 function protectPipeSensitiveTables(markdown: string): string {

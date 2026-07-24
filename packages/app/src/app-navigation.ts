@@ -51,6 +51,12 @@ export function getDocumentEditorViewModeFromLocation(
 
 export function getRequestedPathState(): RequestedPathState {
   const rawPath = getRawPathFromLocation();
+  return getRequestedPathStateForPath(rawPath);
+}
+
+export function getRequestedPathStateForPath(
+  rawPath: string | null,
+): RequestedPathState {
   if (!rawPath) {
     return { rawPath: null, projectPath: null, documentPath: null };
   }
@@ -91,6 +97,11 @@ export function getPathLeaf(path?: string | null) {
 
   const segments = value.split(/[\\/]/).filter(Boolean);
   return segments.at(-1) || value;
+}
+
+export function formatOpenFileParentPath(path: string) {
+  const projectPath = getRequestedPathStateForPath(path).projectPath;
+  return formatWorkspacePathForDisplay(projectPath) ?? projectPath ?? path;
 }
 
 export function joinPath(basePath: string, relativePath: string) {

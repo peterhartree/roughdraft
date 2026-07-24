@@ -8,6 +8,7 @@ import {
   PageCard,
   shouldDismissCommentThread,
 } from "../src/PageCard";
+import type { DocumentEditorViewController } from "../src/document-view-state";
 import type { Page, StorageBackend } from "../src/storage";
 
 function createDomRect({
@@ -285,6 +286,7 @@ type RenderedPageCard = {
   onSaveStateChange: ReturnType<typeof vi.fn>;
   getEditor: () => Editor;
   getSaveController: () => DocumentSaveController;
+  getViewController: () => DocumentEditorViewController;
   rerender: (overrides?: PageCardTestOptions) => Promise<void>;
   unmount: () => Promise<void>;
 };
@@ -302,6 +304,7 @@ async function renderPageCard(
   const onSaveStateChange = vi.fn();
   let editor: Editor | null = null;
   let saveController: DocumentSaveController | null = null;
+  let viewController: DocumentEditorViewController | null = null;
 
   let props = {
     page: options.page ?? {
@@ -322,6 +325,11 @@ async function renderPageCard(
     },
     onSaveControllerChange: (controller: DocumentSaveController | null) => {
       saveController = controller;
+    },
+    onViewControllerChange: (
+      controller: DocumentEditorViewController | null,
+    ) => {
+      viewController = controller;
     },
     saveBlocked: options.saveBlocked ?? false,
   } as const;
@@ -358,6 +366,10 @@ async function renderPageCard(
     getSaveController() {
       expect(saveController).not.toBeNull();
       return saveController as DocumentSaveController;
+    },
+    getViewController() {
+      expect(viewController).not.toBeNull();
+      return viewController as DocumentEditorViewController;
     },
     async rerender(overrides = {}) {
       props = {
@@ -2030,6 +2042,39 @@ describe("PageCard editor integration", () => {
       initialSelection,
     );
     expect(rendered.getEditor().getText()).toContain("Focus target");
+  });
+
+  it("restores a captured rich-text selection and editor focus", async () => {
+    const rendered = await renderPageCard({
+      page: {
+        id: "doc-view-state-1",
+        title: "Doc view state 1",
+        content: "Alpha remembered words omega",
+      },
+      selected: true,
+    });
+    const editor = rendered.getEditor();
+    await selectText(editor, "remembered words");
+    const capturedState = rendered.getViewController().capture();
+
+    editor.commands.setTextSelection(1);
+    const outsideButton = document.createElement("button");
+    document.body.appendChild(outsideButton);
+    outsideButton.focus();
+
+    await act(async () => {
+      rendered.getViewController().restore(capturedState);
+    });
+    await flushAnimationFrame();
+
+    expect(editor.state.selection.anchor).toBe(capturedState.anchor);
+    expect(editor.state.selection.head).toBe(capturedState.head);
+    const editable = getEditable(rendered.container);
+    expect(
+      document.activeElement === editable ||
+        editable.contains(document.activeElement),
+    ).toBe(true);
+    outsideButton.remove();
   });
 
   it("non-editor prop churn does not recreate the editor", async () => {

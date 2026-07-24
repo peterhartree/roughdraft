@@ -38,6 +38,20 @@ export async function openMarkdownFile(
   await page.goto(`/?${params.toString()}`);
 }
 
+export async function captureResponsiveScreenshots(
+  page: Page,
+  names: { desktop: string; mobile: string },
+) {
+  const screenshotDir = process.env.ROUGHDRAFT_SCREENSHOT_DIR;
+  if (!screenshotDir) return;
+
+  fs.mkdirSync(screenshotDir, { recursive: true });
+  await page.screenshot({ path: path.join(screenshotDir, names.desktop) });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.screenshot({ path: path.join(screenshotDir, names.mobile) });
+  await page.setViewportSize({ width: 1280, height: 720 });
+}
+
 export function codeEditor(page: Page) {
   return page.getByTestId("markdown-code-editor").locator(".cm-content");
 }

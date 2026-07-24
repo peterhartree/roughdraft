@@ -21,6 +21,11 @@ import {
   DocumentReviewRail,
 } from "./DocumentReviewRail";
 import { getPreferredCommentId, parseCommentIds } from "./document-comments";
+import type {
+  DocumentEditorViewController,
+  DocumentEditorViewState,
+} from "./document-view-state";
+import { getDocumentEditorSelectionForMode } from "./document-view-state";
 import { EditorContextMenu } from "./EditorContextMenu";
 import {
   commentHighlightPluginKey,
@@ -66,6 +71,9 @@ interface PageCardProps {
   onDirtyStateChange?: (isDirty: boolean) => void;
   onLocalContentChange?: (markdown: string) => void;
   onSaveControllerChange?: (controller: DocumentSaveController | null) => void;
+  onViewControllerChange?: (
+    controller: DocumentEditorViewController | null,
+  ) => void;
   saveBlocked?: boolean;
   forceResetKey?: string | null;
 }
@@ -86,6 +94,9 @@ interface PageCardEditorSurfaceProps {
   onDirtyStateChange?: (isDirty: boolean) => void;
   onLocalContentChange?: (markdown: string) => void;
   onSaveControllerChange?: (controller: DocumentSaveController | null) => void;
+  onViewControllerChange?: (
+    controller: DocumentEditorViewController | null,
+  ) => void;
   saveBlocked?: boolean;
   forceResetKey?: string | null;
 }
@@ -102,6 +113,10 @@ interface RichTextEditorSurfaceProps {
   backend: StorageBackend;
   onEditorReady?: (editor: Editor | null) => void;
   onCommentRailPresenceChange?: (hasCommentRailSpace: boolean) => void;
+  onPendingWorkStart?: (work: Promise<void>) => void;
+  onViewControllerChange?: (
+    controller: DocumentEditorViewController | null,
+  ) => void;
 }
 
 interface CodeEditorSurfaceProps {
@@ -110,6 +125,9 @@ interface CodeEditorSurfaceProps {
   interactionMode: DocumentInteractionMode;
   layout: "default" | "embedded-demo";
   onMarkdownChange: (markdown: string) => void;
+  onViewControllerChange?: (
+    controller: DocumentEditorViewController | null,
+  ) => void;
 }
 
 export interface DraftSuggestionState {
@@ -601,6 +619,8 @@ const RichTextEditorSurface = memo(function RichTextEditorSurface({
   backend,
   onEditorReady,
   onCommentRailPresenceChange,
+  onPendingWorkStart,
+  onViewControllerChange,
 }: RichTextEditorSurfaceProps) {
   const editorRef = useRef<Editor | null>(null);
   const criticChangeFrameRef = useRef<number | null>(null);
@@ -689,35 +709,47 @@ const RichTextEditorSurface = memo(function RichTextEditorSurface({
   );
 
   const insertFiles = useCallback(
-    async (files: File[]) => {
+    (files: File[]) => {
       const currentEditor = editorRef.current;
       if (!currentEditor || files.length === 0) return;
 
-      const assets = await Promise.all(
-        files.map((file) => backend.saveAsset(file)),
-      );
-      const markdown = assets
-        .map((asset, index) => {
-          const file = files[index];
-          if (asset.mimeType.startsWith("image/")) {
-            return `![${file?.name || "Image"}](${asset.markdownPath})`;
-          }
-          return `[${file?.name || "Attachment"}](${asset.markdownPath})`;
-        })
-        .join("\n\n");
+      const work = (async () => {
+        const assets = await Promise.all(
+          files.map((file) => backend.saveAsset(file)),
+        );
+        if (editorRef.current !== currentEditor || currentEditor.isDestroyed) {
+          return;
+        }
 
-      currentEditor
-        .chain()
-        .focus()
-        .insertContent(
-          toHtml(markdown, {
-            resolveFileUrl,
-            resolveLinkUrl,
-          }),
-        )
-        .run();
+        const markdown = assets
+          .map((asset, index) => {
+            const file = files[index];
+            if (asset.mimeType.startsWith("image/")) {
+              return `![${file?.name || "Image"}](${asset.markdownPath})`;
+            }
+            return `[${file?.name || "Attachment"}](${asset.markdownPath})`;
+          })
+          .join("\n\n");
+
+        currentEditor
+          .chain()
+          .focus()
+          .insertContent(
+            toHtml(markdown, {
+              resolveFileUrl,
+              resolveLinkUrl,
+            }),
+          )
+          .run();
+      })();
+
+      onPendingWorkStart?.(work);
+      void work.catch((error) => {
+        console.error("Failed to insert uploaded files:", error);
+      });
+      return work;
     },
-    [backend, resolveFileUrl, resolveLinkUrl],
+    [backend, onPendingWorkStart, resolveFileUrl, resolveLinkUrl],
   );
 
   const refreshCriticChanges = useCallback(() => {
@@ -1263,6 +1295,40 @@ const RichTextEditorSurface = memo(function RichTextEditorSurface({
       onEditorReady?.(null);
     };
   }, [editor, onEditorReady]);
+
+  useEffect(() => {
+    if (!editor) {
+      onViewControllerChange?.(null);
+      return;
+    }
+
+    const viewController: DocumentEditorViewController = {
+      capture: () => ({
+        mode: "rich-text",
+        anchor: editor.state.selection.anchor,
+        head: editor.state.selection.head,
+      }),
+      restore: (state: DocumentEditorViewState | null) => {
+        const maxPosition = editor.state.doc.content.size;
+        const restoredSelection = getDocumentEditorSelectionForMode(
+          state,
+          "rich-text",
+          maxPosition,
+        );
+        const selection = restoredSelection
+          ? TextSelection.between(
+              editor.state.doc.resolve(restoredSelection.anchor),
+              editor.state.doc.resolve(restoredSelection.head),
+            )
+          : TextSelection.atStart(editor.state.doc);
+        editor.view.dispatch(editor.state.tr.setSelection(selection));
+        editor.commands.focus(undefined, { scrollIntoView: false });
+      },
+    };
+
+    onViewControllerChange?.(viewController);
+    return () => onViewControllerChange?.(null);
+  }, [editor, onViewControllerChange]);
 
   useEffect(() => {
     setSelectedCommentId((current) =>
@@ -2035,6 +2101,7 @@ const CodeEditorSurface = memo(function CodeEditorSurface({
   interactionMode,
   layout,
   onMarkdownChange,
+  onViewControllerChange,
 }: CodeEditorSurfaceProps) {
   const documentShellClass = cn(
     "document-page-shell",
@@ -2081,6 +2148,7 @@ const CodeEditorSurface = memo(function CodeEditorSurface({
                 onChange={onMarkdownChange}
                 readOnly={interactionMode === "viewing"}
                 autoFocus
+                onViewControllerChange={onViewControllerChange}
               />
             </div>
           </div>
@@ -2113,11 +2181,14 @@ const PageCardEditorSurface = memo(function PageCardEditorSurface({
   onDirtyStateChange,
   onLocalContentChange,
   onSaveControllerChange,
+  onViewControllerChange,
   saveBlocked = false,
   forceResetKey = null,
 }: PageCardEditorSurfaceProps) {
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const inFlightSaveRef = useRef<Promise<ManualSaveResult> | null>(null);
+  const pendingWorkRef = useRef<Set<Promise<void>>>(new Set());
+  const pendingWorkErrorRef = useRef<unknown>(null);
   const pendingMarkdownRef = useRef(page.content);
   const recentMarkdownRef = useRef<Set<string>>(new Set());
   const previousEditorViewModeRef = useRef<EditorViewMode>(editorViewMode);
@@ -2129,6 +2200,17 @@ const PageCardEditorSurface = memo(function PageCardEditorSurface({
     page.content,
   );
   const [richTextSourceVersion, setRichTextSourceVersion] = useState(0);
+
+  const handlePendingWorkStart = useCallback((work: Promise<void>) => {
+    pendingWorkRef.current.add(work);
+    void work.then(
+      () => pendingWorkRef.current.delete(work),
+      (error) => {
+        pendingWorkRef.current.delete(work);
+        pendingWorkErrorRef.current = error;
+      },
+    );
+  }, []);
 
   const reportDirtyState = useCallback(
     (isDirty: boolean) => {
@@ -2228,30 +2310,36 @@ const PageCardEditorSurface = memo(function PageCardEditorSurface({
   );
 
   const flushSave = useCallback(async (): Promise<ManualSaveResult> => {
-    if (saveTimer.current) {
-      clearTimeout(saveTimer.current);
-      saveTimer.current = null;
-    }
+    while (true) {
+      while (pendingWorkRef.current.size > 0) {
+        await Promise.allSettled([...pendingWorkRef.current]);
+      }
+      if (pendingWorkErrorRef.current !== null) {
+        const error = pendingWorkErrorRef.current;
+        pendingWorkErrorRef.current = null;
+        onSaveStateChange("error");
+        return { status: "error", error };
+      }
 
-    const currentMarkdown = pendingMarkdownRef.current;
+      if (saveTimer.current) {
+        clearTimeout(saveTimer.current);
+        saveTimer.current = null;
+      }
 
-    if (
-      currentMarkdown === lastAcceptedMarkdownRef.current &&
-      !inFlightSaveRef.current
-    ) {
-      onSaveStateChange("saved");
-      return { status: "saved" };
-    }
+      if (inFlightSaveRef.current) {
+        const inFlightResult = await inFlightSaveRef.current;
+        if (inFlightResult.status !== "saved") return inFlightResult;
+        continue;
+      }
 
-    if (inFlightSaveRef.current) {
-      await inFlightSaveRef.current;
       if (pendingMarkdownRef.current === lastAcceptedMarkdownRef.current) {
         onSaveStateChange("saved");
         return { status: "saved" };
       }
-    }
 
-    return await performSave(pendingMarkdownRef.current);
+      const saveResult = await performSave(pendingMarkdownRef.current);
+      if (saveResult.status !== "saved") return saveResult;
+    }
   }, [onSaveStateChange, performSave]);
 
   useEffect(() => {
@@ -2351,6 +2439,7 @@ const PageCardEditorSurface = memo(function PageCardEditorSurface({
         interactionMode={interactionMode}
         layout={layout}
         onMarkdownChange={handleMarkdownChange}
+        onViewControllerChange={onViewControllerChange}
       />
     );
   }
@@ -2374,6 +2463,8 @@ const PageCardEditorSurface = memo(function PageCardEditorSurface({
       onMarkdownChange={handleMarkdownChange}
       interactionMode={interactionMode}
       onCommentRailPresenceChange={onCommentRailPresenceChange}
+      onPendingWorkStart={handlePendingWorkStart}
+      onViewControllerChange={onViewControllerChange}
       backend={backend}
       onEditorReady={onEditorReady}
     />
@@ -2396,6 +2487,7 @@ export function PageCard({
   onDirtyStateChange,
   onLocalContentChange,
   onSaveControllerChange,
+  onViewControllerChange,
   saveBlocked,
   forceResetKey,
 }: PageCardProps) {
@@ -2423,6 +2515,7 @@ export function PageCard({
         onDirtyStateChange={onDirtyStateChange}
         onLocalContentChange={onLocalContentChange}
         onSaveControllerChange={onSaveControllerChange}
+        onViewControllerChange={onViewControllerChange}
         saveBlocked={saveBlocked}
         forceResetKey={forceResetKey}
       />

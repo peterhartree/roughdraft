@@ -3,6 +3,7 @@ export interface Page {
   title: string;
   content: string;
   version?: string;
+  modifiedAt?: number;
 }
 
 export interface MarkdownFileChangeEvent {
@@ -18,6 +19,13 @@ export class MarkdownFileConflictError extends Error {
     super("Markdown file changed on disk");
     this.name = "MarkdownFileConflictError";
     this.current = current;
+  }
+}
+
+export class MarkdownFileNotFoundError extends Error {
+  constructor(relativePath: string) {
+    super(`Markdown file not found: ${relativePath}`);
+    this.name = "MarkdownFileNotFoundError";
   }
 }
 

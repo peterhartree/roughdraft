@@ -326,7 +326,7 @@ describe("cli", () => {
     const documentPath = path.join(projectDir, "draft.md");
     fs.writeFileSync(documentPath, "# Draft\n");
 
-    let postedOpenRequest: { path?: string } | null = null;
+    let postedOpenRequest: { path?: string; modifiedAt?: number } | null = null;
     let lastOpenedUrl: string | null = null;
     const deps = createCliDependencies({
       env: {
@@ -390,7 +390,10 @@ describe("cli", () => {
     const exitCode = await runCli(["open", documentPath], deps);
 
     expect(exitCode).toBe(0);
-    expect(postedOpenRequest).toEqual({ path: documentPath });
+    expect(postedOpenRequest).toEqual({
+      path: documentPath,
+      modifiedAt: fs.statSync(documentPath).mtimeMs,
+    });
     expect(lastOpenedUrl).toBe(
       expectedOpenUrl(
         `http://localhost:${ROUGHDRAFT_DEFAULT_PORT}`,

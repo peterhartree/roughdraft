@@ -114,6 +114,39 @@ roughdraft-dev-shanghai-v4 start
 
 Do not use the global `roughdraft` command for repo-local development in this repo unless the user explicitly asks for the published package.
 
+## Installed app handoff
+
+After finishing and verifying user-visible Roughdraft improvements, package the desktop app, replace `/Users/ph/Applications/Roughdraft.app`, and reopen it so Peter can try the result immediately. Peter has given standing authorisation to quit the running app for this handoff. Do not install a build whose relevant tests are still failing.
+
+The canonical installation is in Peter's **personal** Applications directory: `/Users/ph/Applications/Roughdraft.app`. It is not installed in the system `/Applications` directory, which is what Finder's usual Applications sidebar item opens. Check both locations before reporting that the app is missing, and do not silently move it to `/Applications`.
+
+```bash
+pnpm --filter @roughdraft/desktop package
+osascript -e 'tell application "Roughdraft" to quit'
+mkdir -p /Users/ph/Applications
+ditto packages/desktop/out/Roughdraft-darwin-arm64/Roughdraft.app /Users/ph/Applications/Roughdraft.app
+touch /Users/ph/Applications/Roughdraft.app
+lsregister_cmd=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
+"$lsregister_cmd" -f /Users/ph/Applications/Roughdraft.app
+open /Users/ph/Applications/Roughdraft.app
+```
+
+### macOS app icon and Launch Services cache
+
+When the app icon changes, correct packaging is necessary but not sufficient. macOS Dock can keep showing Electron's generic icon even when the source `.icns`, packaged bundle, installed bundle, `NSWorkspace`, and running application all resolve to the new icon. Do not report an icon change as complete from hashes or bundle inspection alone.
+
+Use this workflow:
+
+1. Confirm the running executable is `/Users/ph/Applications/Roughdraft.app/Contents/MacOS/Roughdraft`.
+2. Confirm `CFBundleIconFile` in the installed app's `Contents/Info.plist` and compare the source, packaged, and installed icon hashes.
+3. Inspect Launch Services for every registration of bundle identifier `is.pjh.roughdraft`. Pay special attention to old copies in `/Users/ph/.Trash`; a trashed bundle with the same identifier can keep Electron's icon cached.
+4. Unregister each exact obsolete bundle path with `lsregister -u "/exact/obsolete/Roughdraft.app"`. Do not delete or empty Trash unless Peter asks.
+5. Refresh the active bundle with `touch /Users/ph/Applications/Roughdraft.app` followed by `lsregister -f /Users/ph/Applications/Roughdraft.app`.
+6. When the icon is stale, run `killall Dock`; macOS restarts Dock automatically. Relaunch Roughdraft only if Dock still does not refresh.
+7. Capture or inspect the **live Dock tile** and confirm it shows the intended icon. A rendered `.icns` file or `NSWorkspace.icon(forFile:)` result is not a substitute for this final check.
+
+The July 2026 failure mode was an old `/Users/ph/.Trash/Roughdraft.app` registration with the generic Electron atom plus a stale root modification time on the active bundle. Unregistering that duplicate, touching and re-registering the active bundle, and restarting Dock fixed the live tile without an app relaunch.
+
 ## Fallback If The Wrapper Is Missing
 
 Setup should install the wrapper automatically, but if the command is missing:

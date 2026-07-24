@@ -2,6 +2,7 @@ import {
   type BackendInfo,
   type MarkdownFileChangeEvent,
   MarkdownFileConflictError,
+  MarkdownFileNotFoundError,
   type Page,
   type StorageBackend,
   type StoredAsset,
@@ -25,10 +26,10 @@ export class ApiBackend implements StorageBackend {
 
   private buildUrl(route: string, params?: Record<string, string>): string {
     const url = new URL(route, window.location.origin);
-    const projectPath = this.info.projectPath?.trim();
+    const normalizedProjectPath = this.info.projectPath?.trim();
 
-    if (projectPath) {
-      url.searchParams.set("projectPath", projectPath);
+    if (normalizedProjectPath) {
+      url.searchParams.set("projectPath", normalizedProjectPath);
     }
 
     Object.entries(params ?? {}).forEach(([key, value]) => {
@@ -44,6 +45,9 @@ export class ApiBackend implements StorageBackend {
         path: relativePath,
       }),
     );
+    if (res.status === 404) {
+      throw new MarkdownFileNotFoundError(relativePath);
+    }
     if (!res.ok) {
       throw new Error(
         `Failed to get markdown file ${relativePath}: ${res.status}`,
@@ -109,6 +113,8 @@ export class ApiBackend implements StorageBackend {
   }
 
   async saveAsset(file: File): Promise<StoredAsset> {
+    const projectPath = this.info.projectPath;
+    const requestUrl = this.buildUrl("/api/assets");
     const buffer = await file.arrayBuffer();
     let binary = "";
     const bytes = new Uint8Array(buffer);
@@ -118,14 +124,14 @@ export class ApiBackend implements StorageBackend {
       binary += String.fromCharCode(byte);
     }
 
-    const res = await fetch(this.buildUrl("/api/assets"), {
+    const res = await fetch(requestUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         filename: file.name,
         mimeType: file.type || "application/octet-stream",
         dataBase64: btoa(binary),
-        projectPath: this.info.projectPath,
+        projectPath,
       }),
     });
 

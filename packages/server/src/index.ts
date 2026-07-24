@@ -73,6 +73,7 @@ interface CreateAppResult {
 
 interface OpenRequestPayload {
   path?: string;
+  modifiedAt?: unknown;
 }
 
 interface RemoteSession {
@@ -164,6 +165,7 @@ function markdownPageFromFile(
   title: string;
   content: string;
   version: string;
+  modifiedAt: number;
 } {
   const content = fs.readFileSync(absolutePath, "utf-8");
   const stats = fs.statSync(absolutePath);
@@ -174,6 +176,7 @@ function markdownPageFromFile(
     title: titleFromContent(content, fallbackTitle),
     content,
     version: fileVersionFromContent(stats, content),
+    modifiedAt: stats.mtimeMs,
   };
 }
 
@@ -652,12 +655,17 @@ export function createApp(options: CreateAppOptions = {}): CreateAppResult {
       content: string;
       expectedVersion?: string;
     };
-    const currentVersion = fileVersionFromFile(absolutePath);
+    const current = markdownPageFromFile(relativePath, absolutePath);
 
-    if (expectedVersion && expectedVersion !== currentVersion) {
+    if (expectedVersion && expectedVersion !== current.version) {
+      if (content === current.content) {
+        res.json(current);
+        return;
+      }
+
       res.status(409).json({
         error: "Markdown file changed on disk",
-        current: markdownPageFromFile(relativePath, absolutePath),
+        current,
       });
       return;
     }
@@ -749,7 +757,12 @@ export function createApp(options: CreateAppOptions = {}): CreateAppResult {
       res.status(400).json({ error: "path is required" });
       return;
     }
-    res.json(openRequests.request({ path: targetPath }));
+    const modifiedAt =
+      typeof payload.modifiedAt === "number" &&
+      Number.isFinite(payload.modifiedAt)
+        ? payload.modifiedAt
+        : null;
+    res.json(openRequests.request({ path: targetPath, modifiedAt }));
   });
 
   app.post("/api/remote-document", (req, res) => {

@@ -10,6 +10,7 @@ export interface OpenRequestConnection {
 
 export interface OpenDocumentIntent {
   path: string;
+  modifiedAt: number | null;
 }
 
 type DeliverOpenRequest = (intent: OpenDocumentIntent) => void;

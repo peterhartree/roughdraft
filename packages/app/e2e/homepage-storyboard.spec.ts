@@ -5,7 +5,7 @@ test.describe("homepage workflow storyboard", () => {
   test("renders the plan-review storyboard above the Markdown section @smoke", async ({
     page,
   }, testInfo) => {
-    await page.goto("/");
+    await page.goto("/welcome");
 
     const storyboard = page.getByTestId("homepage-workflow-storyboard");
     await expect(storyboard).toBeVisible();
@@ -369,7 +369,7 @@ test.describe("homepage workflow storyboard", () => {
     page,
   }, testInfo) => {
     await page.setViewportSize({ width: 390, height: 844 });
-    await page.goto("/");
+    await page.goto("/welcome");
 
     const storyboard = page.getByTestId("homepage-workflow-storyboard");
     await expect(storyboard).toBeVisible();
