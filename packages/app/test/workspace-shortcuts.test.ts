@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { getInteractionModeShortcutTarget } from "../src/workspace-shortcuts";
+import {
+  getInteractionModeShortcutTarget,
+  matchesCopyPathShortcut,
+} from "../src/workspace-shortcuts";
 
 const shortcut = {
   code: "KeyS",
@@ -59,5 +62,31 @@ describe("editing and suggesting shortcut", () => {
         "suggesting",
       ),
     ).toBeNull();
+  });
+});
+
+describe("copy path shortcut", () => {
+  const copyShortcut = { ...shortcut, code: "KeyC", key: "ç" };
+
+  it("matches the physical C key on macOS when Option changes its character", () => {
+    expect(matchesCopyPathShortcut(copyShortcut, "MacIntel")).toBe(true);
+  });
+
+  it("matches Ctrl+Alt+C outside Apple platforms", () => {
+    expect(
+      matchesCopyPathShortcut(
+        { ...copyShortcut, metaKey: false, ctrlKey: true, key: "c" },
+        "Linux x86_64",
+      ),
+    ).toBe(true);
+  });
+
+  it.each([
+    { ...copyShortcut, ctrlKey: true },
+    { ...copyShortcut, repeat: true },
+    { ...copyShortcut, isComposing: true },
+    { ...copyShortcut, target: { tagName: "TEXTAREA" } },
+  ])("ignores unsafe macOS key events", (event) => {
+    expect(matchesCopyPathShortcut(event, "MacIntel")).toBe(false);
   });
 });

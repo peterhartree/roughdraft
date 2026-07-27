@@ -367,6 +367,78 @@ describe("saving/saved status indicator (issue 2 fix)", () => {
     expect(writeText).toHaveBeenCalledWith(text);
   });
 
+  it("copies the absolute document path from the dedicated top-bar button", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+
+    await renderWorkspace({
+      documentCopyPath: "/Users/me/project/test.md",
+    });
+    await click(getByTestId(container, "document-copy-path-button"));
+
+    expect(writeText).toHaveBeenCalledWith("/Users/me/project/test.md");
+  });
+
+  it("copies the absolute document path with Option+Command+C", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+
+    await renderWorkspace({
+      documentCopyPath: "/Users/me/project/test.md",
+    });
+
+    await act(async () => {
+      window.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          code: "KeyC",
+          key: "ç",
+          metaKey: true,
+          altKey: true,
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+      await Promise.resolve();
+    });
+
+    expect(writeText).toHaveBeenCalledWith("/Users/me/project/test.md");
+  });
+
+  it("does not show copied feedback on a document opened while copying", async () => {
+    let resolveWrite: (() => void) | null = null;
+    const writeText = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveWrite = resolve;
+        }),
+    );
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+
+    await renderWorkspace({ documentCopyPath: "/Users/me/project/first.md" });
+    await click(getByTestId(container, "document-copy-path-button"));
+    await renderWorkspace({ documentCopyPath: "/Users/me/project/second.md" });
+
+    await act(async () => {
+      resolveWrite?.();
+      await Promise.resolve();
+    });
+
+    expect(
+      getByTestId(container, "document-copy-path-button").getAttribute(
+        "aria-label",
+      ),
+    ).toBe("Copy path");
+  });
+
   it("keeps the file menu open and shows temporary copied feedback", async () => {
     vi.useFakeTimers();
     const writeText = vi.fn().mockResolvedValue(undefined);

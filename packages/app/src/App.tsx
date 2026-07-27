@@ -2539,6 +2539,13 @@ export function App() {
           disabled={fileSwitchPending || documentDiskChangeState !== "clean"}
           error={fileSwitchError}
           onSelect={(path) => void switchToOpenFile(path)}
+          onCopyPath={async (path) => {
+            try {
+              await navigator.clipboard.writeText(path);
+            } catch (error) {
+              console.error("Failed to copy document path:", error);
+            }
+          }}
         />
       ) : null}
       {showOpenFileSidebar ? (

@@ -1,5 +1,13 @@
-import { app, BrowserWindow, type Event, session, shell } from "electron";
+import {
+  app,
+  BrowserWindow,
+  type Event,
+  session,
+  shell,
+  type WebContents,
+} from "electron";
 import { shouldSuppressNativeCloseShortcut } from "./document-shortcuts.js";
+import { shouldAllowRendererPermission } from "./permission-policy.js";
 import {
   isAllowedExternalUrl,
   isAllowedNavigation,
@@ -132,9 +140,33 @@ if (!hasSingleInstanceLock) {
   });
 
   app.whenReady().then(async () => {
-    session.defaultSession.setPermissionCheckHandler(() => false);
+    const isMainWindowWebContents = (webContents: WebContents | null) =>
+      webContents !== null &&
+      mainWindow !== null &&
+      !mainWindow.isDestroyed() &&
+      webContents === mainWindow.webContents;
+
+    session.defaultSession.setPermissionCheckHandler(
+      (webContents, permission, requestingOrigin, details) =>
+        isMainWindowWebContents(webContents) &&
+        shouldAllowRendererPermission({
+          permission,
+          requestingOrigin,
+          validatedOrigin,
+          isMainFrame: details.isMainFrame,
+        }),
+    );
     session.defaultSession.setPermissionRequestHandler(
-      (_webContents, _permission, callback) => callback(false),
+      (webContents, permission, callback, details) =>
+        callback(
+          isMainWindowWebContents(webContents) &&
+            shouldAllowRendererPermission({
+              permission,
+              requestingOrigin: details.requestingUrl,
+              validatedOrigin,
+              isMainFrame: details.isMainFrame,
+            }),
+        ),
     );
     session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
       if (

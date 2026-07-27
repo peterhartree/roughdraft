@@ -82,6 +82,50 @@ test.describe("open-file sidebar", () => {
     });
   });
 
+  test("copies an absolute path from the top bar, shortcut, and sidebar context menu @smoke", async ({
+    page,
+  }) => {
+    const filePath = writeProjectFile(
+      firstProjectDir,
+      "copy-path.md",
+      "# Copy path\n\nUse the absolute filesystem path.\n",
+    );
+
+    await openMarkdownFile(page, filePath, "rich-text");
+    await page
+      .context()
+      .grantPermissions(["clipboard-read", "clipboard-write"], {
+        origin: new URL(page.url()).origin,
+      });
+
+    await page.getByTestId("document-copy-path-button").click();
+    await expect(page.getByTestId("document-copy-path-button")).toHaveAttribute(
+      "aria-label",
+      "Path copied",
+    );
+    await expect
+      .poll(() => page.evaluate(() => navigator.clipboard.readText()))
+      .toBe(filePath);
+
+    await page.evaluate(() => navigator.clipboard.writeText("reset"));
+    const primaryModifier = await page.evaluate(() =>
+      /mac|iphone|ipad|ipod/i.test(navigator.platform) ? "Meta" : "Control",
+    );
+    await page.keyboard.press(`${primaryModifier}+Alt+c`);
+    await expect
+      .poll(() => page.evaluate(() => navigator.clipboard.readText()))
+      .toBe(filePath);
+
+    await page.evaluate(() => navigator.clipboard.writeText("reset"));
+    const fileItem = await openFileItem(page, filePath);
+    await fileItem.click({ button: "right" });
+    await expect(page.getByTestId("open-file-sidebar-copy-path")).toBeVisible();
+    await page.getByTestId("open-file-sidebar-copy-path").click();
+    await expect
+      .poll(() => page.evaluate(() => navigator.clipboard.readText()))
+      .toBe(filePath);
+  });
+
   test("queues an incoming file unread when a conflict blocks activation @smoke", async ({
     page,
   }) => {

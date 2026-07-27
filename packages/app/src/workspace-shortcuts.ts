@@ -24,6 +24,31 @@ function isFormControl(target: unknown): boolean {
   );
 }
 
+function isApplePlatform(platform?: string | null) {
+  return !!platform && /mac|iphone|ipad|ipod/i.test(platform);
+}
+
+export function matchesCopyPathShortcut(
+  event: InteractionModeShortcutEvent,
+  platform?: string | null,
+): boolean {
+  const hasPrimaryModifier = platform
+    ? isApplePlatform(platform)
+      ? event.metaKey && !event.ctrlKey
+      : event.ctrlKey && !event.metaKey
+    : event.metaKey !== event.ctrlKey;
+
+  return (
+    event.code === "KeyC" &&
+    hasPrimaryModifier &&
+    event.altKey &&
+    !event.shiftKey &&
+    !event.repeat &&
+    !event.isComposing &&
+    !isFormControl(event.target)
+  );
+}
+
 export function getInteractionModeShortcutTarget(
   event: InteractionModeShortcutEvent,
   currentMode: DocumentInteractionMode,

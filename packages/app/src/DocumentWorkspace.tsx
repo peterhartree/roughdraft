@@ -51,7 +51,10 @@ import {
 } from "./PageCard";
 import type { Page, StorageBackend } from "./storage";
 import { useReviewLayoutShiftAnimation } from "./useReviewLayoutShiftAnimation";
-import { getInteractionModeShortcutTarget } from "./workspace-shortcuts";
+import {
+  getInteractionModeShortcutTarget,
+  matchesCopyPathShortcut,
+} from "./workspace-shortcuts";
 
 type DiskChangeState = "clean" | "changed" | "conflict" | "paused";
 type FileCopyAction = "path" | "filename" | "markdown" | "rich-text";
@@ -102,10 +105,6 @@ function formatFileCopyPreview(value: string) {
   const normalized = value.replace(/\s+/g, " ").trim();
   if (normalized.length <= FILE_COPY_PREVIEW_MAX_LENGTH) return normalized;
   return `${normalized.slice(0, FILE_COPY_PREVIEW_MAX_LENGTH - 1)}...`;
-}
-
-async function writePlainTextToClipboard(text: string) {
-  await navigator.clipboard.writeText(text);
 }
 
 function markdownToPlainText(markdown: string) {
@@ -170,7 +169,7 @@ async function writeRichTextToClipboard(markdown: string) {
     return;
   }
 
-  await writePlainTextToClipboard(plainText);
+  await navigator.clipboard.writeText(plainText);
 }
 
 function getSaveStatusViewModel(
@@ -322,8 +321,11 @@ export function DocumentWorkspace({
     useState<DocumentInteractionMode>("editing");
   const [saveState, setSaveState] = useState<DocumentSaveState>("saved");
   const [fileCopyMenuOpen, setFileCopyMenuOpen] = useState(false);
-  const [copiedFileAction, setCopiedFileAction] =
-    useState<FileCopyAction | null>(null);
+  const [copiedFileAction, setCopiedFileAction] = useState<{
+    action: FileCopyAction;
+    documentPath: string;
+  } | null>(null);
+  const copyFileRequestIdRef = useRef(0);
   const copiedFileActionTimeoutRef = useRef<number | null>(null);
   const saveControllerRef = useRef<DocumentSaveController | null>(null);
   const workspaceScrollRef = useRef<HTMLDivElement | null>(null);
@@ -444,6 +446,47 @@ export function DocumentWorkspace({
     };
   }, []);
 
+  const handleCopyFileMenuAction = useCallback(
+    async (action: FileCopyAction) => {
+      if (!documentPage) return;
+
+      const requestId = ++copyFileRequestIdRef.current;
+      const sourceDocumentPath =
+        documentCopyPath ?? activeDocumentPath ?? documentFilenameLabel;
+
+      const copyTextByAction: Record<
+        Exclude<FileCopyAction, "rich-text">,
+        string
+      > = {
+        path: sourceDocumentPath,
+        filename: documentFilenameLabel,
+        markdown: documentPage.content,
+      };
+
+      try {
+        if (action === "rich-text") {
+          await writeRichTextToClipboard(documentPage.content);
+        } else {
+          await navigator.clipboard.writeText(copyTextByAction[action]);
+        }
+
+        if (requestId !== copyFileRequestIdRef.current) return;
+
+        setCopiedFileAction({ action, documentPath: sourceDocumentPath });
+        if (copiedFileActionTimeoutRef.current !== null) {
+          window.clearTimeout(copiedFileActionTimeoutRef.current);
+        }
+        copiedFileActionTimeoutRef.current = window.setTimeout(() => {
+          setCopiedFileAction(null);
+          copiedFileActionTimeoutRef.current = null;
+        }, 3000);
+      } catch (error) {
+        console.error("Failed to copy document data:", error);
+      }
+    },
+    [activeDocumentPath, documentCopyPath, documentFilenameLabel, documentPage],
+  );
+
   useEffect(() => {
     if (!documentPage) return;
 
@@ -456,6 +499,13 @@ export function DocumentWorkspace({
         event.preventDefault();
         event.stopPropagation();
         setDocumentInteractionMode(shortcutMode);
+        return;
+      }
+
+      if (matchesCopyPathShortcut(event, navigator.platform)) {
+        event.preventDefault();
+        event.stopPropagation();
+        void handleCopyFileMenuAction("path");
         return;
       }
 
@@ -478,47 +528,22 @@ export function DocumentWorkspace({
     return () => {
       window.removeEventListener("keydown", handleKeyDown, { capture: true });
     };
-  }, [documentDiskChangeState, documentInteractionMode, documentPage]);
-
-  const handleCopyFileMenuAction = useCallback(
-    async (action: FileCopyAction) => {
-      if (!documentPage) return;
-
-      const copyTextByAction: Record<
-        Exclude<FileCopyAction, "rich-text">,
-        string
-      > = {
-        path: documentCopyPath ?? activeDocumentPath ?? documentFilenameLabel,
-        filename: documentFilenameLabel,
-        markdown: documentPage.content,
-      };
-
-      try {
-        if (action === "rich-text") {
-          await writeRichTextToClipboard(documentPage.content);
-        } else {
-          await writePlainTextToClipboard(copyTextByAction[action]);
-        }
-
-        setCopiedFileAction(action);
-        if (copiedFileActionTimeoutRef.current !== null) {
-          window.clearTimeout(copiedFileActionTimeoutRef.current);
-        }
-        copiedFileActionTimeoutRef.current = window.setTimeout(() => {
-          setCopiedFileAction(null);
-          copiedFileActionTimeoutRef.current = null;
-        }, 3000);
-      } catch (error) {
-        console.error("Failed to copy document data:", error);
-      }
-    },
-    [activeDocumentPath, documentCopyPath, documentFilenameLabel, documentPage],
-  );
+  }, [
+    documentDiskChangeState,
+    documentInteractionMode,
+    documentPage,
+    handleCopyFileMenuAction,
+  ]);
 
   const editorViewModeToggleLabel =
     documentEditorViewMode === "rich-text"
       ? "Switch to code view"
       : "Switch to rich text view";
+  const copiedFileActionForCurrentDocument =
+    copiedFileAction?.documentPath ===
+    (documentCopyPath ?? activeDocumentPath ?? documentFilenameLabel)
+      ? copiedFileAction.action
+      : null;
   const fileCopyPreviewByAction: Record<FileCopyAction, string> = {
     path: formatFileCopyPreview(
       documentCopyPath ?? activeDocumentPath ?? documentFilenameLabel,
@@ -722,13 +747,15 @@ export function DocumentWorkspace({
                           />
                           <span className="grid min-w-0 flex-1 gap-1">
                             <span className="truncate font-medium">
-                              {copiedFileAction === action ? "Copied!" : label}
+                              {copiedFileActionForCurrentDocument === action
+                                ? "Copied!"
+                                : label}
                             </span>
                             <span className="truncate text-[0.66rem] leading-none text-stone-400 dark:text-slate-500">
                               {fileCopyPreviewByAction[action]}
                             </span>
                           </span>
-                          {copiedFileAction === action ? (
+                          {copiedFileActionForCurrentDocument === action ? (
                             <Check className="mt-[0.06rem] ml-auto size-3 shrink-0 text-stone-500 dark:text-stone-400" />
                           ) : null}
                         </button>
@@ -736,6 +763,34 @@ export function DocumentWorkspace({
                     </div>
                   </PopoverContent>
                 </Popover>
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <button
+                        type="button"
+                        data-testid="document-copy-path-button"
+                        className="inline-flex size-6 shrink-0 items-center justify-center rounded-full text-stone-400 outline-none transition hover:bg-[#EEE9E1] hover:text-stone-600 focus-visible:ring-2 focus-visible:ring-stone-300/70 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-200 dark:focus-visible:ring-slate-600/70"
+                        aria-label={
+                          copiedFileActionForCurrentDocument === "path"
+                            ? "Path copied"
+                            : "Copy path"
+                        }
+                        onClick={() => void handleCopyFileMenuAction("path")}
+                      >
+                        {copiedFileActionForCurrentDocument === "path" ? (
+                          <Check className="size-3.5" aria-hidden="true" />
+                        ) : (
+                          <Copy className="size-3.5" aria-hidden="true" />
+                        )}
+                      </button>
+                    }
+                  />
+                  <TooltipContent>
+                    {copiedFileActionForCurrentDocument === "path"
+                      ? "Path copied"
+                      : "Copy path (⌥⌘C)"}
+                  </TooltipContent>
+                </Tooltip>
                 <div className="ml-auto inline-flex h-[1.25rem] shrink-0 items-center">
                   <Select<DocumentInteractionMode>
                     value={documentInteractionMode}

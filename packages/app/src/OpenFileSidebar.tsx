@@ -1,5 +1,12 @@
-import { FileText } from "lucide-react";
+import { Copy, FileText } from "lucide-react";
+import { useRef } from "react";
 import { Button } from "./components/ui/button";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuTrigger,
+} from "./components/ui/context-menu";
 import { cn } from "./lib/utils";
 import {
   formatOpenFileParentPath,
@@ -13,13 +20,17 @@ export function OpenFileSidebar({
   disabled,
   error,
   onSelect,
+  onCopyPath,
 }: {
   files: OpenFileItem[];
   activePath: string | null;
   disabled: boolean;
   error: string | null;
   onSelect: (path: string) => void;
+  onCopyPath: (path: string) => void | Promise<void>;
 }) {
+  const contextMenuPathRef = useRef<string | null>(null);
+
   return (
     <aside
       aria-label="Open files"
@@ -39,71 +50,108 @@ export function OpenFileSidebar({
       </div>
 
       <nav className="min-h-0 flex-1 overflow-y-auto p-1.5">
-        <ol className="grid list-none gap-0.5 p-0">
-          {files.map((file, index) => {
-            const active = file.path === activePath;
-            const filename = getOpenFileName(file.path);
-            return (
-              <li key={file.path}>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  disabled={disabled && !active}
-                  aria-current={active ? "page" : undefined}
-                  aria-label={`${filename}${file.unread ? ", unread" : ""}`}
-                  title={file.path}
-                  data-testid="open-file-sidebar-item"
-                  data-file-path={file.path}
-                  data-unread={file.unread ? "true" : "false"}
-                  className={cn(
-                    "group h-auto w-full justify-start gap-2 rounded-md px-2 py-2 text-left hover:bg-stone-200/75 dark:hover:bg-slate-800",
-                    active &&
-                      "bg-white text-slate-950 shadow-[0_1px_2px_rgba(15,23,42,0.08)] hover:bg-white dark:bg-slate-800 dark:text-slate-50 dark:hover:bg-slate-800",
-                  )}
-                  onClick={() => onSelect(file.path)}
-                >
-                  <span className="relative flex size-4 shrink-0 items-center justify-center">
-                    <FileText
-                      className={cn(
-                        "size-3.5 text-stone-400 dark:text-stone-500",
-                        active && "text-stone-700 dark:text-stone-200",
-                      )}
-                      aria-hidden="true"
-                    />
-                    {file.unread ? (
-                      <span
-                        className="absolute -top-0.5 -right-0.5 size-1.5 rounded-full bg-blue-500 ring-2 ring-[#F6F6F3] dark:bg-blue-400 dark:ring-slate-950"
-                        data-testid="open-file-unread-indicator"
-                        aria-hidden="true"
-                      />
-                    ) : null}
-                  </span>
-                  <span className="min-w-0 flex-1">
-                    <span
-                      className={cn(
-                        "block truncate text-[0.78rem] leading-4 font-medium",
-                        file.unread && "font-semibold",
-                      )}
-                    >
-                      {filename}
-                    </span>
-                    <span className="mt-0.5 block truncate text-[0.64rem] leading-3 text-stone-400 dark:text-stone-500">
-                      {formatOpenFileParentPath(file.path)}
-                    </span>
-                  </span>
-                  {index < 9 ? (
-                    <span
-                      className="shrink-0 text-[0.6rem] tabular-nums text-stone-300 group-hover:text-stone-500 dark:text-slate-600 dark:group-hover:text-slate-400"
-                      aria-hidden="true"
-                    >
-                      ⌘{index + 1}
-                    </span>
-                  ) : null}
-                </Button>
-              </li>
-            );
-          })}
-        </ol>
+        <ContextMenu>
+          <ContextMenuTrigger
+            render={
+              <ol
+                className="grid min-w-0 grid-cols-[minmax(0,1fr)] list-none gap-0.5 p-0"
+                onContextMenuCapture={(event) => {
+                  const item = (
+                    event.target as HTMLElement
+                  ).closest<HTMLElement>("[data-file-path]");
+                  if (!item) {
+                    contextMenuPathRef.current = null;
+                    event.preventDefault();
+                    event.stopPropagation();
+                    return;
+                  }
+                  contextMenuPathRef.current = item.dataset.filePath ?? null;
+                }}
+              >
+                {files.map((file, index) => {
+                  const active = file.path === activePath;
+                  const filename = getOpenFileName(file.path);
+                  return (
+                    <li key={file.path} className="min-w-0">
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        aria-disabled={disabled && !active}
+                        aria-current={active ? "page" : undefined}
+                        aria-label={`${filename}${file.unread ? ", unread" : ""}`}
+                        title={file.path}
+                        data-testid="open-file-sidebar-item"
+                        data-file-path={file.path}
+                        data-unread={file.unread ? "true" : "false"}
+                        className={cn(
+                          "group h-auto w-full max-w-full justify-start gap-2 overflow-hidden rounded-md px-2 py-2 text-left hover:bg-stone-200/75 aria-disabled:opacity-50 dark:hover:bg-slate-800",
+                          active &&
+                            "bg-white text-slate-950 shadow-[0_1px_2px_rgba(15,23,42,0.08)] hover:bg-white dark:bg-slate-800 dark:text-slate-50 dark:hover:bg-slate-800",
+                        )}
+                        onClick={() => {
+                          if (disabled && !active) return;
+                          onSelect(file.path);
+                        }}
+                      >
+                        <span className="relative flex size-4 shrink-0 items-center justify-center">
+                          <FileText
+                            className={cn(
+                              "size-3.5 text-stone-400 dark:text-stone-500",
+                              active && "text-stone-700 dark:text-stone-200",
+                            )}
+                            aria-hidden="true"
+                          />
+                          {file.unread ? (
+                            <span
+                              className="absolute -top-0.5 -right-0.5 size-1.5 rounded-full bg-blue-500 ring-2 ring-[#F6F6F3] dark:bg-blue-400 dark:ring-slate-950"
+                              data-testid="open-file-unread-indicator"
+                              aria-hidden="true"
+                            />
+                          ) : null}
+                        </span>
+                        <span className="min-w-0 flex-1">
+                          <span
+                            className={cn(
+                              "block truncate text-[0.78rem] leading-4 font-medium",
+                              file.unread && "font-semibold",
+                            )}
+                          >
+                            {filename}
+                          </span>
+                          <span className="mt-0.5 block truncate text-[0.64rem] leading-3 text-stone-400 dark:text-stone-500">
+                            {formatOpenFileParentPath(file.path)}
+                          </span>
+                        </span>
+                        {index < 9 ? (
+                          <span
+                            className="shrink-0 text-[0.6rem] tabular-nums text-stone-300 group-hover:text-stone-500 dark:text-slate-600 dark:group-hover:text-slate-400"
+                            aria-hidden="true"
+                          >
+                            ⌘{index + 1}
+                          </span>
+                        ) : null}
+                      </Button>
+                    </li>
+                  );
+                })}
+              </ol>
+            }
+          />
+          <ContextMenuContent aria-label="File actions">
+            <ContextMenuItem
+              data-testid="open-file-sidebar-copy-path"
+              onClick={() => {
+                const path = contextMenuPathRef.current;
+                if (path && files.some((file) => file.path === path)) {
+                  void onCopyPath(path);
+                }
+              }}
+            >
+              <Copy className="size-3.5 text-stone-500 dark:text-slate-400" />
+              Copy path
+            </ContextMenuItem>
+          </ContextMenuContent>
+        </ContextMenu>
       </nav>
 
       {error ? (
