@@ -30,7 +30,9 @@ describe("open-file sidebar actions", () => {
     await act(async () => {
       root.render(
         <OpenFileSidebar
-          files={[{ path: filePath, unread: false, modifiedAt: 1 }]}
+          files={[
+            { path: filePath, unread: false, modifiedAt: 1, openedAt: 1 },
+          ]}
           activePath={filePath}
           disabled={false}
           error={null}
@@ -80,6 +82,7 @@ describe("open-file sidebar actions", () => {
               path: "/Users/me/project/plan.md",
               unread: false,
               modifiedAt: 1,
+              openedAt: 1,
             },
           ]}
           activePath="/Users/me/project/plan.md"
@@ -131,7 +134,9 @@ describe("open-file sidebar actions", () => {
       });
     };
 
-    await renderSidebar([{ path: filePath, unread: false, modifiedAt: 1 }]);
+    await renderSidebar([
+      { path: filePath, unread: false, modifiedAt: 1, openedAt: 1 },
+    ]);
     const file = container.querySelector<HTMLElement>(
       '[data-testid="open-file-sidebar-item"]',
     );
@@ -172,8 +177,9 @@ describe("open-file sidebar actions", () => {
               path: "/Users/me/project/active.md",
               unread: false,
               modifiedAt: 2,
+              openedAt: 2,
             },
-            { path: blockedPath, unread: false, modifiedAt: 1 },
+            { path: blockedPath, unread: false, modifiedAt: 1, openedAt: 1 },
           ]}
           activePath="/Users/me/project/active.md"
           disabled={true}

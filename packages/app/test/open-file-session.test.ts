@@ -16,11 +16,13 @@ describe("open-file session persistence", () => {
         {
           path: "/tmp/newer.md",
           modifiedAt: 200,
+          openedAt: 2_000,
           unread: false,
         },
         {
           path: "/tmp/older.md",
           modifiedAt: 100,
+          openedAt: 1_000,
           unread: true,
         },
       ],
@@ -31,6 +33,31 @@ describe("open-file session persistence", () => {
     expect(readOpenFileSession(storage)).toEqual(session);
   });
 
+  it("restores a legacy session without open times in its stored order", () => {
+    const storage = new MemoryStorage();
+    storage.setItem(
+      "roughdraft.open-file-session.v1",
+      JSON.stringify({
+        activePath: "/tmp/second.md",
+        files: [
+          { path: "/tmp/first.md", modifiedAt: 300, unread: false },
+          { path: "/tmp/second.md", modifiedAt: 200, unread: false },
+          { path: "/tmp/third.md", modifiedAt: 100, unread: true },
+        ],
+      }),
+    );
+
+    const restored = readOpenFileSession(storage, 10_000);
+    expect(restored?.files.map((file) => file.path)).toEqual([
+      "/tmp/first.md",
+      "/tmp/second.md",
+      "/tmp/third.md",
+    ]);
+    const openTimes = restored?.files.map((file) => file.openedAt) ?? [];
+    expect([...openTimes].sort((a, b) => b - a)).toEqual(openTimes);
+    expect(new Set(openTimes).size).toBe(openTimes.length);
+  });
+
   it.each([
     "not json",
     JSON.stringify({ activePath: "", files: [] }),
@@ -38,6 +65,17 @@ describe("open-file session persistence", () => {
     JSON.stringify({
       activePath: "/tmp/draft.md",
       files: [{ path: "/tmp/draft.md", modifiedAt: "recent" }],
+    }),
+    JSON.stringify({
+      activePath: "/tmp/draft.md",
+      files: [
+        {
+          path: "/tmp/draft.md",
+          modifiedAt: 100,
+          openedAt: "recent",
+          unread: false,
+        },
+      ],
     }),
   ])("rejects and clears invalid stored state: %s", (value) => {
     const storage = new MemoryStorage();
@@ -69,6 +107,7 @@ describe("open-file session persistence", () => {
     const files = Array.from({ length: 101 }, (_, index) => ({
       path: `/tmp/file-${index}.md`,
       modifiedAt: 101 - index,
+      openedAt: 1_000 + (101 - index),
       unread: index > 0,
     }));
 
@@ -92,6 +131,7 @@ describe("open-file session persistence", () => {
         {
           path: "/tmp/draft.md",
           modifiedAt: 100,
+          openedAt: 1_000,
           unread: false,
         },
       ],
@@ -118,6 +158,7 @@ describe("open-file session persistence", () => {
         {
           path: "/tmp/draft.md",
           modifiedAt: 100,
+          openedAt: 1_000,
           unread: false,
         },
       ],

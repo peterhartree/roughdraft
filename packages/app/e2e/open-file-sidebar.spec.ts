@@ -1035,6 +1035,36 @@ test.describe("open-file sidebar", () => {
     });
   });
 
+  test("moves an already-open file to the top when reopened with an explicit URL", async ({
+    page,
+  }) => {
+    const firstPath = writeProjectFile(
+      firstProjectDir,
+      "older.md",
+      "# Older\n\nOpened first.\n",
+    );
+    const secondPath = writeProjectFile(
+      secondProjectDir,
+      "newer.md",
+      "# Newer\n\nOpened second.\n",
+    );
+
+    await openMarkdownFile(page, firstPath, "rich-text");
+    await expect(richTextEditor(page)).toContainText("Opened first.");
+    await postOpenRequest(page, secondPath);
+    await expect(richTextEditor(page)).toContainText("Opened second.");
+    const items = page.getByTestId("open-file-sidebar-item");
+    await expect(items).toHaveCount(2);
+    await expect(items.nth(0)).toContainText("newer.md");
+
+    await openMarkdownFile(page, firstPath, "rich-text");
+
+    await expect(richTextEditor(page)).toContainText("Opened first.");
+    await expect(items).toHaveCount(2);
+    await expect(items.nth(0)).toContainText("older.md");
+    await expect(items.nth(1)).toContainText("newer.md");
+  });
+
   test("falls back to another stored file when the active file is unavailable", async ({
     page,
   }) => {

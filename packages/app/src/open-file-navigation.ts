@@ -3,8 +3,13 @@ import { formatOpenFileParentPath, getPathLeaf } from "./app-navigation";
 export interface OpenFileItem {
   path: string;
   modifiedAt: number;
+  openedAt: number;
   unread: boolean;
 }
+
+export type OpenFileUpsert = Omit<OpenFileItem, "openedAt"> & {
+  openedAt?: number;
+};
 
 interface OpenFileShortcutEvent {
   key: string;
@@ -21,7 +26,9 @@ type OpenFileShortcut = { type: "select-index"; index: number };
 
 function compareOpenFiles(left: OpenFileItem, right: OpenFileItem) {
   return (
-    right.modifiedAt - left.modifiedAt || left.path.localeCompare(right.path)
+    right.openedAt - left.openedAt ||
+    right.modifiedAt - left.modifiedAt ||
+    left.path.localeCompare(right.path)
   );
 }
 
@@ -29,14 +36,23 @@ export function sortOpenFiles(files: OpenFileItem[]) {
   return [...files].sort(compareOpenFiles);
 }
 
-export function upsertOpenFile(files: OpenFileItem[], file: OpenFileItem) {
+export function upsertOpenFile(
+  files: OpenFileItem[],
+  file: OpenFileUpsert,
+  now = Date.now(),
+) {
   const existingIndex = files.findIndex(
     (candidate) => candidate.path === file.path,
   );
   const existing = existingIndex === -1 ? undefined : files[existingIndex];
+  // Refreshes (saves, disk changes) keep the original open time so the
+  // sidebar only reorders when a file is opened.
+  const openedAt = file.openedAt ?? existing?.openedAt ?? now;
   if (
-    existing?.modifiedAt === file.modifiedAt &&
-    existing.unread === file.unread
+    existing &&
+    existing.modifiedAt === file.modifiedAt &&
+    existing.unread === file.unread &&
+    existing.openedAt === openedAt
   ) {
     return files;
   }
@@ -44,11 +60,12 @@ export function upsertOpenFile(files: OpenFileItem[], file: OpenFileItem) {
   const nextFiles = [...files];
 
   if (existingIndex === -1) {
-    nextFiles.push(file);
+    nextFiles.push({ ...file, openedAt });
   } else {
     nextFiles[existingIndex] = {
       ...nextFiles[existingIndex],
       ...file,
+      openedAt,
     };
   }
 

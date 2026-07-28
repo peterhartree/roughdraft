@@ -14,16 +14,18 @@ import {
 const first = {
   path: "/tmp/first.md",
   modifiedAt: 100,
+  openedAt: 1_000,
   unread: false,
 };
 const second = {
   path: "/tmp/second.md",
   modifiedAt: 200,
+  openedAt: 2_000,
   unread: true,
 };
 
 describe("open-file ordering and read state", () => {
-  it("sorts newest modification first with a stable path tie-break", () => {
+  it("sorts most recently opened first with a stable path tie-break", () => {
     expect(
       sortOpenFiles([first, second, { ...first, path: "/tmp/alpha.md" }]).map(
         (file) => file.path,
@@ -31,29 +33,60 @@ describe("open-file ordering and read state", () => {
     ).toEqual(["/tmp/second.md", "/tmp/alpha.md", "/tmp/first.md"]);
   });
 
-  it("adds incoming files as unread and refreshes their modification time", () => {
+  it("ignores modification times when open times differ", () => {
     expect(
-      upsertOpenFile([first], {
-        path: "/tmp/second.md",
-        modifiedAt: 250,
-        unread: true,
-      }),
+      sortOpenFiles([
+        { ...first, modifiedAt: 900 },
+        { ...second, modifiedAt: 50 },
+      ]).map((file) => file.path),
+    ).toEqual(["/tmp/second.md", "/tmp/first.md"]);
+  });
+
+  it("stamps newly opened files with the current time and sorts them first", () => {
+    expect(
+      upsertOpenFile(
+        [first],
+        {
+          path: "/tmp/second.md",
+          modifiedAt: 250,
+          unread: true,
+        },
+        3_000,
+      ),
     ).toEqual([
       {
         path: "/tmp/second.md",
         modifiedAt: 250,
+        openedAt: 3_000,
         unread: true,
       },
       first,
     ]);
+  });
 
+  it("keeps a file in place when only its modification time refreshes", () => {
+    expect(
+      upsertOpenFile(
+        [second, first],
+        {
+          path: first.path,
+          modifiedAt: 900,
+          unread: false,
+        },
+        3_000,
+      ),
+    ).toEqual([second, { ...first, modifiedAt: 900 }]);
+  });
+
+  it("moves a reopened file to the top when given a new open time", () => {
     expect(
       upsertOpenFile([second, first], {
-        path: second.path,
-        modifiedAt: 300,
-        unread: true,
-      })[0],
-    ).toMatchObject({ path: second.path, modifiedAt: 300, unread: true });
+        path: first.path,
+        modifiedAt: first.modifiedAt,
+        openedAt: 3_000,
+        unread: false,
+      }),
+    ).toEqual([{ ...first, openedAt: 3_000 }, second]);
   });
 
   it("marks a selected file as read without changing other files", () => {
@@ -165,6 +198,7 @@ describe("open-file filename matching", () => {
       {
         path: "/tmp/first-notes/draft.md",
         modifiedAt: 50,
+        openedAt: 500,
         unread: false,
       },
     ];

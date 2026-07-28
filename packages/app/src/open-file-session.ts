@@ -52,6 +52,9 @@ function parseOpenFileSession(
       seenPaths.has(file.path) ||
       typeof file.modifiedAt !== "number" ||
       !Number.isFinite(file.modifiedAt) ||
+      (file.openedAt !== undefined &&
+        (typeof file.openedAt !== "number" ||
+          !Number.isFinite(file.openedAt))) ||
       typeof file.unread !== "boolean"
     ) {
       return null;
@@ -61,6 +64,10 @@ function parseOpenFileSession(
     files.push({
       path: file.path,
       modifiedAt: file.modifiedAt,
+      // Sessions stored before open times existed keep their saved order:
+      // synthesised open times decrease with the stored index.
+      openedAt:
+        typeof file.openedAt === "number" ? file.openedAt : now - files.length,
       unread: file.unread,
     });
   }

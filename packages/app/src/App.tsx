@@ -1648,6 +1648,7 @@ export function App() {
       nextBackend: StorageBackend,
       relativePath: string,
       absolutePath?: string | null,
+      openedAt?: number,
     ) => {
       const nextDocument = await nextBackend.getMarkdownFile(relativePath);
       applyDocumentPage(nextDocument);
@@ -1658,6 +1659,7 @@ export function App() {
           upsertOpenFile(current, {
             path: absolutePath,
             modifiedAt: nextDocument.modifiedAt ?? 0,
+            openedAt,
             unread: false,
           }),
         );
@@ -1756,6 +1758,7 @@ export function App() {
               path: targetPath,
               modifiedAt:
                 typeof payload.modifiedAt === "number" ? payload.modifiedAt : 0,
+              openedAt: Date.now(),
               unread: !isActive,
             }),
           );
@@ -1789,6 +1792,9 @@ export function App() {
     let cancelled = false;
 
     const initialize = async () => {
+      // Stamp the open before any awaits so a file opened via the URL sorts
+      // below open requests that arrive while its first load is in flight.
+      const startupOpenedAt = Date.now();
       setLoading(true);
       setLoadError(null);
       setDocumentPage(null);
@@ -1854,6 +1860,14 @@ export function App() {
               detectedBackend,
               candidate.documentPath,
               candidate.rawPath,
+              // An explicit URL open is a fresh open intent and bumps the
+              // file; restoring the stored session keeps its open times.
+              startupState.restoringSession &&
+                startupState.restoredFiles.some(
+                  (file) => file.path === candidatePath,
+                )
+                ? undefined
+                : startupOpenedAt,
             );
             if (cancelled) return;
 
