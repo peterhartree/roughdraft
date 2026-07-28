@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test";
 import {
+  captureResponsiveScreenshots,
   codeEditor,
   createMarkdownProject,
   logE2eEvent,
@@ -79,6 +80,80 @@ test.describe("opening local markdown files", () => {
       projectDir,
       file: "review.md",
     });
+  });
+
+  test("keeps prose readable while wide tables use the available viewport", async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 1600, height: 900 });
+    const filePath = writeProjectFile(
+      projectDir,
+      "wide-table.md",
+      [
+        "# Wide table review",
+        "",
+        "This paragraph should keep a readable line length even when the window is wide enough to give data-heavy content substantially more room.",
+        "",
+        "| Location | Before | After | Rationale | Verification |",
+        "| --- | --- | --- | --- | --- |",
+        "| SubscribeForm.tsx:69-77 | Fixed overlay | Shared dialog primitive | Consistent keyboard behaviour | Focus enters and returns |",
+        "| SummaryPeekSheet.tsx:222-245 | Narrow sheet | Responsive sheet | More room for episode context | Desktop and compact viewport |",
+        "",
+      ].join("\n"),
+    );
+
+    await openMarkdownFile(page, filePath);
+
+    const editor = page.getByTestId("rich-text-editor");
+    const prose = editor.locator("p").first(); // selector-check-ignore -- rendered paragraph geometry is the contract
+    const tableViewport = editor.locator(".tableWrapper"); // selector-check-ignore -- Tiptap's table scroll viewport is the product boundary
+    const workspace = page.getByTestId("document-workspace-scroll");
+    const contentCard = page.getByTestId("document-content-card");
+
+    await expect(prose).toBeVisible();
+    await expect(tableViewport).toBeVisible();
+
+    const proseBox = await prose.boundingBox();
+    const tableBox = await tableViewport.boundingBox();
+    const workspaceBox = await workspace.boundingBox();
+
+    expect(proseBox).not.toBeNull();
+    expect(tableBox).not.toBeNull();
+    expect(workspaceBox).not.toBeNull();
+    logE2eEvent("open-file.wide-table-layout", {
+      proseWidth: proseBox?.width ?? null,
+      tableWidth: tableBox?.width ?? null,
+      workspaceWidth: workspaceBox?.width ?? null,
+    });
+    expect(proseBox?.width).toBeLessThanOrEqual(760);
+    expect(tableBox?.width).toBeGreaterThan((workspaceBox?.width ?? 0) * 0.75);
+    expect(tableBox?.width).toBeGreaterThan((proseBox?.width ?? 0) * 1.4);
+    await expect(contentCard).toHaveCSS("border-top-width", "0px");
+    await expect(contentCard).toHaveCSS("border-radius", "0px");
+    await expect(contentCard).toHaveCSS("box-shadow", "none");
+
+    await captureResponsiveScreenshots(page, {
+      desktop: "wide-table-desktop.png",
+      mobile: "wide-table-mobile.png",
+    });
+
+    await page.setViewportSize({ width: 1600, height: 900 });
+    await page.getByTestId("document-editor-view-toggle").click();
+    const codeCard = page.getByTestId("document-content-card");
+    await expect(page.getByTestId("markdown-code-editor")).toBeVisible();
+
+    const codeCardBox = await codeCard.boundingBox();
+    const codeWorkspaceBox = await workspace.boundingBox();
+    expect(codeCardBox).not.toBeNull();
+    expect(codeWorkspaceBox).not.toBeNull();
+    expect(codeCardBox?.width).toBeLessThanOrEqual(744);
+    expect(
+      Math.abs(
+        (codeCardBox?.x ?? 0) +
+          (codeCardBox?.width ?? 0) / 2 -
+          ((codeWorkspaceBox?.x ?? 0) + (codeWorkspaceBox?.width ?? 0) / 2),
+      ),
+    ).toBeLessThanOrEqual(1);
   });
 
   test("focuses an existing window for a repeated open request", async ({

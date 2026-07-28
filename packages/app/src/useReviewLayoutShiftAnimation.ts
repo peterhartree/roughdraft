@@ -7,6 +7,7 @@ const animationDurationMs = 180;
 
 export function useReviewLayoutShiftAnimation<TElement extends HTMLElement>(
   layoutState: unknown,
+  measureSelector?: string,
 ): RefObject<TElement | null> {
   const elementRef = useRef<TElement>(null);
   const previousLeftRef = useRef<number | null>(null);
@@ -20,7 +21,10 @@ export function useReviewLayoutShiftAnimation<TElement extends HTMLElement>(
     const main = element?.querySelector<HTMLElement>(".review-layout-main");
     if (!element || !main) return;
 
-    const nextLeft = main.getBoundingClientRect().left;
+    const measureElement = measureSelector
+      ? (element.querySelector<HTMLElement>(measureSelector) ?? main)
+      : main;
+    const nextLeft = measureElement.getBoundingClientRect().left;
     const previousLeft = previousLeftRef.current;
     previousLeftRef.current = nextLeft;
 
@@ -81,7 +85,7 @@ export function useReviewLayoutShiftAnimation<TElement extends HTMLElement>(
       }
       finish();
     };
-  }, [layoutState]);
+  }, [layoutState, measureSelector]);
 
   return elementRef;
 }

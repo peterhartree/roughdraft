@@ -1937,13 +1937,17 @@ const RichTextEditorSurface = memo(function RichTextEditorSurface({
   }, []);
 
   const hasReviewRail = comments.size > 0 || criticChanges.length > 0;
-  const documentShellRef =
-    useReviewLayoutShiftAnimation<HTMLDivElement>(hasReviewRail);
+  const documentShellRef = useReviewLayoutShiftAnimation<HTMLDivElement>(
+    hasReviewRail,
+    ".document-rich-text-layout .tiptap > :not(.tableWrapper)",
+  );
   const activeComments = activeCommentIds
     .map((commentId) => comments.get(commentId))
     .filter((comment): comment is CriticComment => Boolean(comment));
   const contentCardClass =
-    "rounded-[0.75rem] border border-[#E9E9E8] dark:border-slate-800 bg-white dark:bg-card shadow-[0_18px_44px_rgba(57,47,38,0.08)] dark:shadow-[0_18px_44px_rgba(0,0,0,0.35)]";
+    layout === "embedded-demo"
+      ? "rounded-[0.75rem] border border-[#E9E9E8] dark:border-slate-800 bg-white dark:bg-card shadow-[0_18px_44px_rgba(57,47,38,0.08)] dark:shadow-[0_18px_44px_rgba(0,0,0,0.35)]"
+      : "bg-white dark:bg-card";
   const documentShellClass = cn(
     "document-page-shell",
     layout === "embedded-demo"
@@ -1956,9 +1960,7 @@ const RichTextEditorSurface = memo(function RichTextEditorSurface({
   );
   const documentMainClass = cn(
     "document-page-main w-full min-w-0",
-    layout === "embedded-demo"
-      ? "max-w-none"
-      : "review-layout-main max-w-[46.5rem]",
+    layout === "embedded-demo" ? "max-w-none" : "review-layout-main",
   );
   const contentInsetClass = layout === "embedded-demo" ? "pb-0" : "pb-24";
   const fallbackClass = cn(
@@ -2012,7 +2014,11 @@ const RichTextEditorSurface = memo(function RichTextEditorSurface({
           <div className={contentInsetClass}>
             <div
               data-testid="document-content-card"
-              className={cn(contentCardClass, "px-10 py-10 sm:px-14 sm:py-14")}
+              className={cn(
+                contentCardClass,
+                layout !== "embedded-demo" && "document-rich-text-layout",
+                "px-10 py-10 sm:px-14 sm:py-14",
+              )}
             >
               <EditorContextMenu
                 editor={editor}
@@ -2117,7 +2123,7 @@ const CodeEditorSurface = memo(function CodeEditorSurface({
     "document-page-main w-full min-w-0",
     layout === "embedded-demo"
       ? "max-w-none"
-      : "review-layout-main max-w-[46.5rem]",
+      : "review-layout-main mx-auto max-w-[46.5rem]",
   );
   const contentInsetClass = layout === "embedded-demo" ? "pb-0" : "pb-24";
   const reviewRailClass = cn(

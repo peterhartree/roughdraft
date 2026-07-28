@@ -430,6 +430,24 @@
     @apply my-4 overflow-x-auto rounded-2xl;
   }
 
+  .document-rich-text-layout .tiptap {
+    display: grid;
+    grid-template-columns:
+      minmax(0, 1fr)
+      minmax(0, min(46.5rem, 100%))
+      minmax(0, 1fr);
+  }
+
+  .document-rich-text-layout .tiptap > * {
+    grid-column: 2;
+    min-width: 0;
+  }
+
+  .document-rich-text-layout .tiptap > .tableWrapper {
+    grid-column: 1 / -1;
+    width: 100%;
+  }
+
   .tiptap table {
     @apply table-fixed border-collapse;
     /* biome-ignore lint/complexity/noImportantStyles: override Tiptap inline min-width */
@@ -758,8 +776,7 @@
     display: grid;
     /* comments present: document on the left, fixed-width rail on the right */
     --review-rail-width: 18rem;
-    grid-template-columns: minmax(0, 46.5rem) var(--review-rail-width);
-    justify-content: center;
+    grid-template-columns: minmax(0, 1fr) var(--review-rail-width);
     align-items: start;
     column-gap: 2rem;
   }
@@ -767,6 +784,7 @@
   /* no comments: rail collapses to nothing and the document re-centers */
   .review-layout-grid.review-layout-grid--centered {
     --review-rail-width: 0rem;
+    grid-template-columns: minmax(0, 1fr) var(--review-rail-width);
     column-gap: 0rem;
   }
 

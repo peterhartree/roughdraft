@@ -647,7 +647,7 @@ export function DocumentWorkspace({
       ) : null}
       <div
         className={cn(
-          "mx-auto min-h-full max-w-[1080px]",
+          "mx-auto min-h-full w-full",
           conflictNotice ? "pt-40 sm:pt-28" : "pt-10",
         )}
       >
@@ -661,7 +661,7 @@ export function DocumentWorkspace({
                 "review-layout-grid--centered document-page-shell-no-comments",
             )}
           >
-            <div className="review-layout-main document-page-main w-full max-w-[46.5rem] min-w-0">
+            <div className="review-layout-main document-page-main mx-auto w-full max-w-[46.5rem] min-w-0">
               <div className="flex w-full flex-wrap items-center gap-1.5 px-1">
                 <Tooltip>
                   <TooltipTrigger
