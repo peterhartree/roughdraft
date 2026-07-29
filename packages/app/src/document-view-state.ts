@@ -1,4 +1,8 @@
 import type { DocumentEditorViewMode } from "./app-navigation";
+import type {
+  DocumentFindDirection,
+  DocumentFindResult,
+} from "./document-find";
 
 export const DOCUMENT_VIEW_STATE_MAX_AGE_MS = 12 * 60 * 60 * 1_000;
 
@@ -17,6 +21,9 @@ export interface DocumentViewState {
 export interface DocumentEditorViewController {
   capture: () => DocumentEditorViewState;
   restore: (state: DocumentEditorViewState | null) => void;
+  find: (query: string, direction: DocumentFindDirection) => DocumentFindResult;
+  clearFind: () => void;
+  getFindResult: () => DocumentFindResult;
 }
 
 export interface DocumentViewController {

@@ -82,6 +82,90 @@ test.describe("opening local markdown files", () => {
     });
   });
 
+  test("finds repeated text and navigates results in both editor views @smoke", async ({
+    page,
+  }) => {
+    const filePath = writeProjectFile(
+      projectDir,
+      "find.md",
+      [
+        "# Needle one",
+        "",
+        "A paragraph with needle two.",
+        "",
+        "The final needle is here.",
+        "",
+      ].join("\n"),
+    );
+    const dispatchFindShortcut = async (key: "f" | "g", shiftKey = false) => {
+      await page
+        .getByTestId("document-workspace-scroll")
+        .dispatchEvent("keydown", {
+          key,
+          code: `Key${key.toUpperCase()}`,
+          metaKey: process.platform === "darwin",
+          ctrlKey: process.platform !== "darwin",
+          shiftKey,
+          bubbles: true,
+          cancelable: true,
+        });
+    };
+
+    await openMarkdownFile(page, filePath);
+    await expect(page.getByTestId("rich-text-editor")).toBeVisible();
+    await dispatchFindShortcut("f");
+
+    const findInput = page.getByTestId("document-find-input");
+    const findCount = page.getByTestId("document-find-count");
+    await expect(findInput).toBeFocused();
+    await findInput.fill("needle");
+    await expect(findCount).toHaveText("1 of 3");
+    await expect(page.getByTestId("document-find-match-active")).toHaveCount(1);
+    await expect(page.getByTestId("document-find-match")).toHaveCount(2);
+
+    await dispatchFindShortcut("g");
+    await expect(findCount).toHaveText("2 of 3");
+    await dispatchFindShortcut("g", true);
+    await expect(findCount).toHaveText("1 of 3");
+
+    const richTextContent = page
+      .getByTestId("rich-text-editor")
+      .locator(".ProseMirror");
+    await richTextContent.click();
+    await expect(findInput).not.toBeFocused();
+    await dispatchFindShortcut("f");
+    await expect(findInput).toBeFocused();
+
+    await richTextContent.click();
+    await richTextContent.press("ControlOrMeta+End");
+    await richTextContent.pressSequentially(" needle");
+    await expect(findCount).toHaveText("1 of 4");
+
+    await page.getByTestId("document-editor-view-toggle").click();
+    await expect(page.getByTestId("markdown-code-editor")).toBeVisible();
+    await expect(findCount).toHaveText("1 of 4");
+    await dispatchFindShortcut("g");
+    await expect(findCount).toHaveText("2 of 4");
+
+    const codeContent = page
+      .getByTestId("markdown-code-editor")
+      .locator(".cm-content");
+    await codeContent.click();
+    await codeContent.press("ControlOrMeta+End");
+    await codeContent.pressSequentially("\nneedle");
+    await expect(findCount).toHaveText("2 of 5");
+
+    await findInput.press("Escape");
+    await expect(page.getByTestId("document-find-bar")).toBeHidden();
+    await expect(page.getByTestId("document-find-match-active")).toHaveCount(0);
+
+    logE2eEvent("open-file.document-find", {
+      projectDir,
+      file: "find.md",
+      matches: 5,
+    });
+  });
+
   test("keeps prose readable while wide tables use the available viewport", async ({
     page,
   }) => {

@@ -2,6 +2,7 @@ import {
   AlertTriangle,
   Check,
   ChevronDown,
+  ChevronUp,
   CodeXml,
   Copy,
   Eye,
@@ -9,12 +10,16 @@ import {
   MessageSquarePlus,
   PencilLine,
   RefreshCcw,
+  Search,
   Upload,
+  X,
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import type { DocumentEditorViewMode } from "./app-navigation";
 import { RemoteSessionBanner } from "./components/RemoteSessionBanner";
 import { Button } from "./components/ui/button";
+import { Input } from "./components/ui/input";
 import {
   Popover,
   PopoverContent,
@@ -42,6 +47,10 @@ import {
   type DocumentViewRestoreRequest,
   getRestorableDocumentViewStateForMode,
 } from "./document-view-state";
+import {
+  type DocumentFindDirection,
+  EMPTY_DOCUMENT_FIND_RESULT,
+} from "./document-find";
 import { cn } from "./lib/utils";
 import {
   type DocumentInteractionMode,
@@ -52,6 +61,7 @@ import {
 import type { Page, StorageBackend } from "./storage";
 import { useReviewLayoutShiftAnimation } from "./useReviewLayoutShiftAnimation";
 import {
+  getDocumentFindShortcutAction,
   getInteractionModeShortcutTarget,
   matchesCopyPathShortcut,
 } from "./workspace-shortcuts";
@@ -321,6 +331,12 @@ export function DocumentWorkspace({
     useState<DocumentInteractionMode>("editing");
   const [saveState, setSaveState] = useState<DocumentSaveState>("saved");
   const [fileCopyMenuOpen, setFileCopyMenuOpen] = useState(false);
+  const [documentFindOpen, setDocumentFindOpen] = useState(false);
+  const [documentFindQuery, setDocumentFindQuery] = useState("");
+  const [documentFindResult, setDocumentFindResult] = useState(
+    EMPTY_DOCUMENT_FIND_RESULT,
+  );
+  const [documentFindFocusRequest, setDocumentFindFocusRequest] = useState(0);
   const [copiedFileAction, setCopiedFileAction] = useState<{
     action: FileCopyAction;
     documentPath: string;
@@ -328,6 +344,11 @@ export function DocumentWorkspace({
   const copyFileRequestIdRef = useRef(0);
   const copiedFileActionTimeoutRef = useRef<number | null>(null);
   const saveControllerRef = useRef<DocumentSaveController | null>(null);
+  const documentFindInputRef = useRef<HTMLInputElement | null>(null);
+  const documentFindOpenRef = useRef(false);
+  const editorViewControllerRef = useRef<DocumentEditorViewController | null>(
+    null,
+  );
   const workspaceScrollRef = useRef<HTMLDivElement | null>(null);
   const lastRestoreRequestIdRef = useRef<number | null>(null);
   const [editorViewControllerEntry, setEditorViewControllerEntry] = useState<{
@@ -358,6 +379,68 @@ export function DocumentWorkspace({
     },
     [documentCopyPath],
   );
+
+  useEffect(() => {
+    documentFindOpenRef.current = documentFindOpen;
+  }, [documentFindOpen]);
+
+  useEffect(() => {
+    editorViewControllerRef.current =
+      editorViewControllerEntry?.controller ?? null;
+  }, [editorViewControllerEntry]);
+
+  const handleDocumentLocalContentChange = useCallback(
+    (markdown: string) => {
+      onDocumentLocalContentChange(markdown);
+      if (!documentFindOpenRef.current) return;
+      setDocumentFindResult(
+        editorViewControllerRef.current?.getFindResult() ??
+          EMPTY_DOCUMENT_FIND_RESULT,
+      );
+    },
+    [onDocumentLocalContentChange],
+  );
+
+  const runDocumentFind = useCallback(
+    (direction: DocumentFindDirection) => {
+      const result =
+        editorViewControllerEntry?.controller.find(
+          documentFindQuery,
+          direction,
+        ) ?? EMPTY_DOCUMENT_FIND_RESULT;
+      setDocumentFindResult(result);
+    },
+    [documentFindQuery, editorViewControllerEntry],
+  );
+
+  const closeDocumentFind = useCallback(() => {
+    const controller = editorViewControllerEntry?.controller;
+    controller?.clearFind();
+    setDocumentFindOpen(false);
+    setDocumentFindResult(EMPTY_DOCUMENT_FIND_RESULT);
+    if (controller) {
+      controller.restore(controller.capture());
+    }
+  }, [editorViewControllerEntry]);
+
+  const openDocumentFind = useCallback(() => {
+    setDocumentFindOpen(true);
+    setDocumentFindFocusRequest((request) => request + 1);
+  }, []);
+
+  useEffect(() => {
+    if (!documentFindOpen) return;
+    runDocumentFind("reset");
+  }, [documentFindOpen, runDocumentFind]);
+
+  useEffect(() => {
+    if (!documentFindOpen || documentFindFocusRequest === 0) return;
+    const focusFrame = requestAnimationFrame(() => {
+      documentFindInputRef.current?.focus();
+      documentFindInputRef.current?.select();
+    });
+    return () => cancelAnimationFrame(focusFrame);
+  }, [documentFindFocusRequest, documentFindOpen]);
 
   useEffect(() => {
     if (!editorViewControllerEntry) {
@@ -491,6 +574,17 @@ export function DocumentWorkspace({
     if (!documentPage) return;
 
     const handleKeyDown = (event: KeyboardEvent) => {
+      const findAction = getDocumentFindShortcutAction(event);
+      if (findAction) {
+        event.preventDefault();
+        event.stopPropagation();
+        openDocumentFind();
+        if (findAction !== "open") {
+          runDocumentFind(findAction);
+        }
+        return;
+      }
+
       const shortcutMode = getInteractionModeShortcutTarget(
         event,
         documentInteractionMode,
@@ -533,6 +627,8 @@ export function DocumentWorkspace({
     documentInteractionMode,
     documentPage,
     handleCopyFileMenuAction,
+    openDocumentFind,
+    runDocumentFind,
   ]);
 
   const editorViewModeToggleLabel =
@@ -836,6 +932,94 @@ export function DocumentWorkspace({
                   </Select>
                 </div>
               </div>
+              {documentFindOpen
+                ? createPortal(
+                    <div
+                      data-testid="document-find-bar"
+                      role="search"
+                      aria-label="Find in document"
+                      className="fixed top-3 right-3 z-[60] flex w-[min(calc(100vw-1.5rem),25rem)] items-center gap-1 rounded-lg border border-stone-200 bg-white p-1 shadow-sm dark:border-slate-700 dark:bg-slate-900"
+                    >
+                      <Search
+                        className="ml-1 size-3.5 shrink-0 text-stone-400 dark:text-slate-500"
+                        aria-hidden="true"
+                      />
+                      <Input
+                        ref={documentFindInputRef}
+                        data-testid="document-find-input"
+                        type="text"
+                        value={documentFindQuery}
+                        placeholder="Find in document"
+                        aria-label="Find in document"
+                        className="h-11 flex-1 border-0 px-1.5 py-0 text-xs shadow-none focus-visible:border-0 focus-visible:ring-0 sm:h-7"
+                        onChange={(event) =>
+                          setDocumentFindQuery(event.currentTarget.value)
+                        }
+                        onKeyDown={(event) => {
+                          if (event.key === "Escape") {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            closeDocumentFind();
+                            return;
+                          }
+                          if (event.key !== "Enter") return;
+                          event.preventDefault();
+                          event.stopPropagation();
+                          runDocumentFind(event.shiftKey ? "previous" : "next");
+                        }}
+                      />
+                      <span
+                        data-testid="document-find-count"
+                        aria-live="polite"
+                        className="min-w-[4rem] text-right text-[0.68rem] font-normal tracking-normal text-stone-400 dark:text-slate-500"
+                      >
+                        {documentFindQuery
+                          ? documentFindResult.total > 0
+                            ? `${documentFindResult.activeIndex + 1} of ${documentFindResult.total}`
+                            : "No results"
+                          : null}
+                      </span>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon-sm"
+                        className="h-11 w-11 sm:size-6"
+                        aria-label="Previous result"
+                        title="Previous result (⇧⌘G)"
+                        data-testid="document-find-previous"
+                        disabled={documentFindResult.total === 0}
+                        onClick={() => runDocumentFind("previous")}
+                      >
+                        <ChevronUp aria-hidden="true" />
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon-sm"
+                        className="h-11 w-11 sm:size-6"
+                        aria-label="Next result"
+                        title="Next result (⌘G)"
+                        data-testid="document-find-next"
+                        disabled={documentFindResult.total === 0}
+                        onClick={() => runDocumentFind("next")}
+                      >
+                        <ChevronDown aria-hidden="true" />
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon-sm"
+                        className="h-11 w-11 sm:size-6"
+                        aria-label="Close find"
+                        data-testid="document-find-close"
+                        onClick={closeDocumentFind}
+                      >
+                        <X aria-hidden="true" />
+                      </Button>
+                    </div>,
+                    document.body,
+                  )
+                : null}
             </div>
           </div>
         ) : null}
@@ -853,7 +1037,7 @@ export function DocumentWorkspace({
               backend={backend}
               onCommentRailPresenceChange={setDocumentHasComments}
               onDirtyStateChange={onDocumentDirtyStateChange}
-              onLocalContentChange={onDocumentLocalContentChange}
+              onLocalContentChange={handleDocumentLocalContentChange}
               onSaveControllerChange={handleSaveControllerChange}
               onViewControllerChange={handleViewControllerChange}
               saveBlocked={documentDiskChangeState !== "clean"}

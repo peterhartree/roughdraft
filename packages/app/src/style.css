@@ -127,6 +127,26 @@
     -webkit-box-decoration-break: clone;
   }
 
+  .document-find-match {
+    background-color: rgb(254 240 138 / 0.72);
+    box-decoration-break: clone;
+    -webkit-box-decoration-break: clone;
+  }
+
+  .document-find-match-active {
+    background-color: rgb(251 191 36 / 0.92);
+    outline: 1px solid rgb(217 119 6 / 0.75);
+  }
+
+  .dark .document-find-match {
+    background-color: rgb(161 98 7 / 0.5);
+  }
+
+  .dark .document-find-match-active {
+    background-color: rgb(180 83 9 / 0.8);
+    outline-color: rgb(251 191 36 / 0.8);
+  }
+
   .tiptap .comment-decoration {
     @apply px-0.5 text-inherit;
     background-color: #fff5c7;

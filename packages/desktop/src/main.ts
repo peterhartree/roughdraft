@@ -6,7 +6,7 @@ import {
   shell,
   type WebContents,
 } from "electron";
-import { shouldSuppressNativeCloseShortcut } from "./document-shortcuts.js";
+import { shouldSuppressNativeDocumentShortcut } from "./document-shortcuts.js";
 import { shouldAllowRendererPermission } from "./permission-policy.js";
 import {
   isAllowedExternalUrl,
@@ -88,7 +88,7 @@ async function createMainWindow(): Promise<void> {
   mainWindow.webContents.on("before-input-event", (_event, input) => {
     if (!mainWindow || mainWindow.isDestroyed()) return;
     mainWindow.webContents.setIgnoreMenuShortcuts(
-      shouldSuppressNativeCloseShortcut(
+      shouldSuppressNativeDocumentShortcut(
         input,
         mainWindow.webContents.getURL(),
         validatedOrigin,

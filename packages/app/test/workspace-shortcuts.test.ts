@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  getDocumentFindShortcutAction,
   getInteractionModeShortcutTarget,
   matchesCopyPathShortcut,
 } from "../src/workspace-shortcuts";
@@ -88,5 +89,55 @@ describe("copy path shortcut", () => {
     { ...copyShortcut, target: { tagName: "TEXTAREA" } },
   ])("ignores unsafe macOS key events", (event) => {
     expect(matchesCopyPathShortcut(event, "MacIntel")).toBe(false);
+  });
+});
+
+describe("document find shortcuts", () => {
+  const findShortcut = {
+    ...shortcut,
+    code: "KeyF",
+    key: "f",
+    altKey: false,
+  };
+
+  it("maps the standard Command shortcuts to find actions", () => {
+    expect(getDocumentFindShortcutAction(findShortcut)).toBe("open");
+    expect(
+      getDocumentFindShortcutAction({
+        ...findShortcut,
+        code: "KeyG",
+        key: "g",
+      }),
+    ).toBe("next");
+    expect(
+      getDocumentFindShortcutAction({
+        ...findShortcut,
+        code: "KeyG",
+        key: "g",
+        shiftKey: true,
+      }),
+    ).toBe("previous");
+  });
+
+  it("maps the equivalent Control shortcuts outside macOS", () => {
+    expect(
+      getDocumentFindShortcutAction({
+        ...findShortcut,
+        metaKey: false,
+        ctrlKey: true,
+      }),
+    ).toBe("open");
+  });
+
+  it("ignores non-standard modifier combinations", () => {
+    for (const event of [
+      { ...findShortcut, metaKey: false },
+      { ...findShortcut, altKey: true },
+      { ...findShortcut, ctrlKey: true },
+      { ...findShortcut, shiftKey: true },
+      { ...findShortcut, code: "KeyG", key: "g", altKey: true },
+    ]) {
+      expect(getDocumentFindShortcutAction(event)).toBeNull();
+    }
   });
 });

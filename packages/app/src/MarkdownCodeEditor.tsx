@@ -1,15 +1,95 @@
 import { basicSetup } from "codemirror";
 import { markdown } from "@codemirror/lang-markdown";
 import { yamlFrontmatter } from "@codemirror/lang-yaml";
-import { EditorState, type Extension } from "@codemirror/state";
-import { EditorView } from "@codemirror/view";
+import {
+  EditorState,
+  StateEffect,
+  StateField,
+  type Extension,
+} from "@codemirror/state";
+import { Decoration, type DecorationSet, EditorView } from "@codemirror/view";
 import { useEffect, useRef } from "react";
+import { findTextRanges, getDocumentFindActiveIndex } from "./document-find";
 import type {
   DocumentEditorViewController,
   DocumentEditorViewState,
 } from "./document-view-state";
 import { getDocumentEditorSelectionForMode } from "./document-view-state";
 import { cn } from "./lib/utils";
+
+interface CodeDocumentFindState {
+  query: string;
+  activeIndex: number;
+  total: number;
+  decorations: DecorationSet;
+}
+
+const setCodeDocumentFindState = StateEffect.define<{
+  query: string;
+  activeIndex: number;
+}>();
+
+function createCodeDocumentFindState(
+  documentText: string,
+  query: string,
+  activeIndex: number,
+): CodeDocumentFindState {
+  const matches = findTextRanges(documentText, query);
+  const safeActiveIndex =
+    matches.length === 0 ? -1 : Math.min(activeIndex, matches.length - 1);
+  const decorations = Decoration.set(
+    matches.map((match, index) =>
+      Decoration.mark({
+        class:
+          index === safeActiveIndex
+            ? "document-find-match document-find-match-active"
+            : "document-find-match",
+        attributes: {
+          "data-testid":
+            index === safeActiveIndex
+              ? "document-find-match-active"
+              : "document-find-match",
+        },
+      }).range(match.from, match.to),
+    ),
+    true,
+  );
+
+  return {
+    query,
+    activeIndex: safeActiveIndex,
+    total: matches.length,
+    decorations,
+  };
+}
+
+const EMPTY_CODE_DOCUMENT_FIND_STATE: CodeDocumentFindState = {
+  query: "",
+  activeIndex: -1,
+  total: 0,
+  decorations: Decoration.none,
+};
+
+const codeDocumentFindStateField = StateField.define<CodeDocumentFindState>({
+  create: () => EMPTY_CODE_DOCUMENT_FIND_STATE,
+  update: (value, transaction) => {
+    const effect = transaction.effects.find((candidate) =>
+      candidate.is(setCodeDocumentFindState),
+    );
+    if (!effect && (!transaction.docChanged || !value.query)) return value;
+
+    const query = effect?.value.query ?? value.query;
+    if (!query) return EMPTY_CODE_DOCUMENT_FIND_STATE;
+
+    return createCodeDocumentFindState(
+      transaction.state.doc.toString(),
+      query,
+      effect?.value.activeIndex ?? value.activeIndex,
+    );
+  },
+  provide: (field) =>
+    EditorView.decorations.from(field, (value) => value.decorations),
+});
 
 interface MarkdownCodeEditorProps {
   value: string;
@@ -32,6 +112,7 @@ export function createMarkdownCodeEditorExtensions(
     basicSetup,
     yamlFrontmatter({ content: markdown() }),
     EditorView.lineWrapping,
+    codeDocumentFindStateField,
     EditorState.readOnly.of(readOnly),
     EditorView.editable.of(!readOnly),
     EditorView.updateListener.of((update) => {
@@ -152,6 +233,51 @@ export function MarkdownCodeEditor({
         const head = selection?.head ?? anchor;
         view.dispatch({ selection: { anchor, head } });
         view.focus();
+      },
+      find: (query, direction) => {
+        const findState = view.state.field(codeDocumentFindStateField);
+        const matches = findTextRanges(view.state.doc.toString(), query);
+        const previousIndex =
+          findState.query === query ? findState.activeIndex : -1;
+        const activeIndex = getDocumentFindActiveIndex(
+          previousIndex,
+          matches.length,
+          direction,
+        );
+        const activeMatch = matches[activeIndex];
+
+        view.dispatch({
+          effects: [
+            setCodeDocumentFindState.of({ query, activeIndex }),
+            ...(activeMatch
+              ? [
+                  EditorView.scrollIntoView(activeMatch.from, {
+                    y: "center",
+                  }),
+                ]
+              : []),
+          ],
+          selection: activeMatch
+            ? { anchor: activeMatch.from, head: activeMatch.to }
+            : undefined,
+        });
+
+        return { activeIndex, total: matches.length };
+      },
+      clearFind: () => {
+        view.dispatch({
+          effects: setCodeDocumentFindState.of({
+            query: "",
+            activeIndex: -1,
+          }),
+        });
+      },
+      getFindResult: () => {
+        const findState = view.state.field(codeDocumentFindStateField);
+        return {
+          activeIndex: findState.activeIndex,
+          total: findState.total,
+        };
       },
     };
     onViewControllerChangeRef.current?.(viewController);

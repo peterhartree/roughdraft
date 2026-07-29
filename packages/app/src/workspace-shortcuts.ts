@@ -12,6 +12,8 @@ interface InteractionModeShortcutEvent {
   target: unknown;
 }
 
+export type DocumentFindShortcutAction = "open" | "next" | "previous";
+
 const FORM_CONTROL_TAGS = new Set(["INPUT", "TEXTAREA", "SELECT"]);
 
 function isFormControl(target: unknown): boolean {
@@ -47,6 +49,22 @@ export function matchesCopyPathShortcut(
     !event.isComposing &&
     !isFormControl(event.target)
   );
+}
+
+export function getDocumentFindShortcutAction(
+  event: InteractionModeShortcutEvent,
+): DocumentFindShortcutAction | null {
+  const isPrimaryShortcut =
+    event.metaKey !== event.ctrlKey &&
+    !event.altKey &&
+    !event.repeat &&
+    !event.isComposing;
+
+  if (!isPrimaryShortcut) return null;
+  const key = event.key.toLocaleLowerCase();
+  if (key === "f" && !event.shiftKey) return "open";
+  if (key !== "g") return null;
+  return event.shiftKey ? "previous" : "next";
 }
 
 export function getInteractionModeShortcutTarget(

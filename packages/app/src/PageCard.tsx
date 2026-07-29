@@ -28,10 +28,13 @@ import type {
 import { getDocumentEditorSelectionForMode } from "./document-view-state";
 import { EditorContextMenu } from "./EditorContextMenu";
 import {
+  clearRichTextDocumentFind,
   commentHighlightPluginKey,
   createEditorExtensions,
   criticChangeHighlightPluginKey,
+  getRichTextDocumentFindResult,
   SUGGESTED_PARAGRAPH_SENTINEL,
+  updateRichTextDocumentFind,
 } from "./editor-extensions";
 import { cn } from "./lib/utils";
 import { MarkdownCodeEditor } from "./MarkdownCodeEditor";
@@ -1324,6 +1327,10 @@ const RichTextEditorSurface = memo(function RichTextEditorSurface({
         editor.view.dispatch(editor.state.tr.setSelection(selection));
         editor.commands.focus(undefined, { scrollIntoView: false });
       },
+      find: (query, direction) =>
+        updateRichTextDocumentFind(editor, query, direction),
+      clearFind: () => clearRichTextDocumentFind(editor),
+      getFindResult: () => getRichTextDocumentFindResult(editor),
     };
 
     onViewControllerChange?.(viewController);

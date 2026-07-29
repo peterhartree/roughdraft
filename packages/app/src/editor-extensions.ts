@@ -1,4 +1,10 @@
-import { Extension, Mark, Node, mergeAttributes } from "@tiptap/core";
+import {
+  type Editor,
+  Extension,
+  Mark,
+  Node,
+  mergeAttributes,
+} from "@tiptap/core";
 import Code from "@tiptap/extension-code";
 import CodeBlock from "@tiptap/extension-code-block";
 import Image from "@tiptap/extension-image";
@@ -14,9 +20,16 @@ import type {
   Mark as ProseMirrorMark,
   Node as ProseMirrorNode,
 } from "@tiptap/pm/model";
-import { Plugin, PluginKey } from "@tiptap/pm/state";
+import { Plugin, PluginKey, TextSelection } from "@tiptap/pm/state";
 import { Decoration, DecorationSet } from "@tiptap/pm/view";
 import StarterKit from "@tiptap/starter-kit";
+import {
+  type DocumentFindDirection,
+  type DocumentFindRange,
+  type DocumentFindResult,
+  findTextRanges,
+  getDocumentFindActiveIndex,
+} from "./document-find";
 import { rawMarkdownBlockAttribute } from "./markdown";
 
 declare module "@tiptap/core" {
@@ -446,6 +459,168 @@ export const commentHighlightPluginKey =
 export const criticChangeHighlightPluginKey =
   new PluginKey<CriticChangeHighlightPluginState>("criticChangeHighlight");
 
+interface DocumentFindMeta {
+  query: string;
+  activeIndex: number;
+}
+
+interface DocumentFindPluginState extends DocumentFindMeta {
+  total: number;
+  decorations: DecorationSet;
+}
+
+const documentFindPluginKey = new PluginKey<DocumentFindPluginState>(
+  "documentFind",
+);
+
+function getRichTextFindMatches(
+  doc: ProseMirrorNode,
+  query: string,
+): DocumentFindRange[] {
+  if (!query) return [];
+
+  const textRuns: { from: number; text: string }[] = [];
+  doc.descendants((node, pos) => {
+    if (!node.isText || !node.text) return;
+
+    const previous = textRuns.at(-1);
+    if (previous && previous.from + previous.text.length === pos) {
+      previous.text += node.text;
+      return;
+    }
+    textRuns.push({ from: pos, text: node.text });
+  });
+
+  return textRuns.flatMap((run) => findTextRanges(run.text, query, run.from));
+}
+
+function createDocumentFindDecorations(
+  doc: ProseMirrorNode,
+  matches: DocumentFindRange[],
+  activeIndex: number,
+) {
+  return DecorationSet.create(
+    doc,
+    matches.map((match, index) =>
+      Decoration.inline(match.from, match.to, {
+        class:
+          index === activeIndex
+            ? "document-find-match document-find-match-active"
+            : "document-find-match",
+        "data-testid":
+          index === activeIndex
+            ? "document-find-match-active"
+            : "document-find-match",
+      }),
+    ),
+  );
+}
+
+const DocumentFindHighlight = Extension.create({
+  name: "documentFindHighlight",
+
+  addProseMirrorPlugins() {
+    return [
+      new Plugin<DocumentFindPluginState>({
+        key: documentFindPluginKey,
+        state: {
+          init: () => ({
+            query: "",
+            activeIndex: -1,
+            total: 0,
+            decorations: DecorationSet.empty,
+          }),
+          apply: (tr, pluginState) => {
+            const meta = tr.getMeta(documentFindPluginKey) as
+              | DocumentFindMeta
+              | undefined;
+            if (!meta && !tr.docChanged) return pluginState;
+
+            const query = meta?.query ?? pluginState.query;
+            const matches = getRichTextFindMatches(tr.doc, query);
+            const requestedActiveIndex =
+              meta?.activeIndex ?? pluginState.activeIndex;
+            const activeIndex =
+              matches.length === 0
+                ? -1
+                : Math.min(requestedActiveIndex, matches.length - 1);
+
+            return {
+              query,
+              activeIndex,
+              total: matches.length,
+              decorations: createDocumentFindDecorations(
+                tr.doc,
+                matches,
+                activeIndex,
+              ),
+            };
+          },
+        },
+        props: {
+          decorations: (state) =>
+            documentFindPluginKey.getState(state)?.decorations ?? null,
+        },
+      }),
+    ];
+  },
+});
+
+export function updateRichTextDocumentFind(
+  editor: Editor,
+  query: string,
+  direction: DocumentFindDirection,
+): DocumentFindResult {
+  const pluginState = documentFindPluginKey.getState(editor.state);
+  const matches = getRichTextFindMatches(editor.state.doc, query);
+  const previousIndex =
+    pluginState?.query === query ? pluginState.activeIndex : -1;
+  const activeIndex = getDocumentFindActiveIndex(
+    previousIndex,
+    matches.length,
+    direction,
+  );
+  let transaction = editor.state.tr.setMeta(documentFindPluginKey, {
+    query,
+    activeIndex,
+  } satisfies DocumentFindMeta);
+
+  const activeMatch = matches[activeIndex];
+  if (activeMatch) {
+    transaction = transaction
+      .setSelection(
+        TextSelection.create(
+          editor.state.doc,
+          activeMatch.from,
+          activeMatch.to,
+        ),
+      )
+      .scrollIntoView();
+  }
+  editor.view.dispatch(transaction);
+
+  return { activeIndex, total: matches.length };
+}
+
+export function clearRichTextDocumentFind(editor: Editor): void {
+  editor.view.dispatch(
+    editor.state.tr.setMeta(documentFindPluginKey, {
+      query: "",
+      activeIndex: -1,
+    } satisfies DocumentFindMeta),
+  );
+}
+
+export function getRichTextDocumentFindResult(
+  editor: Editor,
+): DocumentFindResult {
+  const pluginState = documentFindPluginKey.getState(editor.state);
+  return {
+    activeIndex: pluginState?.activeIndex ?? -1,
+    total: pluginState?.total ?? 0,
+  };
+}
+
 function createCommentHighlightDecorations(
   doc: ProseMirrorNode,
   selectedCommentId: string | null,
@@ -802,6 +977,7 @@ export function createEditorExtensions(placeholder: string) {
     MarkdownCodeBlock,
     CommentHighlight,
     CriticChangeHighlight,
+    DocumentFindHighlight,
     MarkdownImage.configure({
       allowBase64: true,
       inline: false,

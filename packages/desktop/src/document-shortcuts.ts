@@ -10,18 +10,22 @@ interface DocumentShortcutInput {
   isComposing: boolean;
 }
 
-export function shouldSuppressNativeCloseShortcut(
+export function shouldSuppressNativeDocumentShortcut(
   input: DocumentShortcutInput,
   currentUrl: string,
   validatedOrigin: string | null,
 ): boolean {
+  const key = input.key.toLocaleLowerCase();
+  const isRoutedShortcut =
+    (key === "w" && !input.shift) ||
+    (key === "f" && !input.shift) ||
+    key === "g";
   if (
     input.type !== "keyDown" ||
-    input.key.toLocaleLowerCase() !== "w" ||
+    !isRoutedShortcut ||
     !input.meta ||
     input.alt ||
     input.control ||
-    input.shift ||
     !validatedOrigin
   ) {
     return false;

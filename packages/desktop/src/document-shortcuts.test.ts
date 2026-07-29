@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { shouldSuppressNativeCloseShortcut } from "./document-shortcuts.js";
+import { shouldSuppressNativeDocumentShortcut } from "./document-shortcuts.js";
 
 const commandW = {
   type: "keyDown",
@@ -16,7 +16,7 @@ const commandW = {
 describe("desktop document shortcuts", () => {
   it("routes Command-W to an open local document", () => {
     expect(
-      shouldSuppressNativeCloseShortcut(
+      shouldSuppressNativeDocumentShortcut(
         commandW,
         "http://localhost:7373/?path=%2Ftmp%2Fdraft.md",
         "http://localhost:7373",
@@ -29,21 +29,21 @@ describe("desktop document shortcuts", () => {
     const origin = "http://localhost:7373";
 
     expect(
-      shouldSuppressNativeCloseShortcut(
+      shouldSuppressNativeDocumentShortcut(
         { ...commandW, isAutoRepeat: true },
         url,
         origin,
       ),
     ).toBe(true);
     expect(
-      shouldSuppressNativeCloseShortcut(
+      shouldSuppressNativeDocumentShortcut(
         { ...commandW, isComposing: true },
         url,
         origin,
       ),
     ).toBe(true);
     expect(
-      shouldSuppressNativeCloseShortcut(
+      shouldSuppressNativeDocumentShortcut(
         { ...commandW, type: "keyUp" },
         url,
         origin,
@@ -56,14 +56,18 @@ describe("desktop document shortcuts", () => {
     const origin = "http://localhost:7373";
 
     expect(
-      shouldSuppressNativeCloseShortcut(
+      shouldSuppressNativeDocumentShortcut(
         { ...commandW, code: "KeyZ" },
         url,
         origin,
       ),
     ).toBe(true);
     expect(
-      shouldSuppressNativeCloseShortcut({ ...commandW, key: "z" }, url, origin),
+      shouldSuppressNativeDocumentShortcut(
+        { ...commandW, key: "z" },
+        url,
+        origin,
+      ),
     ).toBe(false);
   });
 
@@ -82,7 +86,21 @@ describe("desktop document shortcuts", () => {
     ["another origin", commandW, "http://example.com/?path=x.md"],
   ])("does not route %s", (_label, input, url) => {
     expect(
-      shouldSuppressNativeCloseShortcut(input, url, "http://localhost:7373"),
+      shouldSuppressNativeDocumentShortcut(input, url, "http://localhost:7373"),
     ).toBe(false);
+  });
+
+  it.each([
+    ["Command-F", { ...commandW, key: "f", code: "KeyF" }],
+    ["Command-G", { ...commandW, key: "g", code: "KeyG" }],
+    ["Command-Shift-G", { ...commandW, key: "g", code: "KeyG", shift: true }],
+  ])("routes %s to the document renderer", (_label, input) => {
+    expect(
+      shouldSuppressNativeDocumentShortcut(
+        input,
+        "http://localhost:7373/?path=%2Ftmp%2Fdraft.md",
+        "http://localhost:7373",
+      ),
+    ).toBe(true);
   });
 });
