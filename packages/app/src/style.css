@@ -392,6 +392,10 @@
     margin: 1.3em 0;
   }
 
+  .tiptap blockquote > :last-child {
+    margin-bottom: 0;
+  }
+
   .tiptap ul {
     @apply list-disc;
     margin: 0.45em 0 1.05em;
@@ -456,6 +460,9 @@
       minmax(0, 1fr)
       minmax(0, min(46.5rem, 100%))
       minmax(0, 1fr);
+    /* The editor has a min-height; without this, short documents stretch
+       every grid row and inflate each block's box. */
+    align-content: start;
   }
 
   .document-rich-text-layout .tiptap > * {
