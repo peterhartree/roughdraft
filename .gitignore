@@ -19,3 +19,7 @@ sandbox
 /roughdraft.json
 .compound-engineering/*.local.yaml
 packages/desktop/out/
+
+# Impeccable design hook cache (config.json is shared and tracked)
+.impeccable/hook.cache.json
+.impeccable/config.local.json
