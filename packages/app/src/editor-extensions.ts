@@ -30,7 +30,10 @@ import {
   findTextRanges,
   getDocumentFindActiveIndex,
 } from "./document-find";
-import { rawMarkdownBlockAttribute } from "./markdown";
+import {
+  rawMarkdownBlockAttribute,
+  renderRawMarkdownBlockPreview,
+} from "./markdown";
 
 declare module "@tiptap/core" {
   interface Commands<ReturnType> {
@@ -939,6 +942,34 @@ const RawMarkdownBlock = Node.create({
 
   renderHTML({ HTMLAttributes }) {
     return ["div", mergeAttributes(HTMLAttributes)];
+  },
+
+  addNodeView() {
+    return ({ node }) => {
+      const dom = document.createElement("div");
+      dom.contentEditable = "false";
+
+      const apply = (current: ProseMirrorNode) => {
+        const preview = renderRawMarkdownBlockPreview(
+          String(current.attrs.rawMarkdown ?? ""),
+        );
+        dom.className = preview?.hasTable
+          ? "raw-markdown-block tableWrapper"
+          : "raw-markdown-block";
+        dom.innerHTML = preview?.html ?? "";
+      };
+
+      apply(node);
+
+      return {
+        dom,
+        update: (updated) => {
+          if (updated.type !== node.type) return false;
+          apply(updated);
+          return true;
+        },
+      };
+    };
   },
 });
 

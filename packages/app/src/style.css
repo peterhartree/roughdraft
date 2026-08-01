@@ -468,6 +468,36 @@
     width: 100%;
   }
 
+  .tiptap .raw-markdown-block {
+    position: relative;
+  }
+
+  .tiptap .raw-markdown-block.ProseMirror-selectednode {
+    outline: 2px solid rgb(14 165 233 / 0.45);
+    outline-offset: 2px;
+    border-radius: 0.75rem;
+  }
+
+  .tiptap .raw-markdown-block.ProseMirror-selectednode::after {
+    content: "Read-only";
+    position: absolute;
+    top: 0.375rem;
+    right: 0.375rem;
+    padding: 0.125rem 0.5rem;
+    border-radius: 9999px;
+    font-size: 0.6875rem;
+    font-weight: 500;
+    line-height: 1.25;
+    background: rgb(224 242 254 / 0.9);
+    color: rgb(2 132 199);
+    pointer-events: none;
+  }
+
+  .dark .tiptap .raw-markdown-block.ProseMirror-selectednode::after {
+    background: rgb(12 74 110 / 0.9);
+    color: rgb(125 211 252);
+  }
+
   .tiptap table {
     @apply table-fixed border-collapse;
     /* biome-ignore lint/complexity/noImportantStyles: override Tiptap inline min-width */

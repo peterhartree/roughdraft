@@ -3,6 +3,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   rawMarkdownBlockAttribute,
+  renderRawMarkdownBlockPreview,
   splitYamlFrontmatter,
   toHtml,
   toMarkdown,
@@ -198,5 +199,53 @@ describe("toMarkdown", () => {
     expect(
       toMarkdown(`<div ${rawMarkdownBlockAttribute}="${encoded}"></div>`),
     ).toBe(protectedMarkdown);
+  });
+});
+
+describe("renderRawMarkdownBlockPreview", () => {
+  const encode = (markdown: string) => encodeURIComponent(markdown);
+
+  it("renders a protected table, keeping pipes inside code spans literal", () => {
+    const table = [
+      "| Area | Notes |",
+      "|---|---|",
+      "| GitHub | The `gh api | base64 -d` command |",
+    ].join("\n");
+
+    const preview = renderRawMarkdownBlockPreview(encode(table));
+
+    expect(preview).not.toBeNull();
+    expect(preview?.hasTable).toBe(true);
+    expect(preview?.html).toContain("<table>");
+    expect(preview?.html).toContain("base64 -d");
+  });
+
+  it("keeps HTML comments invisible", () => {
+    expect(
+      renderRawMarkdownBlockPreview(encode("<!-- keep this source note -->\n")),
+    ).toBeNull();
+  });
+
+  it("renders protected details blocks", () => {
+    const preview = renderRawMarkdownBlockPreview(
+      encode("<details><summary>More</summary>\nHidden text\n</details>\n"),
+    );
+
+    expect(preview?.hasTable).toBe(false);
+    expect(preview?.html).toContain("<details>");
+    expect(preview?.html).toContain("Hidden text");
+  });
+
+  it("strips script content and event handlers from previews", () => {
+    const preview = renderRawMarkdownBlockPreview(
+      encode(
+        '<details><summary>x</summary><script>alert(1)</script><img src="x" onerror="alert(2)"><a href="javascript:alert(3)">link</a></details>\n',
+      ),
+    );
+
+    expect(preview?.html).not.toContain("<script");
+    expect(preview?.html).not.toContain("onerror");
+    expect(preview?.html).not.toContain("javascript:");
+    expect(preview?.html).toContain("link");
   });
 });

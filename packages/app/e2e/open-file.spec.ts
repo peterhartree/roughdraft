@@ -166,6 +166,37 @@ test.describe("opening local markdown files", () => {
     });
   });
 
+  test("renders tables whose cells contain code spans with pipes", async ({
+    page,
+  }) => {
+    const filePath = writeProjectFile(
+      projectDir,
+      "piped-code-table.md",
+      [
+        "# Piped code table",
+        "",
+        "| Command | Purpose |",
+        "| --- | --- |",
+        "| `gh api | base64 -d` | Decode the response |",
+        "",
+      ].join("\n"),
+    );
+
+    await openMarkdownFile(page, filePath);
+
+    const editor = page.getByTestId("rich-text-editor");
+    await expect(editor).toContainText("Piped code table");
+    // The table content must remain visible, not collapse into an empty
+    // raw-markdown placeholder div.
+    await expect(editor).toContainText("Decode the response");
+    await expect(editor.locator("table")).toBeVisible(); // selector-check-ignore -- the rendered table element is the contract
+
+    logE2eEvent("open-file.piped-code-table", {
+      projectDir,
+      file: "piped-code-table.md",
+    });
+  });
+
   test("keeps prose readable while wide tables use the available viewport", async ({
     page,
   }) => {

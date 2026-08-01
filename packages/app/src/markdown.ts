@@ -1,3 +1,4 @@
+import DOMPurify from "dompurify";
 import { tables, taskListItems } from "@joplin/turndown-plugin-gfm";
 import { Marked, marked, type TokenizerObject } from "marked";
 import TurndownService from "turndown";
@@ -105,6 +106,9 @@ function codeSpanContainsPipe(value: string): boolean {
   return false;
 }
 
+const pipeTableDividerLinePattern =
+  /^\s*\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?\s*$/;
+
 function protectPipeSensitiveTables(markdown: string): string {
   const lines = markdown.match(/[^\r\n]*(?:\r?\n|$)/g) ?? [];
   const output: string[] = [];
@@ -113,10 +117,7 @@ function protectPipeSensitiveTables(markdown: string): string {
     const line = lines[index] ?? "";
     const nextLine = lines[index + 1] ?? "";
 
-    if (
-      !line.includes("|") ||
-      !/^\s*\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?\s*$/.test(nextLine)
-    ) {
+    if (!line.includes("|") || !pipeTableDividerLinePattern.test(nextLine)) {
       output.push(line);
       continue;
     }
@@ -402,6 +403,54 @@ export function createMarkedRenderer(options?: MarkdownOptions) {
   };
 
   return renderer;
+}
+
+export interface RawMarkdownBlockPreview {
+  html: string;
+  hasTable: boolean;
+}
+
+function sanitizePreviewHtml(html: string): RawMarkdownBlockPreview {
+  const sanitized = DOMPurify.sanitize(html, {
+    USE_PROFILES: { html: true },
+    FORBID_TAGS: ["form", "style"],
+    ADD_ATTR: ["target"],
+  });
+  const doc = new DOMParser().parseFromString(sanitized, "text/html");
+
+  return {
+    html: doc.body.innerHTML,
+    hasTable: Boolean(doc.body.querySelector("table")),
+  };
+}
+
+function escapePipesInsideCodeSpans(value: string): string {
+  return value.replace(
+    /(`+)([^`]+)\1/g,
+    (_match, fence: string, content: string) =>
+      `${fence}${content.replace(/(?<!\\)\|/g, "\\|")}${fence}`,
+  );
+}
+
+export function renderRawMarkdownBlockPreview(
+  encoded: string,
+): RawMarkdownBlockPreview | null {
+  const raw = decodeRawMarkdownBlock(encoded);
+  const trimmed = raw.trim();
+  if (!trimmed || trimmed.startsWith("<!--")) return null;
+
+  // Pipe tables are protected precisely because GFM would split cells on
+  // pipes inside code spans; escape them so the preview keeps cells whole.
+  const lines = raw.split(/\r?\n/);
+  const isPipeTable = pipeTableDividerLinePattern.test(lines[1] ?? "");
+  const source = isPipeTable ? escapePipesInsideCodeSpans(raw) : raw;
+
+  const parser = new Marked({
+    gfm: true,
+    async: false,
+    renderer: createMarkedRenderer(),
+  });
+  return sanitizePreviewHtml(parser.parse(source) as string);
 }
 
 const doubleTildeDelPattern =
