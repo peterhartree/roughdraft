@@ -17,9 +17,7 @@ export function shouldSuppressNativeDocumentShortcut(
 ): boolean {
   const key = input.key.toLocaleLowerCase();
   const isRoutedShortcut =
-    (key === "w" && !input.shift) ||
-    (key === "f" && !input.shift) ||
-    key === "g";
+    key === "w" || (key === "f" && !input.shift) || key === "g";
   if (
     input.type !== "keyDown" ||
     !isRoutedShortcut ||

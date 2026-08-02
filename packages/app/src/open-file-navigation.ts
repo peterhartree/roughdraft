@@ -146,6 +146,18 @@ export function isCloseOpenFileShortcut(event: OpenFileShortcutEvent) {
   );
 }
 
+export function isCloseAllOpenFilesShortcut(event: OpenFileShortcutEvent) {
+  return (
+    event.key.toLocaleLowerCase() === "w" &&
+    event.metaKey &&
+    !event.altKey &&
+    !event.ctrlKey &&
+    event.shiftKey &&
+    !event.repeat &&
+    !event.isComposing
+  );
+}
+
 export function shouldHandleOpenRequestInSession(
   backendKind: "local-files" | "local-storage" | "remote" | undefined,
   activePath: string | null,

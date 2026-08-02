@@ -65,6 +65,7 @@ import { OpenFileSwitcher } from "./OpenFileSwitcher";
 import {
   getOpenFileCloseCandidates,
   getOpenFileShortcut,
+  isCloseAllOpenFilesShortcut,
   isCloseOpenFileShortcut,
   isOpenFileSwitcherShortcut,
   markOpenFileRead,
@@ -1539,6 +1540,9 @@ export function App() {
     startupState.recentDocuments,
   );
   const [fileSwitcherOpen, setFileSwitcherOpen] = useState(false);
+  const [closeAllConfirmationOpen, setCloseAllConfirmationOpen] =
+    useState(false);
+  const [closeAllError, setCloseAllError] = useState<string | null>(null);
   const [pendingOpenRequestPath, setPendingOpenRequestPath] = useState<
     string | null
   >(null);
@@ -1579,6 +1583,7 @@ export function App() {
   const documentDirtyRef = useRef(false);
   const documentSaveStateRef = useRef<DocumentSaveState>("saved");
   const documentDraftContentRef = useRef<string | null>(null);
+  const closeAllButtonRef = useRef<HTMLButtonElement>(null);
 
   backendRef.current = backend;
   documentPageRef.current = documentPage;
@@ -2366,10 +2371,68 @@ export function App() {
     switchToOpenFileResult,
   ]);
 
+  const closeAllOpenFiles = useCallback(async (): Promise<boolean> => {
+    const currentFiles = openFilesRef.current;
+    if (currentFiles.length === 0 || fileSwitchPendingRef.current) return false;
+
+    if (documentDiskChangeState !== "clean") {
+      setCloseAllError(
+        "Resolve the current file changes before closing all documents.",
+      );
+      return false;
+    }
+
+    fileSwitchPendingRef.current = true;
+    setFileSwitchPending(true);
+    setCloseAllError(null);
+
+    try {
+      const saveResult = await documentSaveControllerRef.current?.flushSave();
+      if (saveResult && saveResult.status !== "saved") {
+        setCloseAllError(
+          saveResult.status === "error"
+            ? "The current file could not be saved, so the documents remain open."
+            : "Resolve the current file changes before closing all documents.",
+        );
+        return false;
+      }
+    } catch (error) {
+      console.error("Failed to save before closing all Markdown files:", error);
+      setCloseAllError(
+        "The current file could not be saved, so the documents remain open.",
+      );
+      return false;
+    } finally {
+      fileSwitchPendingRef.current = false;
+      setFileSwitchPending(false);
+    }
+
+    pruneOpenFileSessionEntries(currentFiles.map((file) => file.path));
+    activeDocumentPathRef.current = null;
+    activeDocumentAbsolutePathRef.current = null;
+    setActiveDocumentPath(null);
+    setActiveDocumentAbsolutePath(null);
+    documentPageRef.current = null;
+    setDocumentPage(null);
+    clearOpenFileSession(window.localStorage);
+    setFileSwitcherOpen(false);
+    setCloseAllConfirmationOpen(false);
+    window.location.assign("/");
+    return true;
+  }, [documentDiskChangeState, pruneOpenFileSessionEntries]);
+
   useEffect(() => {
     if (backend?.info.kind !== "local-files" || openFiles.length === 0) return;
 
     const handleFileNavigationShortcut = (event: KeyboardEvent) => {
+      if (isCloseAllOpenFilesShortcut(event)) {
+        event.preventDefault();
+        event.stopPropagation();
+        setCloseAllError(null);
+        setCloseAllConfirmationOpen(true);
+        return;
+      }
+
       if (isCloseOpenFileShortcut(event)) {
         event.preventDefault();
         event.stopPropagation();
@@ -2571,6 +2634,64 @@ export function App() {
           onOpenChange={setFileSwitcherOpen}
           onSelect={switchToOpenFile}
         />
+      ) : null}
+      {showOpenFileSidebar ? (
+        <Dialog
+          open={closeAllConfirmationOpen}
+          onOpenChange={(open) => {
+            if (fileSwitchPending) return;
+            setCloseAllConfirmationOpen(open);
+            if (!open) setCloseAllError(null);
+          }}
+        >
+          <DialogContent
+            data-testid="close-all-confirmation"
+            initialFocus={closeAllButtonRef}
+            role="alertdialog"
+            showCloseButton={false}
+          >
+            <form
+              className="grid gap-4"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void closeAllOpenFiles();
+              }}
+            >
+              <DialogHeader>
+                <DialogTitle>Are you sure?</DialogTitle>
+                <DialogDescription>
+                  Close all {openFiles.length} open documents? Your files will
+                  stay on disk.
+                </DialogDescription>
+              </DialogHeader>
+              {closeAllError ? (
+                <p className="text-sm text-destructive" role="alert">
+                  {closeAllError}
+                </p>
+              ) : null}
+              <DialogFooter>
+                <Button
+                  className="h-11 px-4 sm:h-7 sm:px-2"
+                  disabled={fileSwitchPending}
+                  type="button"
+                  variant="outline"
+                  onClick={() => setCloseAllConfirmationOpen(false)}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  className="h-11 px-4 sm:h-7 sm:px-2"
+                  disabled={fileSwitchPending}
+                  ref={closeAllButtonRef}
+                  type="submit"
+                  variant="destructive"
+                >
+                  Close all
+                </Button>
+              </DialogFooter>
+            </form>
+          </DialogContent>
+        </Dialog>
       ) : null}
       <div className="relative flex min-w-0 flex-1 flex-col overflow-hidden">
         {updateStatus ? (

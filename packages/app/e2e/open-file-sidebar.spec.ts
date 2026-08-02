@@ -369,6 +369,62 @@ test.describe("open-file sidebar", () => {
     });
   });
 
+  test("asks for confirmation before Command-Shift-W closes every open file", async ({
+    page,
+  }) => {
+    const firstPath = writeProjectFile(
+      firstProjectDir,
+      "first.md",
+      "# First\n\nClose this document.\n",
+    );
+    const secondPath = writeProjectFile(
+      secondProjectDir,
+      "second.md",
+      "# Second\n\nClose this document too.\n",
+    );
+
+    await openMarkdownFile(page, firstPath, "code");
+    await postOpenRequest(page, secondPath);
+    await expect(page.getByTestId("open-file-sidebar-item")).toHaveCount(2);
+    await expect(codeEditor(page)).toContainText("Close this document too.");
+    await appendInCodeEditor(page, "\nSaved before close all.");
+
+    await page.keyboard.press("Meta+Shift+KeyW");
+
+    const confirmation = page.getByTestId("close-all-confirmation");
+    await expect(confirmation).toBeVisible();
+    await expect(confirmation).toHaveAttribute("role", "alertdialog");
+    await expect(confirmation).toContainText("Are you sure?");
+    await expect(page.getByTestId("open-file-sidebar-item")).toHaveCount(2);
+    logE2eEvent("open-file-sidebar.close-all-confirmation-visible", {
+      openDocumentCount: 2,
+    });
+
+    await page.keyboard.press("Escape");
+    await expect(confirmation).toHaveCount(0);
+    await expect(page.getByTestId("open-file-sidebar-item")).toHaveCount(2);
+
+    await page.keyboard.press("Meta+Shift+KeyW");
+    await expect(confirmation).toBeVisible();
+    await page.keyboard.press("Enter");
+
+    await expect(page).toHaveURL(/\/$/);
+    await expect(page.getByTestId("open-file-sidebar-item")).toHaveCount(0);
+    await expect(
+      page.evaluate(() =>
+        window.localStorage.getItem("roughdraft.open-file-session.v1"),
+      ),
+    ).resolves.toBeNull();
+    await expect
+      .poll(() => fs.readFileSync(secondPath, "utf8"))
+      .toContain("Saved before close all.");
+    logE2eEvent("open-file-sidebar.close-all-confirmed", {
+      remainingDocumentCount: 0,
+      persistedSessionCleared: true,
+      currentDocumentSaved: true,
+    });
+  });
+
   test("keeps the active file open when a disk conflict blocks Command-W", async ({
     page,
   }) => {

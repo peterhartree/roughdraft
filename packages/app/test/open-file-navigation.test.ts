@@ -3,6 +3,7 @@ import {
   filterOpenFiles,
   getOpenFileCloseCandidates,
   getOpenFileShortcut,
+  isCloseAllOpenFilesShortcut,
   isCloseOpenFileShortcut,
   isOpenFileSwitcherShortcut,
   markOpenFileRead,
@@ -175,6 +176,26 @@ describe("open-file shortcuts", () => {
     ).toBe(false);
     expect(
       isCloseOpenFileShortcut({ ...shortcut, key: "z", code: "KeyW" }),
+    ).toBe(false);
+  });
+
+  it("recognises only the exact Command-Shift-W close-all shortcut", () => {
+    const closeAllShortcut = {
+      ...shortcut,
+      key: "w",
+      code: "KeyW",
+      shiftKey: true,
+    };
+
+    expect(isCloseAllOpenFilesShortcut(closeAllShortcut)).toBe(true);
+    expect(
+      isCloseAllOpenFilesShortcut({ ...closeAllShortcut, code: "KeyZ" }),
+    ).toBe(true);
+    expect(
+      isCloseAllOpenFilesShortcut({ ...closeAllShortcut, shiftKey: false }),
+    ).toBe(false);
+    expect(
+      isCloseAllOpenFilesShortcut({ ...closeAllShortcut, repeat: true }),
     ).toBe(false);
   });
 

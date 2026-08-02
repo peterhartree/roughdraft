@@ -24,6 +24,16 @@ describe("desktop document shortcuts", () => {
     ).toBe(true);
   });
 
+  it("routes Command-Shift-W to the document renderer for close-all confirmation", () => {
+    expect(
+      shouldSuppressNativeDocumentShortcut(
+        { ...commandW, shift: true },
+        "http://localhost:7373/?path=%2Ftmp%2Fdraft.md",
+        "http://localhost:7373",
+      ),
+    ).toBe(true);
+  });
+
   it("keeps native close suppressed for repeats and composition", () => {
     const url = "http://localhost:7373/?path=x.md";
     const origin = "http://localhost:7373";
@@ -76,11 +86,6 @@ describe("desktop document shortcuts", () => {
     [
       "a key-up",
       { ...commandW, type: "keyUp" },
-      "http://localhost:7373/?path=x.md",
-    ],
-    [
-      "extra modifiers",
-      { ...commandW, shift: true },
       "http://localhost:7373/?path=x.md",
     ],
     ["another origin", commandW, "http://example.com/?path=x.md"],
