@@ -590,17 +590,20 @@ export function updateRichTextDocumentFind(
 
   const activeMatch = matches[activeIndex];
   if (activeMatch) {
-    transaction = transaction
-      .setSelection(
-        TextSelection.create(
-          editor.state.doc,
-          activeMatch.from,
-          activeMatch.to,
-        ),
-      )
-      .scrollIntoView();
+    transaction = transaction.setSelection(
+      TextSelection.create(editor.state.doc, activeMatch.from, activeMatch.to),
+    );
   }
   editor.view.dispatch(transaction);
+
+  if (activeMatch) {
+    // ProseMirror's own scrollIntoView is a no-op while focus sits in the
+    // find bar (it walks up from the DOM selection, which is outside the
+    // editor), so scroll the active decoration element directly.
+    editor.view.dom
+      .querySelector(".document-find-match-active")
+      ?.scrollIntoView({ block: "center", inline: "nearest" });
+  }
 
   return { activeIndex, total: matches.length };
 }
