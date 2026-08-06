@@ -140,6 +140,18 @@ export function isOpenFileSwitcherShortcut(event: OpenFileShortcutEvent) {
   return event.code === "KeyP" && hasExactCommandModifiers(event);
 }
 
+export function isToggleOpenFileSidebarShortcut(event: OpenFileShortcutEvent) {
+  return (
+    event.key.toLocaleLowerCase() === "e" &&
+    event.metaKey &&
+    !event.altKey &&
+    !event.ctrlKey &&
+    event.shiftKey &&
+    !event.repeat &&
+    !event.isComposing
+  );
+}
+
 export function isCloseOpenFileShortcut(event: OpenFileShortcutEvent) {
   return (
     event.key.toLocaleLowerCase() === "w" && hasExactCommandModifiers(event)

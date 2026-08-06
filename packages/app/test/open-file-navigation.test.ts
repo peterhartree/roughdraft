@@ -6,6 +6,7 @@ import {
   isCloseAllOpenFilesShortcut,
   isCloseOpenFileShortcut,
   isOpenFileSwitcherShortcut,
+  isToggleOpenFileSidebarShortcut,
   markOpenFileRead,
   shouldHandleOpenRequestInSession,
   sortOpenFiles,
@@ -156,6 +157,47 @@ describe("open-file shortcuts", () => {
     );
     expect(
       isOpenFileSwitcherShortcut({ ...shortcut, code: "KeyP", shiftKey: true }),
+    ).toBe(false);
+  });
+
+  it("recognises only the exact Command-Shift-E sidebar shortcut", () => {
+    const toggleSidebarShortcut = {
+      ...shortcut,
+      key: "E",
+      code: "KeyE",
+      shiftKey: true,
+    };
+
+    expect(isToggleOpenFileSidebarShortcut(toggleSidebarShortcut)).toBe(true);
+    expect(
+      isToggleOpenFileSidebarShortcut({
+        ...toggleSidebarShortcut,
+        code: "KeyD",
+      }),
+    ).toBe(true);
+    expect(
+      isToggleOpenFileSidebarShortcut({
+        ...toggleSidebarShortcut,
+        key: "d",
+      }),
+    ).toBe(false);
+    expect(
+      isToggleOpenFileSidebarShortcut({
+        ...toggleSidebarShortcut,
+        shiftKey: false,
+      }),
+    ).toBe(false);
+    expect(
+      isToggleOpenFileSidebarShortcut({
+        ...toggleSidebarShortcut,
+        ctrlKey: true,
+      }),
+    ).toBe(false);
+    expect(
+      isToggleOpenFileSidebarShortcut({
+        ...toggleSidebarShortcut,
+        repeat: true,
+      }),
     ).toBe(false);
   });
 

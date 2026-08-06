@@ -33,6 +33,7 @@ export function OpenFileSidebar({
 
   return (
     <aside
+      id="open-file-sidebar"
       aria-label="Open files"
       className="flex h-screen w-[var(--roughdraft-sidebar-width)] shrink-0 flex-col border-r border-stone-200 bg-[#F6F6F3] text-slate-950 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-50"
       data-testid="open-file-sidebar"
@@ -137,7 +138,10 @@ export function OpenFileSidebar({
               </ol>
             }
           />
-          <ContextMenuContent aria-label="File actions">
+          <ContextMenuContent
+            aria-label="File actions"
+            data-open-file-sidebar-context-menu=""
+          >
             <ContextMenuItem
               data-testid="open-file-sidebar-copy-path"
               onClick={() => {

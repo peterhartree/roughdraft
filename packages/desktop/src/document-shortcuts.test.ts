@@ -99,6 +99,7 @@ describe("desktop document shortcuts", () => {
     ["Command-F", { ...commandW, key: "f", code: "KeyF" }],
     ["Command-G", { ...commandW, key: "g", code: "KeyG" }],
     ["Command-Shift-G", { ...commandW, key: "g", code: "KeyG", shift: true }],
+    ["Command-Shift-E", { ...commandW, key: "E", code: "KeyD", shift: true }],
   ])("routes %s to the document renderer", (_label, input) => {
     expect(
       shouldSuppressNativeDocumentShortcut(
@@ -107,5 +108,15 @@ describe("desktop document shortcuts", () => {
         "http://localhost:7373",
       ),
     ).toBe(true);
+  });
+
+  it("does not route the physical E key when the active layout produces another character", () => {
+    expect(
+      shouldSuppressNativeDocumentShortcut(
+        { ...commandW, key: "d", code: "KeyE", shift: true },
+        "http://localhost:7373/?path=%2Ftmp%2Fdraft.md",
+        "http://localhost:7373",
+      ),
+    ).toBe(false);
   });
 });

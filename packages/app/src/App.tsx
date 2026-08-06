@@ -68,6 +68,7 @@ import {
   isCloseAllOpenFilesShortcut,
   isCloseOpenFileShortcut,
   isOpenFileSwitcherShortcut,
+  isToggleOpenFileSidebarShortcut,
   markOpenFileRead,
   type OpenFileItem,
   shouldHandleOpenRequestInSession,
@@ -1540,6 +1541,7 @@ export function App() {
     startupState.recentDocuments,
   );
   const [fileSwitcherOpen, setFileSwitcherOpen] = useState(false);
+  const [openFileSidebarVisible, setOpenFileSidebarVisible] = useState(true);
   const [closeAllConfirmationOpen, setCloseAllConfirmationOpen] =
     useState(false);
   const [closeAllError, setCloseAllError] = useState<string | null>(null);
@@ -2425,6 +2427,24 @@ export function App() {
     if (backend?.info.kind !== "local-files" || openFiles.length === 0) return;
 
     const handleFileNavigationShortcut = (event: KeyboardEvent) => {
+      if (isToggleOpenFileSidebarShortcut(event)) {
+        event.preventDefault();
+        event.stopPropagation();
+        if (
+          document.activeElement instanceof Element &&
+          (document.activeElement.closest("#open-file-sidebar") ||
+            document.activeElement.closest(
+              "[data-open-file-sidebar-context-menu]",
+            ))
+        ) {
+          document
+            .getElementById("document-sidebar-toggle")
+            ?.focus({ preventScroll: true });
+        }
+        setOpenFileSidebarVisible((visible) => !visible);
+        return;
+      }
+
       if (isCloseAllOpenFilesShortcut(event)) {
         event.preventDefault();
         event.stopPropagation();
@@ -2597,8 +2617,9 @@ export function App() {
   const documentFilenameLabel =
     getPathLeaf(documentAbsolutePath ?? activeDocumentPath) ?? "Untitled.md";
 
-  const showOpenFileSidebar =
+  const hasOpenFileSidebar =
     backend?.info.kind === "local-files" && openFiles.length > 0;
+  const showOpenFileSidebar = hasOpenFileSidebar && openFileSidebarVisible;
 
   return (
     <main
@@ -2625,7 +2646,7 @@ export function App() {
           }}
         />
       ) : null}
-      {showOpenFileSidebar ? (
+      {hasOpenFileSidebar ? (
         <OpenFileSwitcher
           files={openFiles}
           activePath={activeDocumentAbsolutePath}
@@ -2635,7 +2656,7 @@ export function App() {
           onSelect={switchToOpenFile}
         />
       ) : null}
-      {showOpenFileSidebar ? (
+      {hasOpenFileSidebar ? (
         <Dialog
           open={closeAllConfirmationOpen}
           onOpenChange={(open) => {
@@ -2721,6 +2742,11 @@ export function App() {
           onKeepEditingWithoutAutosave={handleKeepEditingWithoutAutosave}
           onOverwriteDocumentOnDisk={handleOverwriteDocumentOnDisk}
           backend={backend}
+          documentSidebarAvailable={hasOpenFileSidebar}
+          documentSidebarVisible={showOpenFileSidebar}
+          onToggleDocumentSidebar={() =>
+            setOpenFileSidebarVisible((visible) => !visible)
+          }
         />
       </div>
     </main>

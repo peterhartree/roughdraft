@@ -126,6 +126,59 @@ test.describe("open-file sidebar", () => {
       .toBe(filePath);
   });
 
+  test("toggles the sidebar from its button and Command-Shift-E @smoke", async ({
+    page,
+  }) => {
+    const filePath = writeProjectFile(
+      firstProjectDir,
+      "toggle-sidebar.md",
+      "# Toggle sidebar\n\nKeep the document controls reachable.\n",
+    );
+
+    await openMarkdownFile(page, filePath, "rich-text");
+    const sidebar = page.getByTestId("open-file-sidebar");
+    const toggle = page.getByTestId("document-sidebar-toggle");
+
+    await expect(sidebar).toBeVisible();
+    await expect(toggle).toHaveAttribute("aria-label", "Hide document sidebar");
+    await expect(toggle).toHaveAttribute("aria-expanded", "true");
+
+    await toggle.click();
+    await expect(sidebar).toHaveCount(0);
+    await expect(toggle).toHaveAttribute("aria-label", "Show document sidebar");
+    await expect(toggle).toHaveAttribute("aria-expanded", "false");
+
+    await richTextEditor(page).focus();
+    await page.keyboard.press("Meta+Shift+E");
+    await expect(sidebar).toBeVisible();
+    await expect(toggle).toHaveAttribute("aria-label", "Hide document sidebar");
+
+    await page.getByTestId("open-file-sidebar-item").focus();
+    await page.keyboard.press("Meta+Shift+E");
+    await expect(sidebar).toHaveCount(0);
+    await expect(toggle).toBeFocused();
+
+    await page.keyboard.press("Meta+Shift+E");
+    await expect(sidebar).toBeVisible();
+
+    await page.getByTestId("open-file-sidebar-item").click({ button: "right" });
+    const copyPathAction = page.getByTestId("open-file-sidebar-copy-path");
+    await expect(copyPathAction).toBeVisible();
+    await copyPathAction.focus();
+    await page.keyboard.press("Meta+Shift+E");
+    await expect(sidebar).toHaveCount(0);
+    await expect(toggle).toBeFocused();
+
+    await page.keyboard.press("Meta+Shift+E");
+    await expect(sidebar).toBeVisible();
+
+    logE2eEvent("open-file-sidebar.visibility-toggled", {
+      buttonState: "hidden-then-shown",
+      shortcut: "Command-Shift-E",
+      finalSidebarVisible: true,
+    });
+  });
+
   test("queues an incoming file unread when a conflict blocks activation @smoke", async ({
     page,
   }) => {

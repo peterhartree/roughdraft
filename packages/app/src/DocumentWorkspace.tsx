@@ -8,6 +8,7 @@ import {
   Eye,
   Loader2,
   MessageSquarePlus,
+  PanelLeft,
   PencilLine,
   RefreshCcw,
   Search,
@@ -302,6 +303,9 @@ interface DocumentWorkspaceProps {
   onKeepEditingWithoutAutosave: () => void;
   onOverwriteDocumentOnDisk: () => void | Promise<void>;
   backend: StorageBackend | null;
+  documentSidebarAvailable?: boolean;
+  documentSidebarVisible?: boolean;
+  onToggleDocumentSidebar?: () => void;
   onSaveControllerChange?: (controller: DocumentSaveController | null) => void;
   onViewControllerChange?: (controller: DocumentViewController | null) => void;
 }
@@ -324,6 +328,9 @@ export function DocumentWorkspace({
   onKeepEditingWithoutAutosave,
   onOverwriteDocumentOnDisk,
   backend,
+  documentSidebarAvailable = false,
+  documentSidebarVisible = false,
+  onToggleDocumentSidebar,
   onSaveControllerChange,
   onViewControllerChange,
 }: DocumentWorkspaceProps) {
@@ -759,6 +766,36 @@ export function DocumentWorkspace({
           >
             <div className="review-layout-main document-page-main mx-auto w-full max-w-[46.5rem] min-w-0">
               <div className="flex w-full flex-wrap items-center gap-1.5 px-1">
+                {documentSidebarAvailable ? (
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={
+                        <Button
+                          id="document-sidebar-toggle"
+                          type="button"
+                          data-testid="document-sidebar-toggle"
+                          variant="ghost"
+                          size="icon-sm"
+                          className={cn(
+                            "inline-flex size-6 shrink-0 items-center justify-center rounded-full text-stone-400 outline-none transition-colors hover:bg-[#EEE9E1] hover:text-stone-600 focus-visible:ring-2 focus-visible:ring-stone-300/70 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-200 dark:focus-visible:ring-slate-600/70",
+                            documentSidebarVisible &&
+                              "bg-[#EEE9E1] text-stone-600 dark:bg-slate-800 dark:text-slate-200",
+                          )}
+                          aria-label={`${documentSidebarVisible ? "Hide" : "Show"} document sidebar`}
+                          aria-controls="open-file-sidebar"
+                          aria-expanded={documentSidebarVisible}
+                          aria-keyshortcuts="Meta+Shift+E"
+                          onClick={onToggleDocumentSidebar}
+                        >
+                          <PanelLeft className="size-3.5" aria-hidden="true" />
+                        </Button>
+                      }
+                    />
+                    <TooltipContent>
+                      {documentSidebarVisible ? "Hide" : "Show"} sidebar (⌘⇧E)
+                    </TooltipContent>
+                  </Tooltip>
+                ) : null}
                 <Tooltip>
                   <TooltipTrigger
                     render={
