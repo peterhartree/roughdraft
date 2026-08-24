@@ -48,6 +48,12 @@ import {
 import { DocumentWorkspace } from "./DocumentWorkspace";
 import { detectBackend } from "./detect-backend";
 import {
+  type DocumentDiskChangeState,
+  diskChangeStateBlocksFileSwitch,
+  fetchDocumentFromDisk,
+  resolveDiskWatchEventAction,
+} from "./disk-change-state";
+import {
   getCommentAnchorMeasurements,
   groupCommentAnchorMeasurements,
   normalizeCommentMeasurement,
@@ -99,11 +105,7 @@ import {
 import { UpdateNotice } from "./UpdateNotice";
 import { fetchUpdateStatus, type UpdateStatus } from "./update-status";
 
-export type DocumentDiskChangeState =
-  | "clean"
-  | "changed"
-  | "conflict"
-  | "paused";
+export type { DocumentDiskChangeState } from "./disk-change-state";
 
 export function shouldWarnBeforeUnload({
   activeDocumentPath,
@@ -2108,7 +2110,17 @@ export function App() {
     const currentPath = activeDocumentPathRef.current;
     if (!currentBackend || !currentPath) return;
 
-    const nextDocument = await currentBackend.getMarkdownFile(currentPath);
+    const result = await fetchDocumentFromDisk(currentBackend, currentPath);
+    if (result.status === "missing") {
+      setDocumentDiskChangeState("missing");
+      return;
+    }
+    if (result.status === "error") {
+      console.error("Failed to reload markdown file from disk:", result.error);
+      return;
+    }
+
+    const nextDocument = result.document;
     applyDocumentPage(nextDocument);
     refreshActiveOpenFile(nextDocument);
     documentDirtyRef.current = false;
@@ -2133,10 +2145,14 @@ export function App() {
     const fallbackTitle =
       currentDocument.id.split("/").at(-1) || currentDocument.id;
     const title = firstLine.replace(/^#*\s*/, "") || fallbackTitle;
-    const savedDocument = (await currentBackend.saveMarkdownFile(
-      currentPath,
-      content,
-    )) ?? {
+    let savedResult: Page | undefined;
+    try {
+      savedResult = await currentBackend.saveMarkdownFile(currentPath, content);
+    } catch (error) {
+      console.error("Failed to write the draft to disk:", error);
+      return;
+    }
+    const savedDocument = savedResult ?? {
       ...currentDocument,
       content,
       title,
@@ -2165,7 +2181,10 @@ export function App() {
         return "switched";
       }
 
-      if (fileSwitchPendingRef.current || documentDiskChangeState !== "clean") {
+      if (
+        fileSwitchPendingRef.current ||
+        diskChangeStateBlocksFileSwitch(documentDiskChangeState)
+      ) {
         return "blocked";
       }
 
@@ -2306,7 +2325,7 @@ export function App() {
       !closingPath ||
       !currentFiles.some((file) => file.path === closingPath) ||
       fileSwitchPendingRef.current ||
-      documentDiskChangeState !== "clean"
+      diskChangeStateBlocksFileSwitch(documentDiskChangeState)
     ) {
       return false;
     }
@@ -2498,21 +2517,20 @@ export function App() {
       (event) => {
         if (disposed || event.path !== activeDocumentPath) return;
 
-        const currentDocument = documentPageRef.current;
-        if (event.version && currentDocument?.version === event.version) {
+        const action = resolveDiskWatchEventAction({
+          event,
+          currentVersion: documentPageRef.current?.version,
+          diskChangeState: documentDiskChangeState,
+          isDirty: documentDirtyRef.current,
+        });
+        if (action === "ignore") return;
+
+        if (action === "missing") {
+          setDocumentDiskChangeState("missing");
           return;
         }
 
-        if (!event.exists) {
-          setDocumentDiskChangeState("changed");
-          return;
-        }
-
-        if (documentDiskChangeState === "paused") {
-          return;
-        }
-
-        if (documentDirtyRef.current) {
+        if (action === "mark-changed") {
           setDocumentDiskChangeState("changed");
           return;
         }
@@ -2525,16 +2543,25 @@ export function App() {
             activeDocumentAbsolutePathRef.current === watchedAbsolutePath;
           if (!stillWatchingActiveFile()) return;
 
-          try {
-            const nextDocument =
-              await watchedBackend.getMarkdownFile(activeDocumentPath);
-            if (!stillWatchingActiveFile()) return;
-            applyDocumentPage(nextDocument);
-            refreshActiveOpenFile(nextDocument);
-            setDocumentDiskChangeState("clean");
-          } catch (error) {
-            console.error("Failed to reload changed markdown file:", error);
+          const result = await fetchDocumentFromDisk(
+            watchedBackend,
+            activeDocumentPath,
+          );
+          if (!stillWatchingActiveFile()) return;
+          if (result.status === "missing") {
+            setDocumentDiskChangeState("missing");
+            return;
           }
+          if (result.status === "error") {
+            console.error(
+              "Failed to reload changed markdown file:",
+              result.error,
+            );
+            return;
+          }
+          applyDocumentPage(result.document);
+          refreshActiveOpenFile(result.document);
+          setDocumentDiskChangeState("clean");
         })();
       },
     );
@@ -2634,7 +2661,10 @@ export function App() {
         <OpenFileSidebar
           files={openFiles}
           activePath={activeDocumentAbsolutePath}
-          disabled={fileSwitchPending || documentDiskChangeState !== "clean"}
+          disabled={
+            fileSwitchPending ||
+            diskChangeStateBlocksFileSwitch(documentDiskChangeState)
+          }
           error={fileSwitchError}
           onSelect={(path) => void switchToOpenFile(path)}
           onCopyPath={async (path) => {
@@ -2650,7 +2680,10 @@ export function App() {
         <OpenFileSwitcher
           files={openFiles}
           activePath={activeDocumentAbsolutePath}
-          disabled={fileSwitchPending || documentDiskChangeState !== "clean"}
+          disabled={
+            fileSwitchPending ||
+            diskChangeStateBlocksFileSwitch(documentDiskChangeState)
+          }
           open={fileSwitcherOpen}
           onOpenChange={setFileSwitcherOpen}
           onSelect={switchToOpenFile}

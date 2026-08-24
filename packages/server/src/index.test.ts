@@ -151,6 +151,44 @@ describe("createApp", () => {
     );
   });
 
+  it("recreates a deleted markdown file when no expected version is given", async () => {
+    const nestedDir = path.join(projectDir, "moved-away");
+
+    const { app } = createApp({
+      homeDir,
+      staticDirPath: projectDir,
+    });
+
+    const saveResponse = await request(app)
+      .put("/api/markdown-file")
+      .query({ projectPath: projectDir, path: "moved-away/draft.md" })
+      .send({ content: "# Recovered\n" });
+
+    expect(saveResponse.status).toBe(200);
+    expect(saveResponse.body).toMatchObject({
+      title: "Recovered",
+      content: "# Recovered\n",
+    });
+    expect(fs.readFileSync(path.join(nestedDir, "draft.md"), "utf-8")).toBe(
+      "# Recovered\n",
+    );
+  });
+
+  it("rejects writes to a deleted markdown file when an expected version is given", async () => {
+    const { app } = createApp({
+      homeDir,
+      staticDirPath: projectDir,
+    });
+
+    const saveResponse = await request(app)
+      .put("/api/markdown-file")
+      .query({ projectPath: projectDir, path: "gone.md" })
+      .send({ content: "# Stale autosave\n", expectedVersion: "v1" });
+
+    expect(saveResponse.status).toBe(404);
+    expect(fs.existsSync(path.join(projectDir, "gone.md"))).toBe(false);
+  });
+
   it("rejects stale markdown-file writes", async () => {
     const nestedDir = path.join(projectDir, "notes");
     fs.mkdirSync(nestedDir, { recursive: true });

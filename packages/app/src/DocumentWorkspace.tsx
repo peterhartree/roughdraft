@@ -42,16 +42,17 @@ import {
   criticMarkdownHasReviewRail,
   criticMarkdownToRenderedHtml,
 } from "./critic-markup";
+import type { DocumentDiskChangeState } from "./disk-change-state";
+import {
+  type DocumentFindDirection,
+  EMPTY_DOCUMENT_FIND_RESULT,
+} from "./document-find";
 import {
   type DocumentEditorViewController,
   type DocumentViewController,
   type DocumentViewRestoreRequest,
   getRestorableDocumentViewStateForMode,
 } from "./document-view-state";
-import {
-  type DocumentFindDirection,
-  EMPTY_DOCUMENT_FIND_RESULT,
-} from "./document-find";
 import { cn } from "./lib/utils";
 import {
   type DocumentInteractionMode,
@@ -67,7 +68,7 @@ import {
   matchesCopyPathShortcut,
 } from "./workspace-shortcuts";
 
-type DiskChangeState = "clean" | "changed" | "conflict" | "paused";
+type DiskChangeState = DocumentDiskChangeState;
 type FileCopyAction = "path" | "filename" | "markdown" | "rich-text";
 const FILE_COPY_PREVIEW_MAX_LENGTH = 34;
 
@@ -99,6 +100,10 @@ const conflictNoticeCopy: Record<
   paused: {
     title: "Autosave paused",
     body: "Keep editing locally, then reload from disk to discard your draft or overwrite the disk file when you are ready.",
+  },
+  missing: {
+    title: "File deleted on disk",
+    body: "This file no longer exists on disk. It may have been moved, renamed, or deleted. Save your draft to recreate it at this path, or switch to another document.",
   },
 };
 
@@ -209,6 +214,15 @@ function getSaveStatusViewModel(
     return {
       label: "Autosave paused",
       ariaLabel: "Autosave paused",
+      tone: "warning" as const,
+      Icon: AlertTriangle,
+    };
+  }
+
+  if (diskChangeState === "missing") {
+    return {
+      label: "File deleted on disk",
+      ariaLabel: "File deleted on disk",
       tone: "warning" as const,
       Icon: AlertTriangle,
     };
@@ -721,7 +735,8 @@ export function DocumentWorkspace({
               <RefreshCcw className="size-3.5" />
               Reload from disk
             </Button>
-            {documentDiskChangeState !== "paused" ? (
+            {documentDiskChangeState !== "paused" &&
+            documentDiskChangeState !== "missing" ? (
               <Button
                 type="button"
                 data-testid="file-conflict-action-keep-editing"
@@ -743,7 +758,9 @@ export function DocumentWorkspace({
               onClick={() => void onOverwriteDocumentOnDisk()}
             >
               <Upload className="size-3.5" />
-              Overwrite disk file
+              {documentDiskChangeState === "missing"
+                ? "Save draft to disk"
+                : "Overwrite disk file"}
             </Button>
           </div>
         </div>

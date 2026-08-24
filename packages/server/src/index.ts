@@ -646,15 +646,25 @@ export function createApp(options: CreateAppOptions = {}): CreateAppResult {
       return;
     }
 
-    if (!fs.existsSync(absolutePath)) {
-      res.status(404).json({ error: "Markdown file not found" });
-      return;
-    }
-
     const { content, expectedVersion } = req.body as {
       content: string;
       expectedVersion?: string;
     };
+
+    if (!fs.existsSync(absolutePath)) {
+      // A versioned write expects the file on disk; only an explicit
+      // overwrite (no expectedVersion) may recreate a deleted file.
+      if (expectedVersion) {
+        res.status(404).json({ error: "Markdown file not found" });
+        return;
+      }
+
+      fs.mkdirSync(path.dirname(absolutePath), { recursive: true });
+      fs.writeFileSync(absolutePath, content);
+      res.json(markdownPageFromFile(relativePath, absolutePath));
+      return;
+    }
+
     const current = markdownPageFromFile(relativePath, absolutePath);
 
     if (expectedVersion && expectedVersion !== current.version) {
