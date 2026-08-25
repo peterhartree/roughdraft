@@ -10,6 +10,15 @@
           "packages/app/src/style.css"
         ],
         "createdAt": "2026-08-01T17:57:23.086Z"
+      },
+      {
+        "rule": "gray-on-color",
+        "value": "*",
+        "files": [
+          "packages/app/src/EditorContextMenu.tsx"
+        ],
+        "createdAt": "2026-08-25T14:46:59.976Z",
+        "reason": "false positive: hover state swaps text to rose-600 at the same time as the rose background; gray never renders on the colored background"
       }
     ]
   }

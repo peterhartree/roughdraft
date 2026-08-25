@@ -103,6 +103,22 @@ function getElementFromDomNode(node: Node | null) {
   return node instanceof Element ? node : node.parentElement;
 }
 
+function isPlainLeftClick(event: {
+  button: number;
+  metaKey: boolean;
+  ctrlKey: boolean;
+  altKey: boolean;
+  shiftKey: boolean;
+}) {
+  return (
+    event.button === 0 &&
+    !event.metaKey &&
+    !event.ctrlKey &&
+    !event.altKey &&
+    !event.shiftKey
+  );
+}
+
 function getContainedSelectionRange(container: HTMLElement) {
   const selection = window.getSelection();
 
@@ -424,6 +440,30 @@ export function EditorContextMenu({
     [backend, editor, resolveLinkUrl],
   );
 
+  const openLinkAnchorTarget = useCallback(
+    (anchor: HTMLAnchorElement) => {
+      const rawHref =
+        anchor.getAttribute("data-markdown-src") ||
+        anchor.getAttribute("href") ||
+        "";
+      const target = resolveEditableLinkTarget(
+        rawHref,
+        backend,
+        resolveLinkUrl,
+        anchor.href,
+      );
+      if (!target) return;
+
+      if (isResolvedLinkTarget(target)) {
+        window.open(target, "_blank", "noopener,noreferrer");
+        return;
+      }
+
+      window.location.assign(target);
+    },
+    [backend, resolveLinkUrl],
+  );
+
   const openLinkPopover = useCallback(() => {
     if (!editor || !containerRef.current) return;
 
@@ -656,8 +696,34 @@ export function EditorContextMenu({
           return;
         }
 
+        // Plain left click opens the link (handled in onClickCapture);
+        // modified clicks and other buttons keep the edit popover.
+        if (isPlainLeftClick(event)) return;
+
         event.preventDefault();
         openExistingLinkPopover(anchor);
+      }}
+      onClickCapture={(event) => {
+        if (!editor || !containerRef.current) return;
+
+        const candidate = getElementFromDomNode(event.target as Node);
+        const anchor = candidate?.closest("a[href]");
+
+        if (
+          !(anchor instanceof HTMLAnchorElement) ||
+          !containerRef.current.contains(anchor)
+        ) {
+          return;
+        }
+
+        event.preventDefault();
+        if (!isPlainLeftClick(event)) return;
+
+        // A click that finished a drag-selection should not open the link.
+        const selection = window.getSelection();
+        if (selection && !selection.isCollapsed) return;
+
+        openLinkAnchorTarget(anchor);
       }}
       onContextMenu={(event) => {
         event.preventDefault();

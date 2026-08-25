@@ -475,6 +475,11 @@ describe("PageCard editor integration", () => {
       },
     });
 
+    Object.defineProperty(document, "elementFromPoint", {
+      configurable: true,
+      value: () => null,
+    });
+
     window.scrollBy = vi.fn();
   });
 
@@ -851,7 +856,11 @@ describe("PageCard editor integration", () => {
 
     await act(async () => {
       link?.dispatchEvent(
-        new MouseEvent("mousedown", { bubbles: true, cancelable: true }),
+        new MouseEvent("mousedown", {
+          bubbles: true,
+          cancelable: true,
+          metaKey: true,
+        }),
       );
     });
     await flushAnimationFrame();
@@ -896,7 +905,44 @@ describe("PageCard editor integration", () => {
     expect(queryByTestId(rendered.container, "link-url-input")).toBeNull();
   });
 
-  it("opens the link edit popover without focusing the URL input when clicking link text", async () => {
+  it("opens the link when clicking link text, without the edit popover", async () => {
+    const openWindow = vi.spyOn(window, "open").mockImplementation(() => null);
+    const rendered = await renderPageCard({
+      page: {
+        id: "doc-link-click-open-1",
+        title: "Doc Link Click Open 1",
+        content: "[linked](https://example.com)",
+      },
+      interactionMode: "editing",
+      selected: true,
+    });
+
+    const link = rendered.container.querySelector(
+      'a[href="https://example.com"]',
+    );
+    expect(link).not.toBeNull();
+
+    await act(async () => {
+      link?.dispatchEvent(
+        new MouseEvent("mousedown", { bubbles: true, cancelable: true }),
+      );
+      link?.dispatchEvent(
+        new MouseEvent("click", { bubbles: true, cancelable: true }),
+      );
+    });
+    await flushAnimationFrame();
+
+    expect(openWindow).toHaveBeenCalledWith(
+      "https://example.com",
+      "_blank",
+      "noopener,noreferrer",
+    );
+    expect(
+      queryByTestId<HTMLInputElement>(rendered.container, "link-url-input"),
+    ).toBeNull();
+  });
+
+  it("opens the link edit popover without focusing the URL input when cmd-clicking link text", async () => {
     const rendered = await renderPageCard({
       page: {
         id: "doc-link-click-popover-1",
@@ -914,7 +960,11 @@ describe("PageCard editor integration", () => {
 
     await act(async () => {
       link?.dispatchEvent(
-        new MouseEvent("mousedown", { bubbles: true, cancelable: true }),
+        new MouseEvent("mousedown", {
+          bubbles: true,
+          cancelable: true,
+          metaKey: true,
+        }),
       );
     });
     await flushAnimationFrame();
