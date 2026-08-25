@@ -118,7 +118,7 @@
   }
 
   .tiptap a {
-    @apply text-sky-700 dark:text-sky-400 underline decoration-sky-500/50 dark:decoration-sky-400/50 underline-offset-4;
+    @apply cursor-pointer text-sky-700 dark:text-sky-400 underline decoration-sky-500/50 dark:decoration-sky-400/50 underline-offset-4;
   }
 
   .tiptap .comment-anchor {
