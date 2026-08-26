@@ -1,11 +1,9 @@
 import type { Editor } from "@tiptap/react";
 import { useEditorState } from "@tiptap/react";
-import type { ReactNode } from "react";
-import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Bold,
-  Code2,
   Check,
+  Code2,
   ExternalLink,
   Italic,
   Link2,
@@ -16,6 +14,15 @@ import {
   Trash2,
   X,
 } from "lucide-react";
+import type { ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
+import { createPortal } from "react-dom";
 import {
   getAddCommentShortcutLabel,
   matchesAddCommentShortcut,
@@ -308,6 +315,26 @@ export function EditorContextMenu({
   const close = useCallback(() => {
     setPosition(null);
   }, []);
+
+  // Keep the context menu fully on screen when opened near a viewport edge.
+  useLayoutEffect(() => {
+    if (!position || !menuRef.current) return;
+
+    const rect = menuRef.current.getBoundingClientRect();
+    const margin = 8;
+    const x = Math.max(
+      margin,
+      Math.min(position.x, window.innerWidth - rect.width - margin),
+    );
+    const y = Math.max(
+      margin,
+      Math.min(position.y, window.innerHeight - rect.height - margin),
+    );
+
+    if (x !== position.x || y !== position.y) {
+      setPosition({ x, y });
+    }
+  }, [position]);
 
   const closeLinkPopover = useCallback(() => {
     setLinkPopoverState(null);
@@ -804,6 +831,17 @@ export function EditorContextMenu({
                 active={selectionMenuState.isLinkActive}
                 onClick={openLinkPopover}
               />
+              {selectionMenuState.isInTable ? (
+                <SelectionMenuButton
+                  label="Delete table row"
+                  icon={<Trash2 className="size-4" />}
+                  disabled={!selectionMenuState.canDeleteRow}
+                  onClick={() => {
+                    editor?.chain().focus().deleteRow().run();
+                    setSelectionActionPosition(null);
+                  }}
+                />
+              ) : null}
             </div>
             {selectionMenuState.activeCriticChangeId ? (
               <div className="grid grid-cols-2 gap-1">
@@ -879,242 +917,248 @@ export function EditorContextMenu({
           </div>
         </div>
       ) : null}
-      {linkPopoverState ? (
-        <div
-          ref={linkPopoverRef}
-          data-testid="link-popover"
-          className="fixed z-[220] flex -translate-x-1/2 -translate-y-full items-center rounded-[18px] border border-slate-200/90 dark:border-slate-700/90 bg-white/95 dark:bg-slate-800/95 px-3 py-2 shadow-[0_18px_48px_rgba(15,23,42,0.16)] dark:shadow-[0_18px_48px_rgba(0,0,0,0.4)] backdrop-blur-xl"
-          style={{
-            left: linkPopoverState.left,
-            top: linkPopoverState.top,
-          }}
-          onMouseDown={(event) => {
-            event.stopPropagation();
-          }}
-        >
-          <input
-            ref={linkInputRef}
-            value={linkDraft}
-            onChange={(event) => setLinkDraft(event.target.value)}
-            onBlur={(event) => {
-              const nextFocused = event.relatedTarget as Node | null;
+      {linkPopoverState
+        ? createPortal(
+            <div
+              ref={linkPopoverRef}
+              data-testid="link-popover"
+              className="fixed z-[220] flex -translate-x-1/2 -translate-y-full items-center rounded-[18px] border border-slate-200/90 dark:border-slate-700/90 bg-white/95 dark:bg-slate-800/95 px-3 py-2 shadow-[0_18px_48px_rgba(15,23,42,0.16)] dark:shadow-[0_18px_48px_rgba(0,0,0,0.4)] backdrop-blur-xl"
+              style={{
+                left: linkPopoverState.left,
+                top: linkPopoverState.top,
+              }}
+              onMouseDown={(event) => {
+                event.stopPropagation();
+              }}
+            >
+              <input
+                ref={linkInputRef}
+                value={linkDraft}
+                onChange={(event) => setLinkDraft(event.target.value)}
+                onBlur={(event) => {
+                  const nextFocused = event.relatedTarget as Node | null;
 
-              if (
-                nextFocused &&
-                linkPopoverRef.current?.contains(nextFocused)
-              ) {
-                return;
-              }
+                  if (
+                    nextFocused &&
+                    linkPopoverRef.current?.contains(nextFocused)
+                  ) {
+                    return;
+                  }
 
-              applyLink(linkDraft);
-            }}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") {
-                event.preventDefault();
-                applyLink(linkDraft);
-                editor?.commands.focus();
-              }
+                  applyLink(linkDraft);
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    applyLink(linkDraft);
+                    editor?.commands.focus();
+                  }
 
-              if (event.key === "Escape") {
-                event.preventDefault();
-                closeLinkPopover();
-                editor?.commands.focus();
-              }
-            }}
-            className="h-10 w-[22rem] border-0 bg-transparent px-2 text-[17px] text-slate-900 dark:text-slate-100 outline-none placeholder:text-slate-400 dark:placeholder:text-slate-500"
-            placeholder="https://example.com"
-            aria-label="Link URL"
-            data-testid="link-url-input"
-          />
-          <div
-            className="mx-2 h-8 w-px bg-slate-200 dark:bg-slate-700"
-            aria-hidden="true"
-          />
-          <button
-            type="button"
-            className="inline-flex size-9 items-center justify-center rounded-lg text-slate-500 dark:text-slate-400 transition hover:bg-slate-100 dark:hover:bg-slate-700 hover:text-slate-900 dark:hover:text-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-300 dark:focus-visible:ring-slate-600"
-            onMouseDown={(event) => event.preventDefault()}
-            onClick={() => {
-              applyLink(linkDraft);
-              const target =
-                resolveEditableLinkTarget(
-                  linkDraft.trim(),
-                  backend,
-                  resolveLinkUrl,
-                ) || linkPopoverState.href;
-
-              if (target) {
-                window.open(target, "_blank", "noopener,noreferrer");
-              }
-            }}
-            aria-label="Open link in new tab"
-            data-testid="link-action-open"
-            title="Open link in new tab"
-          >
-            <ExternalLink className="size-5" />
-          </button>
-          <button
-            type="button"
-            className="inline-flex size-9 items-center justify-center rounded-lg text-slate-500 dark:text-slate-400 transition hover:bg-rose-50 dark:hover:bg-rose-900/40 hover:text-rose-600 dark:hover:text-rose-400 focus:outline-none focus-visible:ring-2 focus-visible:ring-rose-300 dark:focus-visible:ring-rose-800"
-            onMouseDown={(event) => event.preventDefault()}
-            onClick={() => {
-              editor?.chain().focus().unsetLink().run();
-              closeLinkPopover();
-            }}
-            aria-label="Delete link"
-            data-testid="link-action-delete"
-            title="Delete link"
-          >
-            <Trash2 className="size-5" />
-          </button>
-        </div>
-      ) : null}
-      {position ? (
-        <div
-          ref={menuRef}
-          data-testid="editor-context-menu"
-          className="fixed z-[200] min-w-44 rounded-2xl border border-slate-200/90 dark:border-slate-700/90 bg-white/95 dark:bg-slate-800/95 p-1.5 shadow-[0_18px_48px_rgba(15,23,42,0.16)] dark:shadow-[0_18px_48px_rgba(0,0,0,0.4)] backdrop-blur-xl"
-          style={{ left: position.x, top: position.y }}
-        >
-          <button
-            type="button"
-            data-testid="editor-context-menu-action-add-comment"
-            className="flex w-full items-center justify-between gap-3 rounded-xl px-3 py-2 text-left text-sm text-slate-700 dark:text-slate-300 transition hover:bg-slate-50 dark:hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
-            disabled={!editor || editor.state.selection.empty}
-            onClick={() => {
-              onAddComment?.();
-              close();
-            }}
-          >
-            <span>Add comment</span>
-            <span className="text-[11px] font-medium text-slate-400 dark:text-slate-500">
-              {shortcutLabel}
-            </span>
-          </button>
-          <button
-            type="button"
-            data-testid="editor-context-menu-action-suggest-insertion"
-            className="block w-full rounded-xl px-3 py-2 text-left text-sm text-slate-700 dark:text-slate-300 transition hover:bg-slate-50 dark:hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
-            disabled={!editor || !onSuggestInsertion}
-            onClick={() => {
-              onSuggestInsertion?.();
-              close();
-            }}
-          >
-            Suggest insertion
-          </button>
-          <button
-            type="button"
-            data-testid="editor-context-menu-action-suggest-deletion"
-            className="block w-full rounded-xl px-3 py-2 text-left text-sm text-slate-700 dark:text-slate-300 transition hover:bg-slate-50 dark:hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
-            disabled={!editor || editor.state.selection.empty}
-            onClick={() => {
-              onSuggestDeletion?.();
-              close();
-            }}
-          >
-            Suggest deletion
-          </button>
-          <button
-            type="button"
-            data-testid="editor-context-menu-action-suggest-replacement"
-            className="block w-full rounded-xl px-3 py-2 text-left text-sm text-slate-700 dark:text-slate-300 transition hover:bg-slate-50 dark:hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
-            disabled={!editor || editor.state.selection.empty}
-            onClick={() => {
-              onSuggestReplacement?.();
-              close();
-            }}
-          >
-            Suggest replacement
-          </button>
-          {selectionMenuState.activeCriticChangeId ? (
-            <>
+                  if (event.key === "Escape") {
+                    event.preventDefault();
+                    closeLinkPopover();
+                    editor?.commands.focus();
+                  }
+                }}
+                className="h-10 w-[22rem] border-0 bg-transparent px-2 text-[17px] text-slate-900 dark:text-slate-100 outline-none placeholder:text-slate-400 dark:placeholder:text-slate-500"
+                placeholder="https://example.com"
+                aria-label="Link URL"
+                data-testid="link-url-input"
+              />
               <div
-                className="my-1 h-px bg-slate-100 dark:bg-slate-700"
+                className="mx-2 h-8 w-px bg-slate-200 dark:bg-slate-700"
                 aria-hidden="true"
               />
               <button
                 type="button"
-                data-testid="editor-context-menu-action-accept-suggestion"
-                className="block w-full rounded-xl px-3 py-2 text-left text-sm text-emerald-700 transition hover:bg-emerald-50"
+                className="inline-flex size-9 items-center justify-center rounded-lg text-slate-500 dark:text-slate-400 transition hover:bg-slate-100 dark:hover:bg-slate-700 hover:text-slate-900 dark:hover:text-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-300 dark:focus-visible:ring-slate-600"
+                onMouseDown={(event) => event.preventDefault()}
                 onClick={() => {
-                  if (selectionMenuState.activeCriticChangeId) {
-                    editor
-                      ?.chain()
-                      .focus()
-                      .acceptCriticChange(
-                        selectionMenuState.activeCriticChangeId,
-                      )
-                      .run();
+                  applyLink(linkDraft);
+                  const target =
+                    resolveEditableLinkTarget(
+                      linkDraft.trim(),
+                      backend,
+                      resolveLinkUrl,
+                    ) || linkPopoverState.href;
+
+                  if (target) {
+                    window.open(target, "_blank", "noopener,noreferrer");
                   }
-                  close();
                 }}
+                aria-label="Open link in new tab"
+                data-testid="link-action-open"
+                title="Open link in new tab"
               >
-                Accept suggestion
+                <ExternalLink className="size-5" />
               </button>
               <button
                 type="button"
-                data-testid="editor-context-menu-action-reject-suggestion"
-                className="block w-full rounded-xl px-3 py-2 text-left text-sm text-rose-700 transition hover:bg-rose-50"
+                className="inline-flex size-9 items-center justify-center rounded-lg text-slate-500 dark:text-slate-400 transition hover:bg-rose-50 dark:hover:bg-rose-900/40 hover:text-rose-600 dark:hover:text-rose-400 focus:outline-none focus-visible:ring-2 focus-visible:ring-rose-300 dark:focus-visible:ring-rose-800"
+                onMouseDown={(event) => event.preventDefault()}
                 onClick={() => {
-                  if (selectionMenuState.activeCriticChangeId) {
-                    editor
-                      ?.chain()
-                      .focus()
-                      .rejectCriticChange(
-                        selectionMenuState.activeCriticChangeId,
-                      )
-                      .run();
-                  }
+                  editor?.chain().focus().unsetLink().run();
+                  closeLinkPopover();
+                }}
+                aria-label="Delete link"
+                data-testid="link-action-delete"
+                title="Delete link"
+              >
+                <Trash2 className="size-5" />
+              </button>
+            </div>,
+            document.body,
+          )
+        : null}
+      {position
+        ? createPortal(
+            <div
+              ref={menuRef}
+              data-testid="editor-context-menu"
+              className="fixed z-[200] min-w-44 rounded-2xl border border-slate-200/90 dark:border-slate-700/90 bg-white/95 dark:bg-slate-800/95 p-1.5 shadow-[0_18px_48px_rgba(15,23,42,0.16)] dark:shadow-[0_18px_48px_rgba(0,0,0,0.4)] backdrop-blur-xl"
+              style={{ left: position.x, top: position.y }}
+            >
+              <button
+                type="button"
+                data-testid="editor-context-menu-action-add-comment"
+                className="flex w-full items-center justify-between gap-3 rounded-xl px-3 py-2 text-left text-sm text-slate-700 dark:text-slate-300 transition hover:bg-slate-50 dark:hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
+                disabled={!editor || editor.state.selection.empty}
+                onClick={() => {
+                  onAddComment?.();
                   close();
                 }}
               >
-                Reject suggestion
+                <span>Add comment</span>
+                <span className="text-[11px] font-medium text-slate-400 dark:text-slate-500">
+                  {shortcutLabel}
+                </span>
               </button>
-            </>
-          ) : null}
-          {selectionMenuState.isInTable ? (
-            <>
-              <div
-                className="my-1 h-px bg-slate-100 dark:bg-slate-700"
-                aria-hidden="true"
-              />
               <button
                 type="button"
-                data-testid="editor-context-menu-action-delete-row"
+                data-testid="editor-context-menu-action-suggest-insertion"
                 className="block w-full rounded-xl px-3 py-2 text-left text-sm text-slate-700 dark:text-slate-300 transition hover:bg-slate-50 dark:hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
-                disabled={!selectionMenuState.canDeleteRow}
+                disabled={!editor || !onSuggestInsertion}
                 onClick={() => {
-                  editor?.chain().focus().deleteRow().run();
+                  onSuggestInsertion?.();
                   close();
                 }}
               >
-                Delete table row
+                Suggest insertion
               </button>
-              <div
-                className="my-1 h-px bg-slate-100 dark:bg-slate-700"
-                aria-hidden="true"
-              />
-            </>
-          ) : null}
-          <button
-            type="button"
-            data-testid="editor-context-menu-action-paste"
-            className="block w-full rounded-xl px-3 py-2 text-left text-sm text-slate-700 dark:text-slate-300 transition hover:bg-slate-50 dark:hover:bg-slate-700"
-            onClick={() => void handlePasteText()}
-          >
-            Paste
-          </button>
-          <button
-            type="button"
-            data-testid="editor-context-menu-action-paste-markdown"
-            className="block w-full rounded-xl px-3 py-2 text-left text-sm text-slate-700 dark:text-slate-300 transition hover:bg-slate-50 dark:hover:bg-slate-700"
-            onClick={() => void handlePasteMarkdown()}
-          >
-            Paste Markdown
-          </button>
-        </div>
-      ) : null}
+              <button
+                type="button"
+                data-testid="editor-context-menu-action-suggest-deletion"
+                className="block w-full rounded-xl px-3 py-2 text-left text-sm text-slate-700 dark:text-slate-300 transition hover:bg-slate-50 dark:hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
+                disabled={!editor || editor.state.selection.empty}
+                onClick={() => {
+                  onSuggestDeletion?.();
+                  close();
+                }}
+              >
+                Suggest deletion
+              </button>
+              <button
+                type="button"
+                data-testid="editor-context-menu-action-suggest-replacement"
+                className="block w-full rounded-xl px-3 py-2 text-left text-sm text-slate-700 dark:text-slate-300 transition hover:bg-slate-50 dark:hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
+                disabled={!editor || editor.state.selection.empty}
+                onClick={() => {
+                  onSuggestReplacement?.();
+                  close();
+                }}
+              >
+                Suggest replacement
+              </button>
+              {selectionMenuState.activeCriticChangeId ? (
+                <>
+                  <div
+                    className="my-1 h-px bg-slate-100 dark:bg-slate-700"
+                    aria-hidden="true"
+                  />
+                  <button
+                    type="button"
+                    data-testid="editor-context-menu-action-accept-suggestion"
+                    className="block w-full rounded-xl px-3 py-2 text-left text-sm text-emerald-700 transition hover:bg-emerald-50"
+                    onClick={() => {
+                      if (selectionMenuState.activeCriticChangeId) {
+                        editor
+                          ?.chain()
+                          .focus()
+                          .acceptCriticChange(
+                            selectionMenuState.activeCriticChangeId,
+                          )
+                          .run();
+                      }
+                      close();
+                    }}
+                  >
+                    Accept suggestion
+                  </button>
+                  <button
+                    type="button"
+                    data-testid="editor-context-menu-action-reject-suggestion"
+                    className="block w-full rounded-xl px-3 py-2 text-left text-sm text-rose-700 transition hover:bg-rose-50"
+                    onClick={() => {
+                      if (selectionMenuState.activeCriticChangeId) {
+                        editor
+                          ?.chain()
+                          .focus()
+                          .rejectCriticChange(
+                            selectionMenuState.activeCriticChangeId,
+                          )
+                          .run();
+                      }
+                      close();
+                    }}
+                  >
+                    Reject suggestion
+                  </button>
+                </>
+              ) : null}
+              {selectionMenuState.isInTable ? (
+                <>
+                  <div
+                    className="my-1 h-px bg-slate-100 dark:bg-slate-700"
+                    aria-hidden="true"
+                  />
+                  <button
+                    type="button"
+                    data-testid="editor-context-menu-action-delete-row"
+                    className="block w-full rounded-xl px-3 py-2 text-left text-sm text-slate-700 dark:text-slate-300 transition hover:bg-slate-50 dark:hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
+                    disabled={!selectionMenuState.canDeleteRow}
+                    onClick={() => {
+                      editor?.chain().focus().deleteRow().run();
+                      close();
+                    }}
+                  >
+                    Delete table row
+                  </button>
+                  <div
+                    className="my-1 h-px bg-slate-100 dark:bg-slate-700"
+                    aria-hidden="true"
+                  />
+                </>
+              ) : null}
+              <button
+                type="button"
+                data-testid="editor-context-menu-action-paste"
+                className="block w-full rounded-xl px-3 py-2 text-left text-sm text-slate-700 dark:text-slate-300 transition hover:bg-slate-50 dark:hover:bg-slate-700"
+                onClick={() => void handlePasteText()}
+              >
+                Paste
+              </button>
+              <button
+                type="button"
+                data-testid="editor-context-menu-action-paste-markdown"
+                className="block w-full rounded-xl px-3 py-2 text-left text-sm text-slate-700 dark:text-slate-300 transition hover:bg-slate-50 dark:hover:bg-slate-700"
+                onClick={() => void handlePasteMarkdown()}
+              >
+                Paste Markdown
+              </button>
+            </div>,
+            document.body,
+          )
+        : null}
     </div>
   );
 }

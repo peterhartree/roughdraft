@@ -902,7 +902,7 @@ describe("PageCard editor integration", () => {
     await flushAnimationFrame();
 
     expect(document.activeElement).toBe(getEditable(rendered.container));
-    expect(queryByTestId(rendered.container, "link-url-input")).toBeNull();
+    expect(queryByTestId(document.body, "link-url-input")).toBeNull();
   });
 
   it("opens the link when clicking link text, without the edit popover", async () => {
@@ -938,7 +938,7 @@ describe("PageCard editor integration", () => {
       "noopener,noreferrer",
     );
     expect(
-      queryByTestId<HTMLInputElement>(rendered.container, "link-url-input"),
+      queryByTestId<HTMLInputElement>(document.body, "link-url-input"),
     ).toBeNull();
   });
 
@@ -970,7 +970,7 @@ describe("PageCard editor integration", () => {
     await flushAnimationFrame();
 
     const input = queryByTestId<HTMLInputElement>(
-      rendered.container,
+      document.body,
       "link-url-input",
     );
 
