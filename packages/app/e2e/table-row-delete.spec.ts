@@ -10,7 +10,7 @@ import {
   writeProjectFile,
 } from "./helpers";
 
-test.describe("table row deletion", () => {
+test.describe("table row actions", () => {
   let projectDir: string;
 
   test.beforeEach(() => {
@@ -56,6 +56,59 @@ test.describe("table row deletion", () => {
 
     logE2eEvent("table-row-delete.row-removed", { file: "table.md" });
   });
+
+  for (const action of ["above", "below"] as const) {
+    test(`inserts a row ${action} the current row from the context menu`, async ({
+      page,
+    }) => {
+      const markdown = [
+        "| Name | Role |",
+        "| --- | --- |",
+        "| Alpha | First |",
+        "| Beta | Second |",
+        "| Gamma | Third |",
+        "",
+      ].join("\n");
+      const filePath = writeProjectFile(projectDir, "table.md", markdown);
+
+      await openMarkdownFile(page, filePath);
+      const editor = richTextEditor(page);
+      const targetCell = editor.getByRole("cell", { name: "Beta" });
+      await targetCell.click();
+      await targetCell.click({ button: "right" });
+
+      const insertRow = page.getByTestId(
+        `editor-context-menu-action-insert-row-${action}`,
+      );
+      await expect(insertRow).toBeEnabled();
+      await insertRow.click();
+
+      const tableRows = editor.getByRole("row");
+      await expect(tableRows).toHaveCount(5);
+      const rowText = await tableRows.allTextContents();
+      const betaIndex = rowText.findIndex((text) => text.includes("Beta"));
+      const blankIndex = rowText.findIndex((text) => text.trim() === "");
+      expect(blankIndex).toBe(betaIndex + (action === "above" ? -1 : 1));
+
+      await expect(() => {
+        const savedRows = readProjectFile(projectDir, "table.md")
+          .split("\n")
+          .slice(2)
+          .filter(Boolean);
+        const savedBetaIndex = savedRows.findIndex((row) =>
+          row.includes("Beta"),
+        );
+        const savedBlankIndex = savedRows.findIndex(
+          (row) => !/[A-Za-z]/.test(row),
+        );
+        expect(savedBlankIndex).toBe(
+          savedBetaIndex + (action === "above" ? -1 : 1),
+        );
+      }).toPass();
+
+      logE2eEvent(`table-row-insert.${action}`, { file: "table.md" });
+    });
+  }
 
   test("deletes the current table row from the selection menu", async ({
     page,
@@ -148,7 +201,7 @@ test.describe("table row deletion", () => {
     expect(box.y + box.height).toBeLessThanOrEqual(viewport.height);
   });
 
-  test("hides the delete row action outside tables", async ({ page }) => {
+  test("hides table row actions outside tables", async ({ page }) => {
     const filePath = writeProjectFile(
       projectDir,
       "prose.md",
@@ -165,6 +218,12 @@ test.describe("table row deletion", () => {
     await expect(page.getByTestId("editor-context-menu")).toBeVisible();
     await expect(
       page.getByTestId("editor-context-menu-action-delete-row"),
+    ).toHaveCount(0);
+    await expect(
+      page.getByTestId("editor-context-menu-action-insert-row-above"),
+    ).toHaveCount(0);
+    await expect(
+      page.getByTestId("editor-context-menu-action-insert-row-below"),
     ).toHaveCount(0);
   });
 });

@@ -291,6 +291,8 @@ export function EditorContextMenu({
       canToggleBlockquote:
         currentEditor?.can().chain().focus().toggleBlockquote().run() ?? false,
       isInTable: currentEditor?.isActive("table") ?? false,
+      canAddRowBefore: currentEditor?.can().addRowBefore() ?? false,
+      canAddRowAfter: currentEditor?.can().addRowAfter() ?? false,
       canDeleteRow: currentEditor?.can().deleteRow() ?? false,
     }),
   }) ?? {
@@ -309,6 +311,8 @@ export function EditorContextMenu({
     canToggleOrderedList: false,
     canToggleBlockquote: false,
     isInTable: false,
+    canAddRowBefore: false,
+    canAddRowAfter: false,
     canDeleteRow: false,
   };
 
@@ -1121,6 +1125,30 @@ export function EditorContextMenu({
                     className="my-1 h-px bg-slate-100 dark:bg-slate-700"
                     aria-hidden="true"
                   />
+                  <button
+                    type="button"
+                    data-testid="editor-context-menu-action-insert-row-above"
+                    className="block w-full rounded-xl px-3 py-2 text-left text-sm text-slate-700 dark:text-slate-300 transition hover:bg-slate-50 dark:hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
+                    disabled={!selectionMenuState.canAddRowBefore}
+                    onClick={() => {
+                      editor?.chain().focus().addRowBefore().run();
+                      close();
+                    }}
+                  >
+                    Insert row above
+                  </button>
+                  <button
+                    type="button"
+                    data-testid="editor-context-menu-action-insert-row-below"
+                    className="block w-full rounded-xl px-3 py-2 text-left text-sm text-slate-700 dark:text-slate-300 transition hover:bg-slate-50 dark:hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
+                    disabled={!selectionMenuState.canAddRowAfter}
+                    onClick={() => {
+                      editor?.chain().focus().addRowAfter().run();
+                      close();
+                    }}
+                  >
+                    Insert row below
+                  </button>
                   <button
                     type="button"
                     data-testid="editor-context-menu-action-delete-row"
