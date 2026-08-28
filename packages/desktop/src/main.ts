@@ -1,12 +1,24 @@
 import {
   app,
   BrowserWindow,
+  dialog,
   type Event,
+  ipcMain,
+  Menu,
+  type OpenDialogOptions,
   session,
   shell,
   type WebContents,
 } from "electron";
+import { fileURLToPath } from "node:url";
+import { createApplicationMenuTemplate } from "./application-menu.js";
 import { shouldSuppressNativeDocumentShortcut } from "./document-shortcuts.js";
+import { DROPPED_MARKDOWN_IPC_CHANNEL } from "./dropped-markdown.js";
+import {
+  NativeOpenPathQueue,
+  postOpenDocumentIntent,
+  resolveMarkdownOpenIntent,
+} from "./native-open.js";
 import { shouldAllowRendererPermission } from "./permission-policy.js";
 import {
   isAllowedExternalUrl,
@@ -32,12 +44,80 @@ const CONTENT_SECURITY_POLICY = [
 let mainWindow: BrowserWindow | null = null;
 let validatedOrigin: string | null = null;
 let loadingErrorDocument = false;
+const nativeOpenPaths = new NativeOpenPathQueue();
+let nativeOpenDelivery = Promise.resolve();
 
 function focusMainWindow(): void {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   if (mainWindow.isMinimized()) mainWindow.restore();
   mainWindow.show();
   mainWindow.focus();
+}
+
+function showNativeOpenError(error: unknown): void {
+  const message = error instanceof Error ? error.message : String(error);
+  dialog.showErrorBox("Could not open Markdown file", message);
+}
+
+async function deliverNativeOpenPath(filePath: string): Promise<void> {
+  try {
+    if (!validatedOrigin) {
+      throw new Error("The managed Roughdraft server is unavailable.");
+    }
+
+    const intent = resolveMarkdownOpenIntent(filePath);
+    await postOpenDocumentIntent(fetch, validatedOrigin, intent);
+    focusMainWindow();
+  } catch (error) {
+    showNativeOpenError(error);
+  }
+}
+
+function scheduleNativeOpenPath(filePath: string): void {
+  nativeOpenDelivery = nativeOpenDelivery.then(() =>
+    deliverNativeOpenPath(filePath),
+  );
+}
+
+async function ensureNativeOpenDestination(): Promise<void> {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    await createMainWindow();
+  } else if (!validatedOrigin) {
+    await loadManagedServer();
+  }
+
+  if (!validatedOrigin) {
+    showNativeOpenError(
+      new Error("Start the managed Roughdraft server, then try again."),
+    );
+  }
+}
+
+async function chooseMarkdownFile(): Promise<void> {
+  const options = {
+    title: "Open Markdown file",
+    properties: ["openFile"],
+    filters: [{ name: "Markdown", extensions: ["md"] }],
+  } satisfies OpenDialogOptions;
+  const result =
+    mainWindow && !mainWindow.isDestroyed()
+      ? await dialog.showOpenDialog(mainWindow, options)
+      : await dialog.showOpenDialog(options);
+  const filePath = result.filePaths[0];
+  if (result.canceled || !filePath) return;
+
+  nativeOpenPaths.request(filePath);
+  await ensureNativeOpenDestination();
+}
+
+function installApplicationMenu(): void {
+  Menu.setApplicationMenu(
+    Menu.buildFromTemplate(
+      createApplicationMenuTemplate(() => {
+        void chooseMarkdownFile();
+      }),
+    ),
+  );
 }
 
 function errorDocument(message: string): string {
@@ -67,6 +147,7 @@ async function createMainWindow(): Promise<void> {
       allowRunningInsecureContent: false,
       contextIsolation: true,
       nodeIntegration: false,
+      preload: fileURLToPath(new URL("./preload.js", import.meta.url)),
       sandbox: true,
       webSecurity: true,
     },
@@ -74,6 +155,7 @@ async function createMainWindow(): Promise<void> {
 
   mainWindow.once("ready-to-show", () => focusMainWindow());
   mainWindow.on("closed", () => {
+    nativeOpenPaths.disconnect();
     mainWindow = null;
   });
 
@@ -115,8 +197,10 @@ async function loadManagedServer(): Promise<void> {
     );
     validatedOrigin = target.url;
     await mainWindow.loadURL(target.url);
+    nativeOpenPaths.connect(scheduleNativeOpenPath);
   } catch (error) {
     validatedOrigin = null;
+    nativeOpenPaths.disconnect();
     const message = error instanceof Error ? error.message : String(error);
     loadingErrorDocument = true;
     try {
@@ -126,6 +210,15 @@ async function loadManagedServer(): Promise<void> {
     }
   }
 }
+
+app.on("open-file", (event, filePath) => {
+  event.preventDefault();
+  nativeOpenPaths.request(filePath);
+
+  if (app.isReady()) {
+    void ensureNativeOpenDestination();
+  }
+});
 
 const hasSingleInstanceLock = app.requestSingleInstanceLock();
 if (!hasSingleInstanceLock) {
@@ -140,11 +233,26 @@ if (!hasSingleInstanceLock) {
   });
 
   app.whenReady().then(async () => {
+    installApplicationMenu();
+
     const isMainWindowWebContents = (webContents: WebContents | null) =>
       webContents !== null &&
       mainWindow !== null &&
       !mainWindow.isDestroyed() &&
       webContents === mainWindow.webContents;
+
+    ipcMain.on(DROPPED_MARKDOWN_IPC_CHANNEL, (event, filePath: unknown) => {
+      if (
+        !isMainWindowWebContents(event.sender) ||
+        event.senderFrame !== event.sender.mainFrame ||
+        typeof filePath !== "string" ||
+        !filePath.trim()
+      ) {
+        return;
+      }
+
+      nativeOpenPaths.request(filePath);
+    });
 
     session.defaultSession.setPermissionCheckHandler(
       (webContents, permission, requestingOrigin, details) =>

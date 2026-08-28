@@ -6,9 +6,9 @@ Roughdraft's browser launch does not have its own macOS application identity, so
 
 ## Decision
 
-The personal fork packages the existing loopback-served React app in a thin Electron shell. Electron owns one native window, app activation, managed-server target validation, renderer isolation, navigation restrictions, and external-link handoff. It does not own document state and exposes no privileged renderer bridge.
+The personal fork packages the existing loopback-served React app in a thin Electron shell. Electron owns one native window, app activation, managed-server target validation, renderer isolation, navigation restrictions, external-link handoff, and explicit local-file open entry points. It does not own document state or expose a privileged API to page code. A sandboxed preload handles user-initiated file drops and forwards only a resolved `.md` path to the trusted main process.
 
-The CLI sends a typed document-open intent to the existing Express server. The server delivers it to the current renderer when connected or retains only the newest undelivered intent until a renderer connects. This release opens that intent in the current window.
+The CLI, native File menu, macOS document-open events, and window file drops send the same typed document-open intent to the existing Express server. The server delivers it to the current renderer when connected or retains only the newest undelivered intent until a renderer connects. The renderer opens that intent in the current window.
 
 ## Consequences
 

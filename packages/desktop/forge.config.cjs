@@ -6,6 +6,16 @@ module.exports = {
     executableName: "Roughdraft",
     appBundleId: "is.pjh.roughdraft",
     icon: path.resolve(__dirname, "assets/icon.icns"),
+    extendInfo: {
+      CFBundleDocumentTypes: [
+        {
+          CFBundleTypeExtensions: ["md"],
+          CFBundleTypeName: "Markdown document",
+          CFBundleTypeRole: "Editor",
+          LSHandlerRank: "Alternate",
+        },
+      ],
+    },
     asar: true,
     prune: false,
     ignore: [
