@@ -19,6 +19,15 @@
         ],
         "createdAt": "2026-08-25T14:46:59.976Z",
         "reason": "false positive: hover state swaps text to rose-600 at the same time as the rose background; gray never renders on the colored background"
+      },
+      {
+        "rule": "gray-on-color",
+        "value": "*",
+        "files": [
+          "packages/app/src/App.tsx"
+        ],
+        "createdAt": "2026-08-30T14:34:00.839Z",
+        "reason": "model: pre-existing homepage highlight uses text-slate-950 on pale #fff5c7 - near-black on light background, contrast is fine; rule misfires"
       }
     ]
   }
