@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import type { CriticComment } from "../src/critic-markup";
+import {
+  criticMarkdownToEditorState,
+  type CriticComment,
+} from "../src/critic-markup";
 import {
   buildCommentThreadRailItems,
   getCommentAnchorMeasurements,
@@ -208,6 +211,47 @@ describe("document comment layout helpers", () => {
         anchorBottom: 214,
       },
     ]);
+  });
+
+  it("includes endmatter-only replies in the rail thread for their root", () => {
+    const input = [
+      "Please revisit {==anchored==}{>>Original.<<}{#c1}.",
+      "",
+      "---",
+      "comments:",
+      "  c1:",
+      "    by: user",
+      '    at: "2026-05-24T10:00:00.000Z"',
+      "  c2:",
+      "    body: Reply from endmatter.",
+      "    by: AI",
+      '    at: "2026-05-24T10:01:00.000Z"',
+      "    re: c1",
+      "",
+    ].join("\n");
+
+    const { comments } = criticMarkdownToEditorState(input);
+
+    expect(comments.get("c2")).toMatchObject({
+      id: "c2",
+      content: "Reply from endmatter.",
+      parentCommentId: "c1",
+    });
+
+    const items = buildCommentThreadRailItems(
+      [
+        {
+          key: "c1",
+          commentIds: ["c1"],
+          anchorTop: 100,
+          anchorBottom: 114,
+        },
+      ],
+      comments,
+    );
+
+    expect(items).toHaveLength(1);
+    expect(items[0]?.commentIds).toEqual(["c1", "c2"]);
   });
 
   it("aligns the selected secondary root thread to the shared anchor", () => {

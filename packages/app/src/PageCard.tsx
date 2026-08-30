@@ -20,7 +20,11 @@ import {
   type CriticChangeRailItem,
   DocumentReviewRail,
 } from "./DocumentReviewRail";
-import { getPreferredCommentId, parseCommentIds } from "./document-comments";
+import {
+  collectAnchoredThreadComments,
+  getPreferredCommentId,
+  parseCommentIds,
+} from "./document-comments";
 import type {
   DocumentEditorViewController,
   DocumentEditorViewState,
@@ -300,6 +304,30 @@ function getAnchorCommentIds(
   const anchorElement = findCommentAnchorElement(editor, commentId);
   if (!anchorElement) return [];
   return parseCommentIds(anchorElement.dataset.commentIds);
+}
+
+// Replies stored in YAML endmatter carry no inline marker of their own, so
+// they have no anchor to hang a nested reply off. Walk up to the nearest
+// ancestor that is anchored -- in practice the thread root -- so replying to a
+// reply works instead of failing silently.
+function resolveAnchoredCommentId(
+  editor: Editor | null,
+  commentId: string,
+  comments: ReadonlyMap<string, CriticComment>,
+): string {
+  const seen = new Set<string>();
+  let current = commentId;
+
+  while (!seen.has(current)) {
+    seen.add(current);
+    if (getAnchorCommentIds(editor, current).length > 0) return current;
+
+    const parentCommentId = comments.get(current)?.parentCommentId;
+    if (!parentCommentId || seen.has(parentCommentId)) return current;
+    current = parentCommentId;
+  }
+
+  return current;
 }
 
 function addCommentIdsToAnchor(
@@ -1725,7 +1753,7 @@ const RichTextEditorSurface = memo(function RichTextEditorSurface({
       suppressNextMarkdownUpdateRef.current = true;
       const nextAnchorCommentIds = addCommentIdsToAnchor(
         currentEditor,
-        commentId,
+        resolveAnchoredCommentId(currentEditor, commentId, commentsRef.current),
         [comment.id],
       );
       if (suppressNextMarkdownUpdateRef.current) {
@@ -1948,9 +1976,10 @@ const RichTextEditorSurface = memo(function RichTextEditorSurface({
     hasReviewRail,
     ".document-rich-text-layout .tiptap > :not(.tableWrapper)",
   );
-  const activeComments = activeCommentIds
-    .map((commentId) => comments.get(commentId))
-    .filter((comment): comment is CriticComment => Boolean(comment));
+  const activeComments = collectAnchoredThreadComments(
+    activeCommentIds,
+    comments,
+  );
   const contentCardClass =
     layout === "embedded-demo"
       ? "rounded-[0.75rem] border border-[#E9E9E8] dark:border-slate-800 bg-white dark:bg-card shadow-[0_18px_44px_rgba(57,47,38,0.08)] dark:shadow-[0_18px_44px_rgba(0,0,0,0.35)]"
