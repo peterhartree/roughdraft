@@ -1,8 +1,18 @@
-import { ipcRenderer, webUtils } from "electron";
+import { contextBridge, ipcRenderer, webUtils } from "electron";
 import {
   DROPPED_MARKDOWN_IPC_CHANNEL,
   resolveDroppedMarkdownPath,
 } from "./dropped-markdown.js";
+import { LOCATE_MARKDOWN_IPC_CHANNEL } from "./locate-markdown.js";
+
+contextBridge.exposeInMainWorld("roughdraftDesktop", {
+  locateMarkdownFile: async (): Promise<string | null> => {
+    const filePath: unknown = await ipcRenderer.invoke(
+      LOCATE_MARKDOWN_IPC_CHANNEL,
+    );
+    return typeof filePath === "string" && filePath.trim() ? filePath : null;
+  },
+});
 
 window.addEventListener(
   "DOMContentLoaded",

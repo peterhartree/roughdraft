@@ -154,6 +154,7 @@ suggestions:
 | Code mode | Review rail absent | Open fenced fixture with `?editor=code` | `page-card-code`, `markdown-code-editor` | Confirms fenced CriticMarkup alone does not create review rail. |
 | Error/home fallback | Non-Markdown path | Open URL with `?path=/tmp/file.txt` | homepage error message | Copy: `Roughdraft now opens one .md file at a time.` |
 | Error/home fallback | Missing/unloadable path | Open URL with invalid markdown path through local backend | homepage error message | Captures load-error homepage variant. |
+| Error/home fallback | Missing-file panel | With two open files, remove one on disk and click it in the sidebar | `missing-file-panel`, `missing-file-path`, `missing-file-close` | Full-panel "File not found" state over the document area; `missing-file-locate` appears only in the desktop app. Dismiss with the close button or ⌘W. |
 ## Playwright Capture Skeleton
 ```ts
 import { chromium, devices } from "playwright";

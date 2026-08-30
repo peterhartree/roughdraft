@@ -66,6 +66,7 @@ import {
   getRestorableDocumentViewState,
 } from "./document-view-state";
 import { cn } from "./lib/utils";
+import { MissingFilePanel } from "./MissingFilePanel";
 import { OpenFileSidebar } from "./OpenFileSidebar";
 import { OpenFileSwitcher } from "./OpenFileSwitcher";
 import {
@@ -1552,6 +1553,9 @@ export function App() {
   >(null);
   const [fileSwitchPending, setFileSwitchPending] = useState(false);
   const [fileSwitchError, setFileSwitchError] = useState<string | null>(null);
+  const [missingOpenFilePath, setMissingOpenFilePath] = useState<string | null>(
+    null,
+  );
   const [documentViewRestoreRequest, setDocumentViewRestoreRequest] =
     useState<DocumentViewRestoreRequest | null>(null);
   const [documentViewStates, setDocumentViewStates] = useState(
@@ -2174,6 +2178,7 @@ export function App() {
       action: "switch" | "close" = "switch",
     ): Promise<"switched" | "blocked" | "unavailable"> => {
       if (absolutePath === activeDocumentAbsolutePathRef.current) {
+        setMissingOpenFilePath(null);
         setOpenFiles((current) => markOpenFileRead(current, absolutePath));
         const currentViewState =
           captureCurrentDocumentView() ?? getViewStateForPath(absolutePath);
@@ -2235,6 +2240,7 @@ export function App() {
           absolutePath,
           getViewStateForPath(absolutePath),
         );
+        setMissingOpenFilePath(null);
         return "switched";
       } catch (error) {
         if (previousProjectPath) {
@@ -2254,13 +2260,18 @@ export function App() {
         console.error("Failed to switch markdown files:", error);
         if (error instanceof MarkdownFileNotFoundError) {
           forgetRecentDocument(absolutePath);
+          // A user-initiated switch surfaces the missing file in the
+          // document panel; the close flow prunes such candidates silently.
+          if (action === "switch") {
+            setFileSwitchError(null);
+            setMissingOpenFilePath(absolutePath);
+          }
+          return "unavailable";
         }
         setFileSwitchError(
           `Could not open ${getPathLeaf(absolutePath) ?? "that file"}. The current file is still open.`,
         );
-        return error instanceof MarkdownFileNotFoundError
-          ? "unavailable"
-          : "blocked";
+        return "blocked";
       } finally {
         fileSwitchPendingRef.current = false;
         setFileSwitchPending(false);
@@ -2317,6 +2328,30 @@ export function App() {
     documentViewStatesRef.current = nextViewStates;
     setDocumentViewStates(nextViewStates);
   }, []);
+
+  const closeMissingOpenFile = useCallback(() => {
+    if (!missingOpenFilePath) return;
+    pruneOpenFileSessionEntries([missingOpenFilePath]);
+    setMissingOpenFilePath(null);
+  }, [missingOpenFilePath, pruneOpenFileSessionEntries]);
+
+  const locateMissingOpenFile = useCallback(async () => {
+    const locate = window.roughdraftDesktop?.locateMarkdownFile;
+    if (!missingOpenFilePath || !locate) return;
+
+    let chosenPath: string | null = null;
+    try {
+      chosenPath = await locate();
+    } catch (error) {
+      console.error("Failed to locate the Markdown file:", error);
+      return;
+    }
+    if (!chosenPath) return;
+
+    pruneOpenFileSessionEntries([missingOpenFilePath]);
+    setMissingOpenFilePath(null);
+    setPendingOpenRequestPath(chosenPath);
+  }, [missingOpenFilePath, pruneOpenFileSessionEntries]);
 
   const closeActiveOpenFile = useCallback(async (): Promise<boolean> => {
     const closingPath = activeDocumentAbsolutePathRef.current;
@@ -2475,7 +2510,11 @@ export function App() {
       if (isCloseOpenFileShortcut(event)) {
         event.preventDefault();
         event.stopPropagation();
-        void closeActiveOpenFile();
+        if (missingOpenFilePath) {
+          closeMissingOpenFile();
+        } else {
+          void closeActiveOpenFile();
+        }
         return;
       }
 
@@ -2503,7 +2542,14 @@ export function App() {
       window.removeEventListener("keydown", handleFileNavigationShortcut, {
         capture: true,
       });
-  }, [backend?.info.kind, closeActiveOpenFile, openFiles, switchToOpenFile]);
+  }, [
+    backend?.info.kind,
+    closeActiveOpenFile,
+    closeMissingOpenFile,
+    missingOpenFilePath,
+    openFiles,
+    switchToOpenFile,
+  ]);
 
   useEffect(() => {
     if (!backend?.watchMarkdownFile || !activeDocumentPath) return;
@@ -2660,7 +2706,7 @@ export function App() {
       {showOpenFileSidebar ? (
         <OpenFileSidebar
           files={openFiles}
-          activePath={activeDocumentAbsolutePath}
+          activePath={missingOpenFilePath ?? activeDocumentAbsolutePath}
           disabled={
             fileSwitchPending ||
             diskChangeStateBlocksFileSwitch(documentDiskChangeState)
@@ -2781,6 +2827,15 @@ export function App() {
             setOpenFileSidebarVisible((visible) => !visible)
           }
         />
+        {missingOpenFilePath ? (
+          <MissingFilePanel
+            path={missingOpenFilePath}
+            disabled={fileSwitchPending}
+            canLocate={Boolean(window.roughdraftDesktop?.locateMarkdownFile)}
+            onLocate={() => void locateMissingOpenFile()}
+            onClose={closeMissingOpenFile}
+          />
+        ) : null}
       </div>
     </main>
   );

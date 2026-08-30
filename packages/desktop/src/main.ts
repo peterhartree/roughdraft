@@ -14,6 +14,7 @@ import { fileURLToPath } from "node:url";
 import { createApplicationMenuTemplate } from "./application-menu.js";
 import { shouldSuppressNativeDocumentShortcut } from "./document-shortcuts.js";
 import { DROPPED_MARKDOWN_IPC_CHANNEL } from "./dropped-markdown.js";
+import { LOCATE_MARKDOWN_IPC_CHANNEL } from "./locate-markdown.js";
 import {
   NativeOpenPathQueue,
   postOpenDocumentIntent,
@@ -252,6 +253,25 @@ if (!hasSingleInstanceLock) {
       }
 
       nativeOpenPaths.request(filePath);
+    });
+
+    ipcMain.handle(LOCATE_MARKDOWN_IPC_CHANNEL, async (event) => {
+      if (
+        !isMainWindowWebContents(event.sender) ||
+        event.senderFrame !== event.sender.mainFrame ||
+        !mainWindow ||
+        mainWindow.isDestroyed()
+      ) {
+        return null;
+      }
+
+      const result = await dialog.showOpenDialog(mainWindow, {
+        title: "Locate Markdown file",
+        properties: ["openFile"],
+        filters: [{ name: "Markdown", extensions: ["md"] }],
+      });
+      const filePath = result.filePaths[0];
+      return result.canceled || !filePath ? null : filePath;
     });
 
     session.defaultSession.setPermissionCheckHandler(

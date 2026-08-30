@@ -952,43 +952,101 @@ test.describe("open-file sidebar", () => {
     );
   });
 
-  test("shows a recoverable error when an incoming file disappears", async ({
-    page,
-  }) => {
+  async function showMissingFilePanel(page: Page) {
     const firstPath = writeProjectFile(
       firstProjectDir,
       "editing.md",
-      "# Editing\n\nOriginal stays open.\n",
+      "# Editing\n\nGone from disk.\n",
     );
     const secondPath = writeProjectFile(
       secondProjectDir,
       "target.md",
-      "# Target\n\nAvailable after retry.\n",
+      "# Target\n\nStill on disk.\n",
     );
 
     await openMarkdownFile(page, firstPath, "code");
     await postOpenRequest(page, secondPath);
-    await expect(codeEditor(page)).toContainText("Available after retry.");
+    await expect(codeEditor(page)).toContainText("Still on disk.");
+    const unavailablePath = `${firstPath}.unavailable`;
+    fs.renameSync(firstPath, unavailablePath);
     await (await openFileItem(page, firstPath)).click();
-    await expect(codeEditor(page)).toContainText("Original stays open.");
-    const unavailablePath = `${secondPath}.unavailable`;
-    fs.renameSync(secondPath, unavailablePath);
-    await (await openFileItem(page, secondPath)).click();
 
-    await expect(codeEditor(page)).toContainText("Original stays open.");
-    await expect(page.getByTestId("open-file-switch-error")).toContainText(
-      "Could not open target.md",
+    const panel = page.getByTestId("missing-file-panel");
+    await expect(panel).toBeVisible();
+    await expect(panel).toContainText("File not found");
+    await expect(panel).toContainText("editing.md");
+    await expect(panel.getByTestId("missing-file-path")).toHaveText(firstPath);
+    await expect(page.getByTestId("open-file-switch-error")).not.toBeVisible();
+
+    await expect(page.getByTestId("open-file-sidebar-item")).toHaveCount(2);
+    await expect(await openFileItem(page, firstPath)).toHaveAttribute(
+      "aria-current",
+      "page",
     );
 
-    await appendInCodeEditor(page, "\nSaved after failed switch.");
-    await expect
-      .poll(() => fs.readFileSync(firstPath, "utf8"))
-      .toContain("Saved after failed switch.");
+    const closeButton = page.getByTestId("missing-file-close");
+    await expect(closeButton).toBeVisible();
+    await expect(closeButton).toHaveAccessibleName("Close file");
+    await expect(page.getByTestId("missing-file-locate")).toHaveCount(0);
 
-    fs.renameSync(unavailablePath, secondPath);
-    await (await openFileItem(page, secondPath)).click();
-    await expect(codeEditor(page)).toContainText("Available after retry.");
-    await expect(page.getByTestId("open-file-switch-error")).toHaveCount(0);
+    return { firstPath, secondPath, unavailablePath, panel, closeButton };
+  }
+
+  async function expectMissingFileDismissed(
+    page: Page,
+    firstPath: string,
+    secondPath: string,
+  ) {
+    await expect(page.getByTestId("missing-file-panel")).toHaveCount(0);
+    const items = page.getByTestId("open-file-sidebar-item");
+    await expect(items).toHaveCount(1);
+    await expect(items.first()).toHaveAttribute("data-file-path", secondPath);
+    await expect(codeEditor(page)).toContainText("Still on disk.");
+    await appendInCodeEditor(page, "\nStill editable after dismissal.");
+    await expect
+      .poll(() => fs.readFileSync(secondPath, "utf8"))
+      .toContain("Still editable after dismissal.");
+    await expect
+      .poll(async () => {
+        const paths = await items.evaluateAll((elements) =>
+          elements.map((element) => (element as HTMLElement).dataset.filePath),
+        );
+        return paths;
+      })
+      .not.toContain(firstPath);
+  }
+
+  test("shows a missing-file panel when an open file disappears", async ({
+    page,
+  }) => {
+    const { firstPath, secondPath, closeButton } =
+      await showMissingFilePanel(page);
+
+    await closeButton.click();
+
+    await expectMissingFileDismissed(page, firstPath, secondPath);
+  });
+
+  test("dismisses the missing-file panel with Command-W", async ({ page }) => {
+    const { firstPath, secondPath } = await showMissingFilePanel(page);
+
+    await page.keyboard.press("Meta+KeyW");
+
+    await expectMissingFileDismissed(page, firstPath, secondPath);
+  });
+
+  test("recovers when a missing file is restored on disk", async ({ page }) => {
+    const { firstPath, unavailablePath } = await showMissingFilePanel(page);
+
+    fs.renameSync(unavailablePath, firstPath);
+    await (await openFileItem(page, firstPath)).click();
+
+    await expect(page.getByTestId("missing-file-panel")).toHaveCount(0);
+    await expect(codeEditor(page)).toContainText("Gone from disk.");
+    await expect(await openFileItem(page, firstPath)).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
   });
 
   test("waits for an asset insertion before switching projects", async ({
