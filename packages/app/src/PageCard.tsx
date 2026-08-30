@@ -9,6 +9,7 @@ import { CommentEditorList } from "./CommentEditorList";
 import {
   type CriticChangeAttrs,
   type CriticComment,
+  type CriticReaction,
   createCriticChange,
   createCriticComment,
   criticMarkdownHasReviewRail,
@@ -1775,6 +1776,13 @@ const RichTextEditorSurface = memo(function RichTextEditorSurface({
     [measureLayout],
   );
 
+  const reactToComment = useCallback(
+    (commentId: string, reaction: CriticReaction | null) => {
+      updateComment(commentId, (current) => ({ ...current, reaction }));
+    },
+    [updateComment],
+  );
+
   const removeSuggestionComments = useCallback(
     (changeId: string, currentEditor: Editor) => {
       const directCommentIds = [...commentsRef.current.values()]
@@ -2036,6 +2044,7 @@ const RichTextEditorSurface = memo(function RichTextEditorSurface({
                 }));
               }}
               onReplyComment={replyToComment}
+              onReactComment={reactToComment}
               onSelectComment={selectComment}
               onHoverComment={setHoveredCommentId}
               pendingFocusCommentId={pendingFocusCommentId}
@@ -2106,6 +2115,7 @@ const RichTextEditorSurface = memo(function RichTextEditorSurface({
             }));
           }}
           onReplyComment={replyToComment}
+          onReactComment={reactToComment}
           onSelectComment={selectComment}
           onFocusComment={focusComment}
           onHoverComment={setHoveredCommentId}
