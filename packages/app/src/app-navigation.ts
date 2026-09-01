@@ -99,9 +99,44 @@ export function getPathLeaf(path?: string | null) {
   return segments.at(-1) || value;
 }
 
+interface DisplayPathAbbreviation {
+  prefix: string;
+  replacement: string;
+}
+
+const DISPLAY_PATH_ABBREVIATIONS: DisplayPathAbbreviation[] = [
+  { prefix: "~/Documents/Projects", replacement: "" },
+  { prefix: "~/.agents/skills/chief-of-staff", replacement: "/chief-of-staff" },
+];
+
+function collapseHomePath(path: string) {
+  return path.replace(/^\/Users\/[^/]+(?=\/|$)/, "~");
+}
+
+/**
+ * Shortens well-known prefixes for display only. The full path stays in the
+ * title, data attributes, copy-path and every file operation.
+ */
+export function abbreviateDisplayPath(path: string) {
+  if (path.includes("\\")) return path;
+
+  const collapsedPath = collapseHomePath(path);
+
+  for (const { prefix, replacement } of DISPLAY_PATH_ABBREVIATIONS) {
+    if (collapsedPath === prefix) return replacement || "/";
+    if (collapsedPath.startsWith(`${prefix}/`)) {
+      return `${replacement}${collapsedPath.slice(prefix.length)}`;
+    }
+  }
+
+  return collapsedPath;
+}
+
 export function formatOpenFileParentPath(path: string) {
   const projectPath = getRequestedPathStateForPath(path).projectPath;
-  return formatWorkspacePathForDisplay(projectPath) ?? projectPath ?? path;
+  const displayPath =
+    formatWorkspacePathForDisplay(projectPath) ?? projectPath ?? path;
+  return abbreviateDisplayPath(displayPath);
 }
 
 export function joinPath(basePath: string, relativePath: string) {

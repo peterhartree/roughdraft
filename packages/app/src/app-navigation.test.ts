@@ -2,7 +2,9 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   PREVIEW_PATH,
   ROUGHDRAFT_FLAVORED_MARKDOWN_PATH,
+  abbreviateDisplayPath,
   buildLocationForLinkedMarkdownDocument,
+  formatOpenFileParentPath,
   getRequestedPathState,
   syncRequestedPathInUrl,
 } from "./app-navigation";
@@ -91,5 +93,51 @@ describe("app navigation", () => {
         href: "diagram.png",
       }),
     ).toBeNull();
+  });
+});
+
+describe("display path abbreviation", () => {
+  it("abbreviates a known prefix in tilde form", () => {
+    expect(abbreviateDisplayPath("~/Documents/Projects/work/p38")).toBe(
+      "/work/p38",
+    );
+  });
+
+  it("abbreviates the expanded home form of a known prefix", () => {
+    expect(abbreviateDisplayPath("/Users/ph/Documents/Projects/work/p38")).toBe(
+      "/work/p38",
+    );
+  });
+
+  it("shows an abbreviated folder itself as a root path", () => {
+    expect(abbreviateDisplayPath("~/Documents/Projects")).toBe("/");
+  });
+
+  it("applies the replacement of a later abbreviation entry", () => {
+    expect(
+      abbreviateDisplayPath("~/.agents/skills/chief-of-staff/references"),
+    ).toBe("/chief-of-staff/references");
+  });
+
+  it("leaves paths without a known prefix unchanged", () => {
+    expect(abbreviateDisplayPath("~/Documents/www/Tools")).toBe(
+      "~/Documents/www/Tools",
+    );
+  });
+
+  it("does not match a prefix that is not on a segment boundary", () => {
+    expect(abbreviateDisplayPath("~/Documents/ProjectsArchive/work")).toBe(
+      "~/Documents/ProjectsArchive/work",
+    );
+  });
+
+  it("abbreviates the parent path shown for an open file", () => {
+    expect(
+      formatOpenFileParentPath("/Users/ph/Documents/Projects/work/p38/plan.md"),
+    ).toBe("/work/p38");
+  });
+
+  it("keeps unabbreviated parent paths in home-collapsed form", () => {
+    expect(formatOpenFileParentPath("/Users/ph/notes/plan.md")).toBe("~/notes");
   });
 });
