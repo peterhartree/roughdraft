@@ -692,7 +692,7 @@ export function DocumentWorkspace({
         <div
           className={cn(
             "fixed left-[calc(var(--roughdraft-sidebar-width,0px)+0.75rem)] z-[60]",
-            conflictNotice ? "bottom-3" : "top-3",
+            conflictNotice ? "bottom-3" : "top-1.5",
           )}
           data-testid="document-save-status-corner"
         >
@@ -768,7 +768,7 @@ export function DocumentWorkspace({
       <div
         className={cn(
           "mx-auto min-h-full w-full",
-          conflictNotice ? "pt-40 sm:pt-28" : "pt-10",
+          conflictNotice ? "pt-40 sm:pt-28" : "pt-0",
         )}
       >
         {documentPage ? (
