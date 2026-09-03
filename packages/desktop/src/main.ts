@@ -28,6 +28,11 @@ import {
   resolveManagedServerStateFile,
   verifyManagedServerTarget,
 } from "./server-target.js";
+import {
+  appendDesktopSlog,
+  nextServerLoadRetryDelay,
+  startManagedServer,
+} from "./startup.js";
 
 const CONTENT_SECURITY_POLICY = [
   "default-src 'self'",
@@ -188,14 +193,29 @@ async function createMainWindow(): Promise<void> {
   await loadManagedServer();
 }
 
+let serverLoadFailures = 0;
+let serverLoadRetryTimer: NodeJS.Timeout | null = null;
+
+function cancelServerLoadRetry(): void {
+  if (serverLoadRetryTimer === null) return;
+  clearTimeout(serverLoadRetryTimer);
+  serverLoadRetryTimer = null;
+}
+
 async function loadManagedServer(): Promise<void> {
+  cancelServerLoadRetry();
   if (!mainWindow || mainWindow.isDestroyed()) return;
 
   try {
+    await startManagedServer();
     const stateFile = resolveManagedServerStateFile();
     const target = await verifyManagedServerTarget(
       readManagedServerTarget(stateFile),
     );
+    appendDesktopSlog("desktop.server-target.verified", {
+      port: target.port,
+    });
+    serverLoadFailures = 0;
     validatedOrigin = target.url;
     await mainWindow.loadURL(target.url);
     nativeOpenPaths.connect(scheduleNativeOpenPath);
@@ -203,6 +223,19 @@ async function loadManagedServer(): Promise<void> {
     validatedOrigin = null;
     nativeOpenPaths.disconnect();
     const message = error instanceof Error ? error.message : String(error);
+    serverLoadFailures += 1;
+    const retryDelayMs = nextServerLoadRetryDelay(serverLoadFailures);
+    appendDesktopSlog("desktop.server-target.failed", {
+      message,
+      failures: serverLoadFailures,
+      retryDelayMs,
+    });
+    if (retryDelayMs !== null) {
+      serverLoadRetryTimer = setTimeout(() => {
+        serverLoadRetryTimer = null;
+        void loadManagedServer();
+      }, retryDelayMs);
+    }
     loadingErrorDocument = true;
     try {
       await mainWindow.loadURL(errorDocument(message));
@@ -234,6 +267,21 @@ if (!hasSingleInstanceLock) {
   });
 
   app.whenReady().then(async () => {
+    if (process.platform === "darwin" && app.isPackaged) {
+      try {
+        app.setLoginItemSettings({ openAtLogin: true });
+        appendDesktopSlog("desktop.login-item.configured", {
+          openAtLogin: true,
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        appendDesktopSlog("desktop.login-item.failed", { message });
+        console.error(
+          `Could not configure Roughdraft to open at login: ${message}`,
+        );
+      }
+    }
+
     installApplicationMenu();
 
     const isMainWindowWebContents = (webContents: WebContents | null) =>
