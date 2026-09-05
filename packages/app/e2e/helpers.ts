@@ -128,3 +128,26 @@ export function logE2eEvent(event: string, data: Record<string, unknown> = {}) {
     })}\n`,
   );
 }
+
+/**
+ * Make the page report itself as a background window. Playwright pages
+ * report focus, which would make agent-driven open requests behave as if the
+ * user were reading in the window (registered but not activated).
+ */
+export async function simulateBackgroundWindow(page: Page) {
+  await page.addInitScript(() => {
+    Object.defineProperty(document, "hasFocus", {
+      configurable: true,
+      value: () => false,
+    });
+  });
+}
+
+export async function simulateFocusedWindow(page: Page) {
+  await page.evaluate(() => {
+    Object.defineProperty(document, "hasFocus", {
+      configurable: true,
+      value: () => true,
+    });
+  });
+}

@@ -10,6 +10,7 @@ import {
   openMarkdownFile,
   readProjectFile,
   removeMarkdownProject,
+  simulateBackgroundWindow,
   writeProjectFile,
 } from "./helpers";
 
@@ -43,7 +44,8 @@ async function openFileItem(page: Page, filePath: string) {
 test.describe("missing file recovery", () => {
   let projectDir: string;
 
-  test.beforeEach(() => {
+  test.beforeEach(async ({ page }) => {
+    await simulateBackgroundWindow(page);
     projectDir = createMarkdownProject("missing-file");
   });
 

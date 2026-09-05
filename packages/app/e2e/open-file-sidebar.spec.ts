@@ -10,6 +10,8 @@ import {
   removeMarkdownProject,
   richTextEditor,
   selectRichText,
+  simulateBackgroundWindow,
+  simulateFocusedWindow,
   writeProjectFile,
 } from "./helpers";
 
@@ -54,7 +56,8 @@ test.describe("open-file sidebar", () => {
   let firstProjectDir: string;
   let secondProjectDir: string;
 
-  test.beforeEach(() => {
+  test.beforeEach(async ({ page }) => {
+    await simulateBackgroundWindow(page);
     firstProjectDir = createMarkdownProject("sidebar-first");
     secondProjectDir = createMarkdownProject("sidebar-second");
   });
@@ -253,6 +256,47 @@ test.describe("open-file sidebar", () => {
     await expect(page).toHaveURL(
       (url) => url.searchParams.get("path") === secondPath,
     );
+  });
+
+  test("keeps the current document when an open request arrives while the window has focus @smoke", async ({
+    page,
+  }) => {
+    const firstPath = writeProjectFile(
+      firstProjectDir,
+      "reading.md",
+      "# Reading\n\nStill being read.\n",
+    );
+    const secondPath = writeProjectFile(
+      secondProjectDir,
+      "incoming.md",
+      "# Incoming\n\nOpened by an agent.\n",
+    );
+
+    await openMarkdownFile(page, firstPath, "code");
+    await expect(codeEditor(page)).toContainText("Still being read.");
+    await simulateFocusedWindow(page);
+
+    const response = await postOpenRequest(page, secondPath);
+    expect(response.ok()).toBe(true);
+
+    const items = page.getByTestId("open-file-sidebar-item");
+    await expect(items).toHaveCount(2);
+    await expect(items.nth(0)).toContainText("incoming.md");
+    await expect(items.nth(0)).toHaveAttribute("data-unread", "true");
+    await expect(items.nth(0)).not.toHaveAttribute("aria-current", "page");
+    await expect(codeEditor(page)).toContainText("Still being read.");
+    await expect(page).toHaveURL(
+      (url) => url.searchParams.get("path") === firstPath,
+    );
+
+    // Choosing the file from the list still works as usual.
+    await items.nth(0).click();
+    await expect(codeEditor(page)).toContainText("Opened by an agent.");
+
+    logE2eEvent("open-file-sidebar.focused-window-keeps-document", {
+      activePath: firstPath,
+      registeredUnread: secondPath,
+    });
   });
 
   test("activates the last of two rapid open requests", async ({ page }) => {

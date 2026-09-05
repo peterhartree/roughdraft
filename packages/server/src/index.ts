@@ -74,6 +74,7 @@ interface CreateAppResult {
 interface OpenRequestPayload {
   path?: string;
   modifiedAt?: unknown;
+  activate?: unknown;
 }
 
 interface RemoteSession {
@@ -772,7 +773,13 @@ export function createApp(options: CreateAppOptions = {}): CreateAppResult {
       Number.isFinite(payload.modifiedAt)
         ? payload.modifiedAt
         : null;
-    res.json(openRequests.request({ path: targetPath, modifiedAt }));
+    res.json(
+      openRequests.request({
+        path: targetPath,
+        modifiedAt,
+        ...(payload.activate === true ? { activate: true } : {}),
+      }),
+    );
   });
 
   app.post("/api/remote-document", (req, res) => {

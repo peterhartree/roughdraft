@@ -8,6 +8,7 @@ import {
   isOpenFileSwitcherShortcut,
   isToggleOpenFileSidebarShortcut,
   markOpenFileRead,
+  shouldActivateOpenRequest,
   shouldHandleOpenRequestInSession,
   sortOpenFiles,
   upsertOpenFile,
@@ -284,5 +285,20 @@ describe("incoming open requests", () => {
     expect(
       shouldHandleOpenRequestInSession("local-storage", "/tmp/draft.md"),
     ).toBe(false);
+  });
+
+  it("switches to an agent-opened file only while the window is in the background", () => {
+    expect(
+      shouldActivateOpenRequest({ activate: false, windowHasFocus: true }),
+    ).toBe(false);
+    expect(
+      shouldActivateOpenRequest({ activate: false, windowHasFocus: false }),
+    ).toBe(true);
+  });
+
+  it("always switches for an explicit open, even while focused", () => {
+    expect(
+      shouldActivateOpenRequest({ activate: true, windowHasFocus: true }),
+    ).toBe(true);
   });
 });

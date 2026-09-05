@@ -37,7 +37,9 @@ export async function postOpenDocumentIntent(
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(intent),
+      // A native open is an explicit user action, so the window switches
+      // even when Roughdraft is already in the foreground.
+      body: JSON.stringify({ ...intent, activate: true }),
       signal: AbortSignal.timeout(2_000),
     },
   );

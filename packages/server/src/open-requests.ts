@@ -11,6 +11,13 @@ export interface OpenRequestConnection {
 export interface OpenDocumentIntent {
   path: string;
   modifiedAt: number | null;
+  /**
+   * Force the window to switch to the document even while it has focus.
+   * Set by explicit user opens (Finder, File > Open, drag and drop); omitted
+   * by agent-driven `roughdraft open`, which only switches when the window
+   * is in the background.
+   */
+  activate?: boolean;
 }
 
 type DeliverOpenRequest = (intent: OpenDocumentIntent) => void;

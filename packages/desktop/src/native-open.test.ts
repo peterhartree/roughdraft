@@ -67,7 +67,7 @@ describe("native Markdown open intents", () => {
       new URL("http://localhost:7373/api/open-request"),
       expect.objectContaining({
         method: "POST",
-        body: JSON.stringify(intent),
+        body: JSON.stringify({ ...intent, activate: true }),
       }),
     );
   });

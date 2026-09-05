@@ -179,3 +179,20 @@ export function shouldHandleOpenRequestInSession(
     (backendKind === undefined || backendKind === "local-files")
   );
 }
+
+/**
+ * Decide whether an incoming open request should replace the document on
+ * screen. Agent-driven opens must not steal the view while the user is
+ * reading or commenting, so they only switch when the window is in the
+ * background; the file is still registered in the open-file list either way.
+ * Explicit opens (`activate: true`) always switch.
+ */
+export function shouldActivateOpenRequest({
+  activate,
+  windowHasFocus,
+}: {
+  activate: boolean;
+  windowHasFocus: boolean;
+}) {
+  return activate || !windowHasFocus;
+}

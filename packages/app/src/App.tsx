@@ -78,6 +78,7 @@ import {
   isToggleOpenFileSidebarShortcut,
   markOpenFileRead,
   type OpenFileItem,
+  shouldActivateOpenRequest,
   shouldHandleOpenRequestInSession,
   upsertOpenFile,
 } from "./open-file-navigation";
@@ -1752,6 +1753,7 @@ export function App() {
         const payload = JSON.parse((event as MessageEvent<string>).data) as {
           path?: unknown;
           modifiedAt?: unknown;
+          activate?: unknown;
         };
         if (typeof payload.path !== "string" || !payload.path.trim()) return;
 
@@ -1764,8 +1766,9 @@ export function App() {
             activeDocumentAbsolutePathRef.current,
           )
         ) {
-          // Stays unread only when activation below is blocked, e.g. by a
-          // disk conflict on the current file.
+          // Stays unread when the switch is withheld because the user is
+          // working in the window, or when activation below is blocked, e.g.
+          // by a disk conflict on the current file.
           setOpenFiles((current) =>
             upsertOpenFile(current, {
               path: targetPath,
@@ -1775,6 +1778,14 @@ export function App() {
               unread: !isActive,
             }),
           );
+          if (
+            !shouldActivateOpenRequest({
+              activate: payload.activate === true,
+              windowHasFocus: document.hasFocus(),
+            })
+          ) {
+            return;
+          }
           window.focus();
           setPendingOpenRequestPath(targetPath);
           return;
