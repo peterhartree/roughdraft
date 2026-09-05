@@ -347,16 +347,10 @@ export function resolveAnchoredRailLayouts<T extends AnchoredRailItem>(
     };
   }
 
-  const firstRailTop = resolved[0]?.railTop ?? 0;
-  if (firstRailTop < 0) {
-    const offset = -firstRailTop;
-    return resolved.map((layout) => ({
-      ...layout,
-      railTop: layout.railTop + offset,
-      railBottom: layout.railBottom + offset,
-    }));
-  }
-
+  // Items above the active one may overflow past the top of the rail. Keeping
+  // the active item pinned to its anchor matters more than keeping every
+  // card on screen: shifting the whole stack down would carry a new comment
+  // away from the text it annotates and force the view to scroll after it.
   return resolved;
 }
 

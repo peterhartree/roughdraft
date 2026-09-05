@@ -465,7 +465,7 @@ describe("document comment layout helpers", () => {
     ]);
   });
 
-  it("keeps active-neighboring threads visible when active alignment would go negative", () => {
+  it("keeps the active thread at its anchor and lets earlier threads overflow above the rail", () => {
     const layouts = resolveCommentThreadRailLayouts(
       [
         {
@@ -502,13 +502,13 @@ describe("document comment layout helpers", () => {
     ).toEqual([
       {
         key: "c1",
-        railTop: 0,
-        railBottom: 100,
+        railTop: -36,
+        railBottom: 64,
       },
       {
         key: "c2",
-        railTop: 116,
-        railBottom: 236,
+        railTop: 80,
+        railBottom: 200,
       },
     ]);
   });

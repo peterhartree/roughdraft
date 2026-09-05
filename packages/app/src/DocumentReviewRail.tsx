@@ -323,28 +323,42 @@ export function DocumentReviewRail({
     [selectedCommentId, suggestions],
   );
 
+  const railEntries = useMemo(
+    () =>
+      [
+        ...suggestionEntries,
+        ...commentEntries,
+        ...(draftEntry ? [draftEntry] : []),
+      ].sort((left, right) => left.anchorTop - right.anchorTop),
+    [commentEntries, draftEntry, suggestionEntries],
+  );
+
   const layouts = useMemo(() => {
-    const entries = [
-      ...suggestionEntries,
-      ...commentEntries,
-      ...(draftEntry ? [draftEntry] : []),
-    ].sort((left, right) => left.anchorTop - right.anchorTop);
     const activeKey =
       draftEntry?.key ??
       selectedChangeId ??
       activeSuggestionIdForComment ??
       activeRootThreadId;
 
-    return resolveAnchoredRailLayouts(entries, itemHeights, activeKey);
+    return resolveAnchoredRailLayouts(railEntries, itemHeights, activeKey);
   }, [
     activeRootThreadId,
     activeSuggestionIdForComment,
-    commentEntries,
     draftEntry,
     itemHeights,
+    railEntries,
     selectedChangeId,
-    suggestionEntries,
   ]);
+
+  // The rail's extent with nothing selected. Selecting or composing a thread
+  // shifts the stack upward, and letting the rail shrink with it would change
+  // the page height and jolt the scroll position mid-interaction.
+  const restingRailBottom = useMemo(
+    () =>
+      resolveAnchoredRailLayouts(railEntries, itemHeights, null).at(-1)
+        ?.railBottom ?? 0,
+    [itemHeights, railEntries],
+  );
 
   const setItemRef = useCallback((key: string, node: HTMLDivElement | null) => {
     if (node) {
@@ -420,7 +434,11 @@ export function DocumentReviewRail({
   const railHeight =
     railLayout === "flow"
       ? undefined
-      : Math.max(contentHeight, layouts.at(-1)?.railBottom ?? 0) + 24;
+      : Math.max(
+          contentHeight,
+          layouts.at(-1)?.railBottom ?? 0,
+          restingRailBottom,
+        ) + 24;
 
   const hasDraftOnly = layouts.length === 0 && !draftSuggestion;
   if (hasDraftOnly) {
