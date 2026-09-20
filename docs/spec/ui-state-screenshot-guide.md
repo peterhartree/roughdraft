@@ -93,6 +93,10 @@ suggestions:
 # Fenced examples This page should not show a review rail just because examples appear inside code fences. ```text {==example==}{>>comment<<}{#c1} {++inserted++} {--deleted--} {~~old~>new~~} ```
 ```
 ## Capture Matrix
+For live-refresh checks, use a long document and place the caret in a paragraph well below the top. Insert text above and below that paragraph from disk. Capture before and after: the same text should remain under the caret at the same viewport height, typing focus should remain in the editor, and Undo should still undo the user's edit. Repeat with Find open. With unsaved local typing, verify the external change instead raises the existing conflict notice without replacing the draft.
+
+During a delayed Reload or Overwrite request, all conflict-resolution buttons are disabled. Editing remains available; typing during the request must survive its response.
+
 | Area | State | How to reach it | Useful selectors | Notes |
 | --- | --- | --- | --- | --- |
 | App shell | Initial loading | Load any route and capture before backend initialization completes, usually with a route/mock delay | none | Transient; easiest in a mocked route or component harness. |

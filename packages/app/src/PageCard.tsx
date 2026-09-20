@@ -3,7 +3,15 @@ import type { Mark as ProseMirrorMark } from "@tiptap/pm/model";
 import { TextSelection } from "@tiptap/pm/state";
 import type { Editor } from "@tiptap/react";
 import { EditorContent, useEditor, useEditorState } from "@tiptap/react";
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
 import { CommentEditorList } from "./CommentEditorList";
 import {
@@ -43,6 +51,7 @@ import {
 } from "./editor-extensions";
 import { cn } from "./lib/utils";
 import { MarkdownCodeEditor } from "./MarkdownCodeEditor";
+import { createDocumentUpdateTransaction } from "./prosemirror-document-update";
 import { buildLocationForLinkedMarkdownDocument } from "./app-navigation";
 import { toHtml } from "./markdown";
 import type { Page, StorageBackend } from "./storage";
@@ -78,6 +87,7 @@ interface PageCardProps {
   onCommentRailPresenceChange?: (hasCommentRailSpace: boolean) => void;
   onDirtyStateChange?: (isDirty: boolean) => void;
   onLocalContentChange?: (markdown: string) => void;
+  onExternalContentRefresh?: () => void;
   onSaveControllerChange?: (controller: DocumentSaveController | null) => void;
   onViewControllerChange?: (
     controller: DocumentEditorViewController | null,
@@ -101,6 +111,7 @@ interface PageCardEditorSurfaceProps {
   onCommentRailPresenceChange?: (hasCommentRailSpace: boolean) => void;
   onDirtyStateChange?: (isDirty: boolean) => void;
   onLocalContentChange?: (markdown: string) => void;
+  onExternalContentRefresh?: () => void;
   onSaveControllerChange?: (controller: DocumentSaveController | null) => void;
   onViewControllerChange?: (
     controller: DocumentEditorViewController | null,
@@ -122,6 +133,7 @@ interface RichTextEditorSurfaceProps {
   onEditorReady?: (editor: Editor | null) => void;
   onCommentRailPresenceChange?: (hasCommentRailSpace: boolean) => void;
   onPendingWorkStart?: (work: Promise<void>) => void;
+  onExternalContentRefresh?: () => void;
   onViewControllerChange?: (
     controller: DocumentEditorViewController | null,
   ) => void;
@@ -136,6 +148,85 @@ interface CodeEditorSurfaceProps {
   onViewControllerChange?: (
     controller: DocumentEditorViewController | null,
   ) => void;
+}
+
+interface RichTextViewportAnchor {
+  position: number;
+  top: number;
+  scrollContainer: HTMLElement;
+  scrollTop: number;
+}
+
+function captureRichTextViewportAnchor(
+  editor: Editor,
+): RichTextViewportAnchor | null {
+  const scrollContainer = editor.view.dom.closest<HTMLElement>(
+    '[data-testid="document-workspace-scroll"]',
+  );
+  if (!scrollContainer) return null;
+
+  const scrollRect = scrollContainer.getBoundingClientRect();
+  let position = editor.state.selection.head;
+
+  try {
+    const selectionRect = editor.view.coordsAtPos(position);
+    const selectionIsVisible =
+      selectionRect.bottom >= scrollRect.top &&
+      selectionRect.top <= scrollRect.bottom;
+
+    if (!selectionIsVisible) {
+      const editorRect = editor.view.dom.getBoundingClientRect();
+      const viewportPosition = editor.view.posAtCoords({
+        left: Math.max(
+          editorRect.left + 1,
+          Math.min(editorRect.right - 1, scrollRect.left + 24),
+        ),
+        top: Math.max(
+          editorRect.top + 1,
+          Math.min(editorRect.bottom - 1, scrollRect.top + 16),
+        ),
+      });
+      if (viewportPosition) position = viewportPosition.pos;
+    }
+
+    return {
+      position,
+      top: editor.view.coordsAtPos(position).top,
+      scrollContainer,
+      scrollTop: scrollContainer.scrollTop,
+    };
+  } catch {
+    return {
+      position,
+      top: Number.NaN,
+      scrollContainer,
+      scrollTop: scrollContainer.scrollTop,
+    };
+  }
+}
+
+function restoreRichTextViewportAnchor(
+  editor: Editor,
+  anchor: RichTextViewportAnchor | null,
+  position: number,
+): void {
+  if (!anchor?.scrollContainer.isConnected) return;
+
+  if (Number.isNaN(anchor.top)) {
+    anchor.scrollContainer.scrollTop = anchor.scrollTop;
+    return;
+  }
+
+  try {
+    const safePosition = Math.max(
+      0,
+      Math.min(position, editor.state.doc.content.size),
+    );
+    const nextTop = editor.view.coordsAtPos(safePosition).top;
+    anchor.scrollContainer.scrollTop += nextTop - anchor.top;
+  } catch {
+    anchor.scrollContainer.scrollTop = anchor.scrollTop;
+  }
 }
 
 export interface DraftSuggestionState {
@@ -652,6 +743,7 @@ const RichTextEditorSurface = memo(function RichTextEditorSurface({
   onEditorReady,
   onCommentRailPresenceChange,
   onPendingWorkStart,
+  onExternalContentRefresh,
   onViewControllerChange,
 }: RichTextEditorSurfaceProps) {
   const editorRef = useRef<Editor | null>(null);
@@ -1319,6 +1411,8 @@ const RichTextEditorSurface = memo(function RichTextEditorSurface({
 
   const { commentGroups, contentHeight, measureLayout } =
     useCommentAnchorLayout(editor, comments.size > 0);
+  const measureLayoutRef = useRef(measureLayout);
+  measureLayoutRef.current = measureLayout;
 
   useEffect(() => {
     onEditorReady?.(editor);
@@ -1378,8 +1472,10 @@ const RichTextEditorSurface = memo(function RichTextEditorSurface({
     );
   }, [activeChangeIds]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!editor) return;
+
+    let viewportFollowUpFrame: number | null = null;
 
     frontmatterRef.current = parsedContent.frontmatter;
     endmatterRef.current = parsedContent.endmatter;
@@ -1392,13 +1488,57 @@ const RichTextEditorSurface = memo(function RichTextEditorSurface({
     setDraftSuggestion(null);
     setPendingFocusCommentId(null);
 
-    const nextDoc = parsedContent.doc;
-    if (JSON.stringify(editor.getJSON()) !== JSON.stringify(nextDoc)) {
-      editor.commands.setContent(nextDoc, { emitUpdate: false });
+    const nextDocument = editor.schema.nodeFromJSON(parsedContent.doc);
+    const transaction = createDocumentUpdateTransaction(
+      editor.state,
+      nextDocument,
+    );
+    if (transaction) {
+      const viewportAnchor = captureRichTextViewportAnchor(editor);
+      const mappedViewportPosition = transaction.mapping.map(
+        viewportAnchor?.position ?? editor.state.selection.head,
+      );
+      editor.view.dispatch(transaction);
+      onExternalContentRefresh?.();
+      restoreRichTextViewportAnchor(
+        editor,
+        viewportAnchor,
+        mappedViewportPosition,
+      );
+
+      if (viewportAnchor) {
+        const stableDocument = editor.state.doc;
+        const stableSelection = editor.state.selection;
+        const stableScrollTop = viewportAnchor.scrollContainer.scrollTop;
+        viewportFollowUpFrame = requestAnimationFrame(() => {
+          viewportFollowUpFrame = null;
+          if (
+            editor.isDestroyed ||
+            editor.state.doc !== stableDocument ||
+            !editor.state.selection.eq(stableSelection) ||
+            viewportAnchor.scrollContainer.scrollTop !== stableScrollTop
+          ) {
+            return;
+          }
+
+          restoreRichTextViewportAnchor(
+            editor,
+            viewportAnchor,
+            mappedViewportPosition,
+          );
+        });
+      }
     }
 
     refreshCriticChanges();
-  }, [editor, parsedContent, refreshCriticChanges]);
+    measureLayoutRef.current();
+
+    return () => {
+      if (viewportFollowUpFrame !== null) {
+        cancelAnimationFrame(viewportFollowUpFrame);
+      }
+    };
+  }, [editor, onExternalContentRefresh, parsedContent, refreshCriticChanges]);
 
   useEffect(() => {
     if (!editor || !selected || !focusRequestKey) return;
@@ -1452,98 +1592,114 @@ const RichTextEditorSurface = memo(function RichTextEditorSurface({
   useEffect(() => {
     if (!editor) return;
 
-    const anchorElements = editor.view.dom.querySelectorAll<HTMLElement>(
-      ".comment-anchor[data-comment-ids]",
-    );
-    const cleanupCallbacks: Array<() => void> = [];
-
-    for (const anchor of anchorElements) {
+    const editorElement = editor.view.dom;
+    const findAnchor = (target: EventTarget | null) => {
+      if (!(target instanceof Element)) return null;
+      return target.closest<HTMLElement>(".comment-anchor[data-comment-ids]");
+    };
+    const getCommentIds = (target: EventTarget | null) => {
+      const anchor = findAnchor(target);
+      if (!anchor || !editorElement.contains(anchor)) return [];
       const commentIds = parseCommentIds(anchor.dataset.commentIds);
-      if (commentIds.length === 0) continue;
+      return commentIds;
+    };
+    const handleMouseOver = (event: MouseEvent) => {
+      const anchor = findAnchor(event.target);
+      if (
+        !anchor ||
+        (event.relatedTarget instanceof Node &&
+          anchor.contains(event.relatedTarget))
+      ) {
+        return;
+      }
+      const nextCommentId = getPreferredCommentId(
+        getCommentIds(anchor),
+        selectedCommentIdRef.current,
+      );
+      if (nextCommentId) setHoveredCommentId(nextCommentId);
+    };
+    const handleMouseOut = (event: MouseEvent) => {
+      const anchor = findAnchor(event.target);
+      if (
+        !anchor ||
+        (event.relatedTarget instanceof Node &&
+          anchor.contains(event.relatedTarget))
+      ) {
+        return;
+      }
+      const commentIds = getCommentIds(anchor);
+      setHoveredCommentId((current) =>
+        current && commentIds.includes(current) ? null : current,
+      );
+    };
+    const handleClick = (event: MouseEvent) => {
+      const nextCommentId = getPreferredCommentId(
+        getCommentIds(event.target),
+        selectedCommentIdRef.current,
+      );
+      if (nextCommentId) setSelectedCommentId(nextCommentId);
+    };
 
-      const handleMouseEnter = () => {
-        const nextCommentId = getPreferredCommentId(
-          commentIds,
-          selectedCommentIdRef.current,
-        );
-        if (nextCommentId) {
-          setHoveredCommentId(nextCommentId);
-        }
-      };
-
-      const handleMouseLeave = () => {
-        setHoveredCommentId((current) =>
-          current && commentIds.includes(current) ? null : current,
-        );
-      };
-
-      const handleClick = () => {
-        const nextCommentId = getPreferredCommentId(
-          commentIds,
-          selectedCommentIdRef.current,
-        );
-        if (nextCommentId) {
-          setSelectedCommentId(nextCommentId);
-        }
-      };
-
-      anchor.addEventListener("mouseenter", handleMouseEnter);
-      anchor.addEventListener("mouseleave", handleMouseLeave);
-      anchor.addEventListener("click", handleClick);
-      cleanupCallbacks.push(() => {
-        anchor.removeEventListener("mouseenter", handleMouseEnter);
-        anchor.removeEventListener("mouseleave", handleMouseLeave);
-        anchor.removeEventListener("click", handleClick);
-      });
-    }
+    editorElement.addEventListener("mouseover", handleMouseOver);
+    editorElement.addEventListener("mouseout", handleMouseOut);
+    editorElement.addEventListener("click", handleClick);
 
     return () => {
-      for (const cleanup of cleanupCallbacks) {
-        cleanup();
-      }
+      editorElement.removeEventListener("mouseover", handleMouseOver);
+      editorElement.removeEventListener("mouseout", handleMouseOut);
+      editorElement.removeEventListener("click", handleClick);
     };
   }, [editor]);
 
   useEffect(() => {
     if (!editor) return;
 
-    const changeElements = editor.view.dom.querySelectorAll<HTMLElement>(
-      ".critic-change[data-critic-change-id]",
-    );
-    const cleanupCallbacks: Array<() => void> = [];
-
-    for (const element of changeElements) {
+    const editorElement = editor.view.dom;
+    const findChange = (target: EventTarget | null) => {
+      if (!(target instanceof Element)) return null;
+      const element = target.closest<HTMLElement>(
+        ".critic-change[data-critic-change-id]",
+      );
+      return element && editorElement.contains(element) ? element : null;
+    };
+    const handleMouseOver = (event: MouseEvent) => {
+      const element = findChange(event.target);
+      if (
+        !element ||
+        (event.relatedTarget instanceof Node &&
+          element.contains(event.relatedTarget))
+      ) {
+        return;
+      }
+      if (element.dataset.criticChangeId) {
+        setHoveredChangeId(element.dataset.criticChangeId);
+      }
+    };
+    const handleMouseOut = (event: MouseEvent) => {
+      const element = findChange(event.target);
+      if (
+        !element ||
+        (event.relatedTarget instanceof Node &&
+          element.contains(event.relatedTarget))
+      ) {
+        return;
+      }
       const changeId = element.dataset.criticChangeId;
-      if (!changeId) continue;
+      setHoveredChangeId((current) => (current === changeId ? null : current));
+    };
+    const handleClick = (event: MouseEvent) => {
+      const changeId = findChange(event.target)?.dataset.criticChangeId;
+      if (changeId) setSelectedChangeId(changeId);
+    };
 
-      const handleMouseEnter = () => {
-        setHoveredChangeId(changeId);
-      };
-
-      const handleMouseLeave = () => {
-        setHoveredChangeId((current) =>
-          current === changeId ? null : current,
-        );
-      };
-
-      const handleClick = () => {
-        setSelectedChangeId(changeId);
-      };
-
-      element.addEventListener("mouseenter", handleMouseEnter);
-      element.addEventListener("mouseleave", handleMouseLeave);
-      element.addEventListener("click", handleClick);
-      cleanupCallbacks.push(() => {
-        element.removeEventListener("mouseenter", handleMouseEnter);
-        element.removeEventListener("mouseleave", handleMouseLeave);
-        element.removeEventListener("click", handleClick);
-      });
-    }
+    editorElement.addEventListener("mouseover", handleMouseOver);
+    editorElement.addEventListener("mouseout", handleMouseOut);
+    editorElement.addEventListener("click", handleClick);
 
     return () => {
-      for (const cleanup of cleanupCallbacks) {
-        cleanup();
-      }
+      editorElement.removeEventListener("mouseover", handleMouseOver);
+      editorElement.removeEventListener("mouseout", handleMouseOut);
+      editorElement.removeEventListener("click", handleClick);
     };
   }, [editor]);
 
@@ -2232,12 +2388,15 @@ const PageCardEditorSurface = memo(function PageCardEditorSurface({
   onCommentRailPresenceChange,
   onDirtyStateChange,
   onLocalContentChange,
+  onExternalContentRefresh,
   onSaveControllerChange,
   onViewControllerChange,
   saveBlocked = false,
   forceResetKey = null,
 }: PageCardEditorSurfaceProps) {
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const saveBlockedRef = useRef(saveBlocked);
+  saveBlockedRef.current = saveBlocked;
   const inFlightSaveRef = useRef<Promise<ManualSaveResult> | null>(null);
   const pendingWorkRef = useRef<Set<Promise<void>>>(new Set());
   const pendingWorkErrorRef = useRef<unknown>(null);
@@ -2251,7 +2410,6 @@ const PageCardEditorSurface = memo(function PageCardEditorSurface({
   const [richTextSourceMarkdown, setRichTextSourceMarkdown] = useState(
     page.content,
   );
-  const [richTextSourceVersion, setRichTextSourceVersion] = useState(0);
 
   const handlePendingWorkStart = useCallback((work: Promise<void>) => {
     pendingWorkRef.current.add(work);
@@ -2279,7 +2437,6 @@ const PageCardEditorSurface = memo(function PageCardEditorSurface({
       lastAcceptedMarkdownRef.current = nextMarkdown;
       setMarkdown(nextMarkdown);
       setRichTextSourceMarkdown(nextMarkdown);
-      setRichTextSourceVersion((current) => current + 1);
       onLocalContentChange?.(nextMarkdown);
       reportDirtyState(false);
       onSaveStateChange("saved");
@@ -2297,7 +2454,7 @@ const PageCardEditorSurface = memo(function PageCardEditorSurface({
 
   const performSave = useCallback(
     async (nextMarkdown: string): Promise<ManualSaveResult> => {
-      if (saveBlocked) {
+      if (saveBlockedRef.current) {
         onSaveStateChange(
           nextMarkdown === lastAcceptedMarkdownRef.current
             ? "saved"
@@ -2329,36 +2486,7 @@ const PageCardEditorSurface = memo(function PageCardEditorSurface({
       page.id,
       rememberRecentMarkdown,
       reportDirtyState,
-      saveBlocked,
     ],
-  );
-
-  const scheduleSave = useCallback(
-    (nextMarkdown: string) => {
-      if (saveTimer.current) {
-        clearTimeout(saveTimer.current);
-        saveTimer.current = null;
-      }
-
-      if (saveBlocked) {
-        onSaveStateChange(
-          nextMarkdown === lastAcceptedMarkdownRef.current
-            ? "saved"
-            : "unsaved",
-        );
-        return;
-      }
-
-      onSaveStateChange("saving");
-      saveTimer.current = setTimeout(() => {
-        saveTimer.current = null;
-        inFlightSaveRef.current = performSave(nextMarkdown).finally(() => {
-          inFlightSaveRef.current = null;
-        });
-        void inFlightSaveRef.current;
-      }, 500);
-    },
-    [onSaveStateChange, performSave, saveBlocked],
   );
 
   const flushSave = useCallback(async (): Promise<ManualSaveResult> => {
@@ -2389,10 +2517,38 @@ const PageCardEditorSurface = memo(function PageCardEditorSurface({
         return { status: "saved" };
       }
 
-      const saveResult = await performSave(pendingMarkdownRef.current);
+      const saving = performSave(pendingMarkdownRef.current);
+      inFlightSaveRef.current = saving;
+      const saveResult = await saving;
+      if (inFlightSaveRef.current === saving) inFlightSaveRef.current = null;
       if (saveResult.status !== "saved") return saveResult;
     }
   }, [onSaveStateChange, performSave]);
+
+  const scheduleSave = useCallback(
+    (nextMarkdown: string) => {
+      if (saveTimer.current) {
+        clearTimeout(saveTimer.current);
+        saveTimer.current = null;
+      }
+
+      if (saveBlockedRef.current) {
+        onSaveStateChange(
+          nextMarkdown === lastAcceptedMarkdownRef.current
+            ? "saved"
+            : "unsaved",
+        );
+        return;
+      }
+
+      onSaveStateChange("saving");
+      saveTimer.current = setTimeout(() => {
+        saveTimer.current = null;
+        void flushSave();
+      }, 500);
+    },
+    [onSaveStateChange, flushSave],
+  );
 
   useEffect(() => {
     onSaveControllerChange?.({ flushSave });
@@ -2443,15 +2599,18 @@ const PageCardEditorSurface = memo(function PageCardEditorSurface({
   }, [acceptMarkdown, forceResetKey, markdown, page.content, reportDirtyState]);
 
   useEffect(() => {
-    if (!saveBlocked || !saveTimer.current) return;
-    clearTimeout(saveTimer.current);
-    saveTimer.current = null;
-    onSaveStateChange(
-      pendingMarkdownRef.current === lastAcceptedMarkdownRef.current
-        ? "saved"
-        : "unsaved",
-    );
-  }, [onSaveStateChange, saveBlocked]);
+    if (saveBlocked) {
+      if (saveTimer.current) clearTimeout(saveTimer.current);
+      saveTimer.current = null;
+      onSaveStateChange(
+        pendingMarkdownRef.current === lastAcceptedMarkdownRef.current
+          ? "saved"
+          : "unsaved",
+      );
+    } else if (pendingMarkdownRef.current !== lastAcceptedMarkdownRef.current) {
+      scheduleSave(pendingMarkdownRef.current);
+    }
+  }, [onSaveStateChange, saveBlocked, scheduleSave]);
 
   useEffect(() => {
     const previousEditorViewMode = previousEditorViewModeRef.current;
@@ -2462,7 +2621,6 @@ const PageCardEditorSurface = memo(function PageCardEditorSurface({
     }
 
     setRichTextSourceMarkdown(markdown);
-    setRichTextSourceVersion((current) => current + 1);
   }, [editorViewMode, markdown]);
 
   useEffect(() => {
@@ -2505,7 +2663,7 @@ const PageCardEditorSurface = memo(function PageCardEditorSurface({
 
   return (
     <RichTextEditorSurface
-      key={`${page.id}:${richTextSourceVersion}:${effectiveRichTextSourceMarkdown}`}
+      key={page.id}
       page={page}
       activeDocumentPath={activeDocumentPath}
       selected={selected}
@@ -2516,6 +2674,7 @@ const PageCardEditorSurface = memo(function PageCardEditorSurface({
       interactionMode={interactionMode}
       onCommentRailPresenceChange={onCommentRailPresenceChange}
       onPendingWorkStart={handlePendingWorkStart}
+      onExternalContentRefresh={onExternalContentRefresh}
       onViewControllerChange={onViewControllerChange}
       backend={backend}
       onEditorReady={onEditorReady}
@@ -2538,6 +2697,7 @@ export function PageCard({
   onCommentRailPresenceChange,
   onDirtyStateChange,
   onLocalContentChange,
+  onExternalContentRefresh,
   onSaveControllerChange,
   onViewControllerChange,
   saveBlocked,
@@ -2566,6 +2726,7 @@ export function PageCard({
         onCommentRailPresenceChange={onCommentRailPresenceChange}
         onDirtyStateChange={onDirtyStateChange}
         onLocalContentChange={onLocalContentChange}
+        onExternalContentRefresh={onExternalContentRefresh}
         onSaveControllerChange={onSaveControllerChange}
         onViewControllerChange={onViewControllerChange}
         saveBlocked={saveBlocked}

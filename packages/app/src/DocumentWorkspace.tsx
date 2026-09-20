@@ -312,6 +312,7 @@ interface DocumentWorkspaceProps {
   onDocumentLocalContentChange: (markdown: string) => void;
   documentDiskChangeState: DiskChangeState;
   documentForceResetKey: string | null;
+  documentResolutionPending?: boolean;
   documentViewRestoreRequest?: DocumentViewRestoreRequest | null;
   onReloadDocumentFromDisk: () => void | Promise<void>;
   onKeepEditingWithoutAutosave: () => void;
@@ -337,6 +338,7 @@ export function DocumentWorkspace({
   onDocumentLocalContentChange,
   documentDiskChangeState,
   documentForceResetKey,
+  documentResolutionPending = false,
   documentViewRestoreRequest = null,
   onReloadDocumentFromDisk,
   onKeepEditingWithoutAutosave,
@@ -421,6 +423,14 @@ export function DocumentWorkspace({
     },
     [onDocumentLocalContentChange],
   );
+
+  const handleExternalContentRefresh = useCallback(() => {
+    if (!documentFindOpenRef.current) return;
+    setDocumentFindResult(
+      editorViewControllerRef.current?.getFindResult() ??
+        EMPTY_DOCUMENT_FIND_RESULT,
+    );
+  }, []);
 
   const runDocumentFind = useCallback(
     (direction: DocumentFindDirection) => {
@@ -727,6 +737,7 @@ export function DocumentWorkspace({
             <Button
               type="button"
               data-testid="file-conflict-action-reload"
+              disabled={documentResolutionPending}
               variant="ghost"
               size="sm"
               className="h-8 rounded-[7px] bg-white/55 dark:bg-white/10 px-2 text-xs text-amber-950 dark:text-amber-100 hover:bg-white dark:hover:bg-white/20"
@@ -740,6 +751,7 @@ export function DocumentWorkspace({
               <Button
                 type="button"
                 data-testid="file-conflict-action-keep-editing"
+                disabled={documentResolutionPending}
                 variant="ghost"
                 size="sm"
                 className="h-8 rounded-[7px] bg-white/55 dark:bg-white/10 px-2 text-xs text-amber-950 dark:text-amber-100 hover:bg-white dark:hover:bg-white/20"
@@ -752,6 +764,7 @@ export function DocumentWorkspace({
             <Button
               type="button"
               data-testid="file-conflict-action-overwrite"
+              disabled={documentResolutionPending}
               variant="ghost"
               size="sm"
               className="h-8 rounded-[7px] bg-amber-900 dark:bg-amber-600 px-2 text-xs text-white hover:bg-amber-800 dark:hover:bg-amber-500"
@@ -1092,6 +1105,7 @@ export function DocumentWorkspace({
               onCommentRailPresenceChange={setDocumentHasComments}
               onDirtyStateChange={onDocumentDirtyStateChange}
               onLocalContentChange={handleDocumentLocalContentChange}
+              onExternalContentRefresh={handleExternalContentRefresh}
               onSaveControllerChange={handleSaveControllerChange}
               onViewControllerChange={handleViewControllerChange}
               saveBlocked={documentDiskChangeState !== "clean"}

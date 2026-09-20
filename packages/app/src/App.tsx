@@ -1564,8 +1564,16 @@ export function App() {
   );
   const [documentSaveState, setDocumentSaveState] =
     useState<DocumentSaveState>("saved");
-  const [documentDiskChangeState, setDocumentDiskChangeState] =
+  const [documentDiskChangeState, setDocumentDiskChangeStateValue] =
     useState<DocumentDiskChangeState>("clean");
+  const documentDiskChangeStateRef = useRef<DocumentDiskChangeState>("clean");
+  const setDocumentDiskChangeState = useCallback(
+    (state: DocumentDiskChangeState) => {
+      documentDiskChangeStateRef.current = state;
+      setDocumentDiskChangeStateValue(state);
+    },
+    [],
+  );
   const [documentForceResetKey, setDocumentForceResetKey] = useState<
     string | null
   >(null);
@@ -1592,6 +1600,13 @@ export function App() {
   const documentDirtyRef = useRef(false);
   const documentSaveStateRef = useRef<DocumentSaveState>("saved");
   const documentDraftContentRef = useRef<string | null>(null);
+  const [documentResolutionPending, setDocumentResolutionPending] =
+    useState(false);
+  const documentResolutionRef = useRef(false);
+  const documentWriteRef = useRef<{
+    path: string | null;
+    completion: Promise<void>;
+  } | null>(null);
   const closeAllButtonRef = useRef<HTMLButtonElement>(null);
 
   backendRef.current = backend;
@@ -1602,11 +1617,14 @@ export function App() {
   openFilesRef.current = openFiles;
   recentDocumentsRef.current = recentDocuments;
 
-  const applyDocumentPage = useCallback((nextDocument: Page) => {
-    documentPageRef.current = nextDocument;
-    setDocumentPage(nextDocument);
-    documentDraftContentRef.current = nextDocument.content;
-  }, []);
+  const applyDocumentPage = useCallback(
+    (nextDocument: Page, updateDraft = true) => {
+      documentPageRef.current = nextDocument;
+      setDocumentPage(nextDocument);
+      if (updateDraft) documentDraftContentRef.current = nextDocument.content;
+    },
+    [],
+  );
 
   const updateRecentDocuments = useCallback(
     (update: (current: RecentDocument[]) => RecentDocument[]) => {
@@ -1683,7 +1701,7 @@ export function App() {
       setDocumentDiskChangeState("clean");
       return nextDocument;
     },
-    [applyDocumentPage, rememberRecentDocument],
+    [applyDocumentPage, rememberRecentDocument, setDocumentDiskChangeState],
   );
 
   const getViewStateForPath = useCallback((path: string) => {
@@ -2030,43 +2048,61 @@ export function App() {
   ]);
 
   const handleSaveDocument = useCallback(
-    async (id: string, content: string) => {
-      if (!activeDocumentPath) return;
+    async (id: string, content: string, overwrite = false) => {
+      const currentBackend = backendRef.current;
+      const absolutePath = activeDocumentAbsolutePathRef.current;
+      if (!activeDocumentPath || !currentBackend) return;
       const expectedVersion =
-        documentPageRef.current?.id === id
+        !overwrite && documentPageRef.current?.id === id
           ? documentPageRef.current.version
           : undefined;
+      const stillActive = () =>
+        backendRef.current === currentBackend &&
+        activeDocumentAbsolutePathRef.current === absolutePath;
 
-      let savedDocument: Page | undefined;
-      try {
-        savedDocument = await backendRef.current?.saveMarkdownFile(
-          activeDocumentPath,
-          content,
-          expectedVersion,
-        );
-      } catch (error) {
-        if (error instanceof MarkdownFileConflictError) {
-          setDocumentDiskChangeState("conflict");
+      const write = { path: absolutePath, completion: Promise.resolve() };
+      write.completion = (async () => {
+        try {
+          const savedDocument = await currentBackend.saveMarkdownFile(
+            activeDocumentPath,
+            content,
+            expectedVersion,
+          );
+          if (!stillActive()) return;
+
+          const firstLine = content.split("\n")[0] || "";
+          const fallbackTitle = id.split("/").at(-1) || id;
+          const nextDocument = savedDocument ?? {
+            id,
+            content,
+            title: firstLine.replace(/^#*\s*/, "") || fallbackTitle,
+            version: expectedVersion,
+          };
+
+          // Acknowledging an older save must not replace the newer local draft.
+          applyDocumentPage(nextDocument, false);
+          refreshActiveOpenFile(nextDocument);
+          documentDirtyRef.current =
+            documentDraftContentRef.current !== nextDocument.content;
+        } catch (error) {
+          if (stillActive() && error instanceof MarkdownFileConflictError) {
+            setDocumentDiskChangeState("conflict");
+          }
+          throw error;
+        } finally {
+          if (documentWriteRef.current === write)
+            documentWriteRef.current = null;
         }
-        throw error;
-      }
-
-      const firstLine = content.split("\n")[0] || "";
-      const fallbackTitle = id.split("/").at(-1) || id;
-      const title = firstLine.replace(/^#*\s*/, "") || fallbackTitle;
-      const nextDocument = savedDocument ?? {
-        id,
-        content,
-        title,
-        version: expectedVersion,
-      };
-
-      applyDocumentPage(nextDocument);
-      refreshActiveOpenFile(nextDocument);
-      documentDirtyRef.current = false;
-      setDocumentDiskChangeState("clean");
+      })();
+      documentWriteRef.current = write;
+      await write.completion;
     },
-    [activeDocumentPath, applyDocumentPage, refreshActiveOpenFile],
+    [
+      activeDocumentPath,
+      applyDocumentPage,
+      refreshActiveOpenFile,
+      setDocumentDiskChangeState,
+    ],
   );
 
   const handleDocumentDirtyStateChange = useCallback((isDirty: boolean) => {
@@ -2123,65 +2159,90 @@ export function App() {
   const handleReloadDocumentFromDisk = useCallback(async () => {
     const currentBackend = backendRef.current;
     const currentPath = activeDocumentPathRef.current;
+    const absolutePath = activeDocumentAbsolutePathRef.current;
+    const projectPath = currentBackend?.info.projectPath;
     if (!currentBackend || !currentPath) return;
 
-    const result = await fetchDocumentFromDisk(currentBackend, currentPath);
-    if (result.status === "missing") {
-      setDocumentDiskChangeState("missing");
-      return;
-    }
-    if (result.status === "error") {
-      console.error("Failed to reload markdown file from disk:", result.error);
-      return;
-    }
+    if (documentResolutionRef.current || documentWriteRef.current) return;
+    documentResolutionRef.current = true;
+    setDocumentResolutionPending(true);
+    try {
+      const draftBeforeRead = documentDraftContentRef.current;
+      const result = await fetchDocumentFromDisk(currentBackend, currentPath);
+      if (
+        currentBackend !== backendRef.current ||
+        currentPath !== activeDocumentPathRef.current ||
+        absolutePath !== activeDocumentAbsolutePathRef.current ||
+        projectPath !== currentBackend.info.projectPath
+      )
+        return;
+      if (documentDraftContentRef.current !== draftBeforeRead) {
+        setDocumentDiskChangeState("changed");
+        return;
+      }
+      if (result.status === "missing") {
+        setDocumentDiskChangeState("missing");
+        return;
+      }
+      if (result.status === "error") {
+        console.error(
+          "Failed to reload markdown file from disk:",
+          result.error,
+        );
+        return;
+      }
 
-    const nextDocument = result.document;
-    applyDocumentPage(nextDocument);
-    refreshActiveOpenFile(nextDocument);
-    documentDirtyRef.current = false;
-    setDocumentDiskChangeState("clean");
-    setDocumentForceResetKey(
-      `${currentPath}:${nextDocument.version ?? Date.now()}`,
-    );
-  }, [applyDocumentPage, refreshActiveOpenFile]);
+      const nextDocument = result.document;
+      applyDocumentPage(nextDocument);
+      refreshActiveOpenFile(nextDocument);
+      documentDirtyRef.current = false;
+      setDocumentDiskChangeState("clean");
+      setDocumentForceResetKey(
+        `${currentPath}:${nextDocument.version ?? Date.now()}`,
+      );
+    } finally {
+      documentResolutionRef.current = false;
+      setDocumentResolutionPending(false);
+    }
+  }, [applyDocumentPage, refreshActiveOpenFile, setDocumentDiskChangeState]);
 
   const handleKeepEditingWithoutAutosave = useCallback(() => {
     setDocumentDiskChangeState("paused");
-  }, []);
+  }, [setDocumentDiskChangeState]);
 
   const handleOverwriteDocumentOnDisk = useCallback(async () => {
-    const currentBackend = backendRef.current;
-    const currentPath = activeDocumentPathRef.current;
+    const currentPath = activeDocumentAbsolutePathRef.current;
     const currentDocument = documentPageRef.current;
-    if (!currentBackend || !currentPath || !currentDocument) return;
-
-    const content = documentDraftContentRef.current ?? currentDocument.content;
-    const firstLine = content.split("\n")[0] || "";
-    const fallbackTitle =
-      currentDocument.id.split("/").at(-1) || currentDocument.id;
-    const title = firstLine.replace(/^#*\s*/, "") || fallbackTitle;
-    let savedResult: Page | undefined;
+    if (!currentPath || !currentDocument) return;
+    if (documentResolutionRef.current || documentWriteRef.current) return;
+    documentResolutionRef.current = true;
+    setDocumentResolutionPending(true);
     try {
-      savedResult = await currentBackend.saveMarkdownFile(currentPath, content);
-    } catch (error) {
-      console.error("Failed to write the draft to disk:", error);
-      return;
+      const content =
+        documentDraftContentRef.current ?? currentDocument.content;
+      try {
+        await handleSaveDocument(currentDocument.id, content, true);
+      } catch (error) {
+        console.error("Failed to write the draft to disk:", error);
+        return;
+      }
+      if (activeDocumentAbsolutePathRef.current !== currentPath) return;
+      setDocumentDiskChangeState("clean");
+      if (documentDraftContentRef.current === content) {
+        handleDocumentSaveStateChange("saved");
+        setDocumentForceResetKey(
+          `${currentPath}:${documentPageRef.current?.version ?? Date.now()}:overwrite`,
+        );
+      }
+    } finally {
+      documentResolutionRef.current = false;
+      setDocumentResolutionPending(false);
     }
-    const savedDocument = savedResult ?? {
-      ...currentDocument,
-      content,
-      title,
-    };
-
-    applyDocumentPage(savedDocument);
-    refreshActiveOpenFile(savedDocument);
-    documentDirtyRef.current = false;
-    handleDocumentSaveStateChange("saved");
-    setDocumentDiskChangeState("clean");
-    setDocumentForceResetKey(
-      `${currentPath}:${savedDocument.version ?? Date.now()}:overwrite`,
-    );
-  }, [applyDocumentPage, handleDocumentSaveStateChange, refreshActiveOpenFile]);
+  }, [
+    handleSaveDocument,
+    handleDocumentSaveStateChange,
+    setDocumentDiskChangeState,
+  ]);
 
   const switchToOpenFileResult = useCallback(
     async (
@@ -2566,6 +2627,7 @@ export function App() {
     if (!backend?.watchMarkdownFile || !activeDocumentPath) return;
 
     let disposed = false;
+    let latestRead = 0;
     const watchedBackend = backend;
     const watchedProjectPath = backend.info.projectPath;
     const watchedAbsolutePath = activeDocumentAbsolutePath;
@@ -2573,52 +2635,83 @@ export function App() {
       activeDocumentPath,
       (event) => {
         if (disposed || event.path !== activeDocumentPath) return;
-
-        const action = resolveDiskWatchEventAction({
-          event,
-          currentVersion: documentPageRef.current?.version,
-          diskChangeState: documentDiskChangeState,
-          isDirty: documentDirtyRef.current,
-        });
-        if (action === "ignore") return;
-
-        if (action === "missing") {
-          setDocumentDiskChangeState("missing");
-          return;
-        }
-
-        if (action === "mark-changed") {
-          setDocumentDiskChangeState("changed");
-          return;
-        }
+        const read = ++latestRead;
+        const stillWatchingActiveFile = () =>
+          !disposed &&
+          read === latestRead &&
+          backendRef.current === watchedBackend &&
+          watchedBackend.info.projectPath === watchedProjectPath &&
+          activeDocumentAbsolutePathRef.current === watchedAbsolutePath;
 
         void (async () => {
-          const stillWatchingActiveFile = () =>
-            !disposed &&
-            backendRef.current === watchedBackend &&
-            watchedBackend.info.projectPath === watchedProjectPath &&
-            activeDocumentAbsolutePathRef.current === watchedAbsolutePath;
-          if (!stillWatchingActiveFile()) return;
-
-          const result = await fetchDocumentFromDisk(
-            watchedBackend,
-            activeDocumentPath,
-          );
-          if (!stillWatchingActiveFile()) return;
-          if (result.status === "missing") {
-            setDocumentDiskChangeState("missing");
-            return;
-          }
-          if (result.status === "error") {
-            console.error(
-              "Failed to reload changed markdown file:",
-              result.error,
+          while (stillWatchingActiveFile()) {
+            // The watcher can see our write before its HTTP response arrives.
+            // Wait for its acknowledgement before classifying the disk content.
+            const write = documentWriteRef.current;
+            if (write?.path === watchedAbsolutePath) {
+              await write.completion.catch(() => {});
+              continue;
+            }
+            if (documentDiskChangeStateRef.current === "paused" && event.exists)
+              return;
+            const versionBeforeRead = documentPageRef.current?.version;
+            const result = await fetchDocumentFromDisk(
+              watchedBackend,
+              activeDocumentPath,
             );
+            if (!stillWatchingActiveFile()) return;
+            if (
+              documentWriteRef.current?.path === watchedAbsolutePath ||
+              documentPageRef.current?.version !== versionBeforeRead
+            ) {
+              continue;
+            }
+            if (result.status === "error") {
+              console.error(
+                "Failed to reload changed markdown file:",
+                result.error,
+              );
+              return;
+            }
+            const nextDocument =
+              result.status === "loaded" ? result.document : null;
+            const action = resolveDiskWatchEventAction({
+              event: {
+                path: activeDocumentPath,
+                exists: !!nextDocument,
+                version: nextDocument?.version ?? null,
+              },
+              currentVersion: documentPageRef.current?.version,
+              diskChangeState: documentDiskChangeStateRef.current,
+              isDirty: documentDirtyRef.current,
+            });
+            if (action === "ignore") return;
+            if (action === "missing") {
+              setDocumentDiskChangeState("missing");
+              return;
+            }
+            if (!nextDocument) return;
+            if (nextDocument.content === documentPageRef.current?.content) {
+              // A metadata-only update must not touch a newer local draft.
+              applyDocumentPage(nextDocument, false);
+              refreshActiveOpenFile(nextDocument);
+              return;
+            }
+            if (
+              action === "mark-changed" ||
+              documentDiskChangeStateRef.current === "conflict" ||
+              documentDiskChangeStateRef.current === "changed"
+            ) {
+              if (documentDiskChangeStateRef.current !== "conflict") {
+                setDocumentDiskChangeState("changed");
+              }
+              return;
+            }
+            applyDocumentPage(nextDocument);
+            refreshActiveOpenFile(nextDocument);
+            setDocumentDiskChangeState("clean");
             return;
           }
-          applyDocumentPage(result.document);
-          refreshActiveOpenFile(result.document);
-          setDocumentDiskChangeState("clean");
         })();
       },
     );
@@ -2632,8 +2725,8 @@ export function App() {
     activeDocumentPath,
     applyDocumentPage,
     backend,
-    documentDiskChangeState,
     refreshActiveOpenFile,
+    setDocumentDiskChangeState,
   ]);
 
   const handleDocumentEditorViewModeChange = useCallback(
@@ -2827,6 +2920,7 @@ export function App() {
           onViewControllerChange={handleDocumentViewControllerChange}
           documentDiskChangeState={documentDiskChangeState}
           documentForceResetKey={documentForceResetKey}
+          documentResolutionPending={documentResolutionPending}
           documentViewRestoreRequest={documentViewRestoreRequest}
           onReloadDocumentFromDisk={handleReloadDocumentFromDisk}
           onKeepEditingWithoutAutosave={handleKeepEditingWithoutAutosave}
