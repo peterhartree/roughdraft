@@ -4,6 +4,7 @@ import {
   resolveDroppedMarkdownPath,
 } from "./dropped-markdown.js";
 import { LOCATE_MARKDOWN_IPC_CHANNEL } from "./locate-markdown.js";
+import { RECENT_DOCUMENTS_IPC_CHANNEL } from "./recent-documents-channel.js";
 
 contextBridge.exposeInMainWorld("roughdraftDesktop", {
   locateMarkdownFile: async (): Promise<string | null> => {
@@ -11,6 +12,9 @@ contextBridge.exposeInMainWorld("roughdraftDesktop", {
       LOCATE_MARKDOWN_IPC_CHANNEL,
     );
     return typeof filePath === "string" && filePath.trim() ? filePath : null;
+  },
+  setRecentDocuments: (paths: string[]): void => {
+    ipcRenderer.send(RECENT_DOCUMENTS_IPC_CHANNEL, paths);
   },
 });
 

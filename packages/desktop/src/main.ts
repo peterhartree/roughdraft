@@ -21,6 +21,8 @@ import {
   resolveMarkdownOpenIntent,
 } from "./native-open.js";
 import { shouldAllowRendererPermission } from "./permission-policy.js";
+import { parseRecentDocumentPaths } from "./recent-documents.js";
+import { RECENT_DOCUMENTS_IPC_CHANNEL } from "./recent-documents-channel.js";
 import {
   isAllowedExternalUrl,
   isAllowedNavigation,
@@ -52,6 +54,7 @@ let validatedOrigin: string | null = null;
 let loadingErrorDocument = false;
 const nativeOpenPaths = new NativeOpenPathQueue();
 let nativeOpenDelivery = Promise.resolve();
+let recentDocumentPaths: string[] = [];
 
 function focusMainWindow(): void {
   if (!mainWindow || mainWindow.isDestroyed()) return;
@@ -112,6 +115,10 @@ async function chooseMarkdownFile(): Promise<void> {
   const filePath = result.filePaths[0];
   if (result.canceled || !filePath) return;
 
+  await openMarkdownPath(filePath);
+}
+
+async function openMarkdownPath(filePath: string): Promise<void> {
   nativeOpenPaths.request(filePath);
   await ensureNativeOpenDestination();
 }
@@ -119,9 +126,17 @@ async function chooseMarkdownFile(): Promise<void> {
 function installApplicationMenu(): void {
   Menu.setApplicationMenu(
     Menu.buildFromTemplate(
-      createApplicationMenuTemplate(() => {
-        void chooseMarkdownFile();
-      }),
+      createApplicationMenuTemplate(
+        {
+          openMarkdownFile: () => {
+            void chooseMarkdownFile();
+          },
+          openRecentDocument: (filePath) => {
+            void openMarkdownPath(filePath);
+          },
+        },
+        recentDocumentPaths,
+      ),
     ),
   );
 }
@@ -303,6 +318,23 @@ if (!hasSingleInstanceLock) {
       }
 
       nativeOpenPaths.request(filePath);
+    });
+
+    ipcMain.on(RECENT_DOCUMENTS_IPC_CHANNEL, (event, value: unknown) => {
+      if (
+        !isMainWindowWebContents(event.sender) ||
+        event.senderFrame !== event.sender.mainFrame
+      ) {
+        return;
+      }
+
+      const paths = parseRecentDocumentPaths(value);
+      if (!paths || paths.join("\0") === recentDocumentPaths.join("\0")) {
+        return;
+      }
+
+      recentDocumentPaths = paths;
+      installApplicationMenu();
     });
 
     ipcMain.handle(LOCATE_MARKDOWN_IPC_CHANNEL, async (event) => {

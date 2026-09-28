@@ -9,5 +9,6 @@ declare module "@joplin/turndown-plugin-gfm" {
 interface Window {
   roughdraftDesktop?: {
     locateMarkdownFile?: () => Promise<string | null>;
+    setRecentDocuments?: (paths: string[]) => void;
   };
 }

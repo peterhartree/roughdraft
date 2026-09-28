@@ -1,7 +1,29 @@
 import type { MenuItemConstructorOptions } from "electron";
+import { createRecentDocumentMenuEntries } from "./recent-documents.js";
+
+export interface ApplicationMenuActions {
+  openMarkdownFile: () => void;
+  openRecentDocument: (filePath: string) => void;
+}
+
+function createOpenRecentSubmenu(
+  recentDocumentPaths: string[],
+  openRecentDocument: (filePath: string) => void,
+): MenuItemConstructorOptions[] {
+  if (recentDocumentPaths.length === 0) {
+    return [{ label: "No recent documents", enabled: false }];
+  }
+
+  return createRecentDocumentMenuEntries(recentDocumentPaths).map((entry) => ({
+    label: entry.label,
+    toolTip: entry.path,
+    click: () => openRecentDocument(entry.path),
+  }));
+}
 
 export function createApplicationMenuTemplate(
-  openMarkdownFile: () => void,
+  actions: ApplicationMenuActions,
+  recentDocumentPaths: string[] = [],
   platform = process.platform,
 ): MenuItemConstructorOptions[] {
   const template: MenuItemConstructorOptions[] = [];
@@ -17,7 +39,14 @@ export function createApplicationMenuTemplate(
         {
           label: "Open…",
           accelerator: "CommandOrControl+O",
-          click: () => openMarkdownFile(),
+          click: () => actions.openMarkdownFile(),
+        },
+        {
+          label: "Open Recent",
+          submenu: createOpenRecentSubmenu(
+            recentDocumentPaths,
+            actions.openRecentDocument,
+          ),
         },
         { type: "separator" },
         { role: "close" },

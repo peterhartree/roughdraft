@@ -1639,6 +1639,13 @@ export function App() {
     [],
   );
 
+  // Mirror the list into the desktop app's File > Open Recent menu.
+  useEffect(() => {
+    window.roughdraftDesktop?.setRecentDocuments?.(
+      recentDocuments.map((document) => document.path),
+    );
+  }, [recentDocuments]);
+
   const forgetRecentDocument = useCallback(
     (path: string) => {
       updateRecentDocuments((current) => removeRecentDocument(current, path));
