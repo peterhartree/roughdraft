@@ -153,7 +153,9 @@ async function createMainWindow(): Promise<void> {
       allowRunningInsecureContent: false,
       contextIsolation: true,
       nodeIntegration: false,
-      preload: fileURLToPath(new URL("./preload.js", import.meta.url)),
+      // Sandboxed preloads cannot load ES modules, so the build bundles this
+      // one into a single CommonJS file.
+      preload: fileURLToPath(new URL("./preload.cjs", import.meta.url)),
       sandbox: true,
       webSecurity: true,
     },
