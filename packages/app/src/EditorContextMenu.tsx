@@ -489,7 +489,11 @@ export function EditorContextMenu({
       );
       if (!target) return;
 
-      if (isResolvedLinkTarget(target)) {
+      // Only in-page anchors and linked Markdown documents replace this view;
+      // other files (audio, PDFs, images) would leave no way back to the editor.
+      const opensInPlace =
+        target.startsWith("#") || resolveLinkUrl?.(rawHref) === target;
+      if (!opensInPlace) {
         window.open(target, "_blank", "noopener,noreferrer");
         return;
       }

@@ -132,6 +132,13 @@ export function isAllowedNavigation(url: string, origin: string): boolean {
   }
 }
 
+// A same-origin file served for a link (audio, PDF, image, …) would replace the
+// editor, and the desktop window has no Back control to return from it.
+export function isServedFileNavigation(url: string, origin: string): boolean {
+  if (!isAllowedNavigation(url, origin)) return false;
+  return new URL(url).pathname === "/api/files";
+}
+
 export function isAllowedExternalUrl(url: string): boolean {
   try {
     const protocol = new URL(url).protocol;

@@ -113,4 +113,47 @@ test.describe("clicking links in the rich-text editor", () => {
       )
       .toMatch(/other\.md$/);
   });
+
+  test("plain click on a relative non-markdown file link opens it in a new tab and keeps this document @smoke", async ({
+    page,
+  }) => {
+    const filePath = writeProjectFile(
+      projectDir,
+      "notes.md",
+      ["# Notes", "", "Listen to the [clip](clip.mp3) first.", ""].join("\n"),
+    );
+    writeProjectFile(projectDir, "clip.mp3", "not really audio\n");
+
+    await openMarkdownFile(page, filePath);
+    const editorUrl = page.url();
+
+    const link = richTextEditor(page).locator(
+      'a[data-markdown-src="clip.mp3"]',
+    );
+    await expect(link).toBeVisible();
+
+    const popupPromise = page
+      .waitForEvent("popup", { timeout: 5_000 })
+      .catch(() => null);
+    await link.click();
+    const popup = await popupPromise;
+
+    logE2eEvent("link-click.relative-file", {
+      popupOpened: popup !== null,
+      popupUrl: popup?.url() ?? null,
+      pageUrl: page.url(),
+    });
+
+    expect(
+      page.url(),
+      "expected clicking a link to a non-markdown file to leave the editor window on the current document",
+    ).toBe(editorUrl);
+    await expect(richTextEditor(page)).toBeVisible();
+    expect(
+      popup,
+      "expected clicking a link to a non-markdown file to open it in a new tab (window.open popup), but no popup appeared",
+    ).not.toBeNull();
+    expect(popup?.url()).toContain("/api/files");
+    expect(popup?.url()).toContain("clip.mp3");
+  });
 });

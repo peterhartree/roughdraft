@@ -26,6 +26,7 @@ import { RECENT_DOCUMENTS_IPC_CHANNEL } from "./recent-documents-channel.js";
 import {
   isAllowedExternalUrl,
   isAllowedNavigation,
+  isServedFileNavigation,
   readManagedServerTarget,
   resolveManagedServerStateFile,
   verifyManagedServerTarget,
@@ -186,6 +187,11 @@ async function createMainWindow(): Promise<void> {
     if (loadingErrorDocument && url.startsWith("data:text/html")) return;
     if (!validatedOrigin || !isAllowedNavigation(url, validatedOrigin)) {
       event.preventDefault();
+      return;
+    }
+    if (isServedFileNavigation(url, validatedOrigin)) {
+      event.preventDefault();
+      void shell.openExternal(url);
     }
   };
   mainWindow.webContents.on("will-navigate", preventDisallowedNavigation);

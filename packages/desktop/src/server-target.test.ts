@@ -6,6 +6,7 @@ import {
   readManagedServerTarget,
   isAllowedExternalUrl,
   isAllowedNavigation,
+  isServedFileNavigation,
   resolveManagedServerStateFile,
   validateManagedServerTarget,
   verifyManagedServerTarget,
@@ -130,6 +131,27 @@ describe("managed server target validation", () => {
     expect(
       isAllowedNavigation(
         "https://example.com/phishing",
+        "http://localhost:7373",
+      ),
+    ).toBe(false);
+  });
+
+  it("recognises navigation to a served file on the Roughdraft origin", () => {
+    expect(
+      isServedFileNavigation(
+        "http://localhost:7373/api/files?projectPath=%2Ftmp&path=clip.mp3",
+        "http://localhost:7373",
+      ),
+    ).toBe(true);
+    expect(
+      isServedFileNavigation(
+        "http://localhost:7373/?path=%2Ftmp%2Fa.md",
+        "http://localhost:7373",
+      ),
+    ).toBe(false);
+    expect(
+      isServedFileNavigation(
+        "https://example.com/api/files?path=clip.mp3",
         "http://localhost:7373",
       ),
     ).toBe(false);
