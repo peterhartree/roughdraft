@@ -15,6 +15,7 @@ import { createApplicationMenuTemplate } from "./application-menu.js";
 import { shouldSuppressNativeDocumentShortcut } from "./document-shortcuts.js";
 import { DROPPED_MARKDOWN_IPC_CHANNEL } from "./dropped-markdown.js";
 import { LOCATE_MARKDOWN_IPC_CHANNEL } from "./locate-markdown.js";
+import { createManagedServerLoader } from "./managed-server-loader.js";
 import {
   NativeOpenPathQueue,
   postOpenDocumentIntent,
@@ -216,56 +217,36 @@ async function createMainWindow(): Promise<void> {
   await loadManagedServer();
 }
 
-let serverLoadFailures = 0;
-let serverLoadRetryTimer: NodeJS.Timeout | null = null;
-
-function cancelServerLoadRetry(): void {
-  if (serverLoadRetryTimer === null) return;
-  clearTimeout(serverLoadRetryTimer);
-  serverLoadRetryTimer = null;
-}
-
-async function loadManagedServer(): Promise<void> {
-  cancelServerLoadRetry();
-  if (!mainWindow || mainWindow.isDestroyed()) return;
-
-  try {
-    await startManagedServer();
-    const stateFile = resolveManagedServerStateFile();
-    const target = await verifyManagedServerTarget(
-      readManagedServerTarget(stateFile),
-    );
-    appendDesktopSlog("desktop.server-target.verified", {
-      port: target.port,
-    });
-    serverLoadFailures = 0;
-    validatedOrigin = target.url;
-    await mainWindow.loadURL(target.url);
-    nativeOpenPaths.connect(scheduleNativeOpenPath);
-  } catch (error) {
-    validatedOrigin = null;
-    nativeOpenPaths.disconnect();
-    const message = error instanceof Error ? error.message : String(error);
-    serverLoadFailures += 1;
-    const retryDelayMs = nextServerLoadRetryDelay(serverLoadFailures);
-    appendDesktopSlog("desktop.server-target.failed", {
-      message,
-      failures: serverLoadFailures,
-      retryDelayMs,
-    });
-    if (retryDelayMs !== null) {
-      serverLoadRetryTimer = setTimeout(() => {
-        serverLoadRetryTimer = null;
-        void loadManagedServer();
-      }, retryDelayMs);
-    }
+const managedServerLoader = createManagedServerLoader<BrowserWindow>({
+  resolvePage: () =>
+    mainWindow && !mainWindow.isDestroyed() ? mainWindow : null,
+  startServer: startManagedServer,
+  resolveTarget: () =>
+    verifyManagedServerTarget(
+      readManagedServerTarget(resolveManagedServerStateFile()),
+    ),
+  loadUrl: (window, url) => window.loadURL(url),
+  loadErrorDocument: async (window, message) => {
     loadingErrorDocument = true;
     try {
-      await mainWindow.loadURL(errorDocument(message));
+      await window.loadURL(errorDocument(message));
     } finally {
       loadingErrorDocument = false;
     }
-  }
+  },
+  setOrigin: (origin) => {
+    validatedOrigin = origin;
+  },
+  onConnected: () => nativeOpenPaths.connect(scheduleNativeOpenPath),
+  onDisconnected: () => nativeOpenPaths.disconnect(),
+  nextRetryDelay: nextServerLoadRetryDelay,
+  setTimer: (callback, delayMs) => setTimeout(callback, delayMs),
+  clearTimer: (handle) => clearTimeout(handle as NodeJS.Timeout),
+  slog: appendDesktopSlog,
+});
+
+function loadManagedServer(): Promise<void> {
+  return managedServerLoader.load();
 }
 
 app.on("open-file", (event, filePath) => {
