@@ -28,6 +28,12 @@
         ],
         "createdAt": "2026-08-30T14:34:00.839Z",
         "reason": "model: pre-existing homepage highlight uses text-slate-950 on pale #fff5c7 - near-black on light background, contrast is fine; rule misfires"
+      },
+      {
+        "rule": "overused-font",
+        "value": "inter",
+        "createdAt": "2026-10-06T09:01:03.027Z",
+        "reason": "Claude: Inter is Roughdraft's established UI font (packages/app/src/style.css --font-sans: Inter Variable)"
       }
     ]
   }
