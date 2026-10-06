@@ -190,7 +190,15 @@ function markdownTableDividerForCell(cell: HTMLTableCellElement): string {
 
 function markdownTableDividerForRow(row: HTMLTableRowElement): string {
   const dividers = Array.from(row.cells).map(markdownTableDividerForCell);
-  return `| ${dividers.join(" | ")} |`;
+  return `|${dividers.join("|")}|`;
+}
+
+// Agent-written tables use `|---|---:|` dividers and unpadded cells; the GFM
+// plugin pads both, which rewrites every table on save.
+function compactMarkdownTableLine(line: string, index: number): string {
+  return index === 1 && isMarkdownTableDivider(line)
+    ? line.replace(/\s+/g, "")
+    : line.replace(/ {2,}(?=\|)/g, " ");
 }
 
 function resolveRenderedUrl(
@@ -501,11 +509,6 @@ export function createTurndownService(): TurndownService {
               .replace(/^(\[[ xX]\])[ \t]*(?:\r?\n[ \t]*)+(?=\S)/, "$1 ")
               .trimEnd()
           : content;
-      const trimmed = normalizedContent
-        .replace(/^\n+/, "")
-        .replace(/\n+$/, "\n")
-        .replace(/\n/gm, "\n  ");
-
       let prefix = `${options.bulletListMarker} `;
       const parent = node.parentNode;
       if (parent && parent.nodeName === "OL") {
@@ -513,6 +516,16 @@ export function createTurndownService(): TurndownService {
         const index = Array.prototype.indexOf.call(parent.children, node);
         prefix = `${start ? Number(start) + index : index + 1}. `;
       }
+
+      // Continuation lines must reach the item's content column, which
+      // depends on the marker width ("- " is 2, "1. " is 3, "10. " is 4).
+      const indent = " ".repeat(prefix.length);
+      const trimmed = normalizedContent
+        .replace(/^\n+/, "")
+        .replace(/\n+$/, "\n")
+        // Keep a nested list tight against the paragraph that introduces it.
+        .replace(/\n{2,}(?=(?:[-*+]|1[.)]) )/g, "\n")
+        .replace(/\n(?=[^\n])/g, `\n${indent}`);
 
       return (
         prefix +
@@ -547,7 +560,7 @@ export function createTurndownService(): TurndownService {
       const captionContent = table.caption?.textContent || "";
       const caption = captionContent ? `${captionContent}\n\n` : "";
 
-      return `\n\n${caption}${lines.join("\n")}\n\n`;
+      return `\n\n${caption}${lines.map(compactMarkdownTableLine).join("\n")}\n\n`;
     },
   });
 
@@ -630,20 +643,36 @@ export function createTurndownService(): TurndownService {
 
 const turndown = createTurndownService();
 
+const codeFenceOpenPattern = /^\s*(`{3,}|~{3,})/;
+
 /**
- * Collapse runs of 3+ newlines to 2 and remove the blank line that
- * Turndown inserts before/after ATX headings.  This keeps block
- * separation where it matters (between consecutive paragraphs) while
- * producing a more compact output that round-trips with fewer
- * gratuitous whitespace changes.
+ * Collapse runs of blank lines between blocks to a single blank line.
+ * Fenced code is left byte-for-byte intact, since blank lines there are
+ * content.
  */
 export function normalizeBlockSpacing(md: string): string {
-  let normalized = md.replace(/\n{3,}/g, "\n\n");
-  // Remove blank line immediately before a heading.
-  normalized = normalized.replace(/\n\n(#{1,6} )/g, "\n$1");
-  // Remove blank line immediately after a heading line.
-  normalized = normalized.replace(/(^#{1,6} [^\n]+)\n\n/gm, "$1\n");
-  return normalized;
+  const output: string[] = [];
+  let openFence: string | null = null;
+
+  for (const line of md.split("\n")) {
+    if (openFence) {
+      output.push(line);
+      const trimmed = line.trim();
+      if (
+        trimmed.startsWith(openFence) &&
+        trimmed === trimmed[0]?.repeat(trimmed.length)
+      ) {
+        openFence = null;
+      }
+      continue;
+    }
+
+    openFence = codeFenceOpenPattern.exec(line)?.[1] ?? null;
+    if (line === "" && output.at(-1) === "") continue;
+    output.push(line);
+  }
+
+  return output.join("\n");
 }
 
 export function toMarkdown(html: string): string {

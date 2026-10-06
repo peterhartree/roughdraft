@@ -626,7 +626,7 @@ describe("PageCard editor integration", () => {
       page: {
         id: "doc-frontmatter-autosave-1",
         title: "Doc Frontmatter Autosave 1",
-        content: `${frontmatter}# Body\nKeep this body editable.\n`,
+        content: `${frontmatter}# Body\n\nKeep this body editable.\n`,
       },
       selected: true,
     });
@@ -642,7 +642,7 @@ describe("PageCard editor integration", () => {
 
     expect(rendered.onSave).toHaveBeenCalledTimes(1);
     expect(rendered.onSave.mock.calls[0]?.[1]).toBe(
-      `${frontmatter}# Body\nKeep this body editable. updated\n`,
+      `${frontmatter}# Body\n\nKeep this body editable. updated\n`,
     );
   });
 
@@ -692,8 +692,9 @@ describe("PageCard editor integration", () => {
   it("rich-text edits preserve normal markdown table headers on autosave", async () => {
     const content = [
       "# Body",
+      "",
       "| Column | Value |",
-      "| --- | --- |",
+      "|---|---|",
       "| Body table | This table should remain editable as Markdown content. |",
       "",
     ].join("\n");
@@ -719,8 +720,9 @@ describe("PageCard editor integration", () => {
     expect(rendered.onSave.mock.calls[0]?.[1]).toBe(
       [
         "# Body",
+        "",
         "| Column | Value |",
-        "| --- | --- |",
+        "|---|---|",
         "| Body table | This table should remain editable as Markdown content. |",
         "",
         "updated",
@@ -734,7 +736,7 @@ describe("PageCard editor integration", () => {
       label: "as first body block",
       bodyLines: [
         "| Column | Value |",
-        "| --- | --- |",
+        "|---|---|",
         "| Body table | This table is the first body block. |",
       ],
     },
@@ -742,8 +744,9 @@ describe("PageCard editor integration", () => {
       label: "after a heading",
       bodyLines: [
         "# Body",
+        "",
         "| Column | Value |",
-        "| --- | --- |",
+        "|---|---|",
         "| Body table | This table follows a heading. |",
       ],
     },

@@ -113,6 +113,7 @@ describe("toHtml", () => {
     expect(toMarkdown(toHtml(readMarkdownFixture("headerless-table.md")))).toBe(
       [
         "# Headerless Table",
+        "",
         "|     |     |",
         "| --- | --- |",
         "| First | Ready |",
@@ -124,21 +125,27 @@ describe("toHtml", () => {
 });
 
 describe("normalizeBlockSpacing", () => {
-  it("does not add blank lines between headings and adjacent blocks on round-trip", () => {
-    const compact = [
+  it("keeps one blank line around headings on round-trip", () => {
+    const spaced = [
       "# OpenAI Chat API Compatibility Plan",
+      "",
       "## Goal",
+      "",
       "Build a Python/Flask service that exposes endpoints.",
+      "",
       "## Source References",
+      "",
       "- Codex app-server documentation",
       "- OpenAI Chat Completions overview",
+      "",
       "## Key Capabilities",
+      "",
       "1. First capability",
       "2. Second capability",
       "",
     ].join("\n");
 
-    expect(toMarkdown(toHtml(compact))).toBe(compact);
+    expect(toMarkdown(toHtml(spaced))).toBe(spaced);
   });
 
   it("preserves paragraph separation", () => {

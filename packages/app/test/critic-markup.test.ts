@@ -37,6 +37,7 @@ describe("CriticMarkup comments", () => {
       "---",
       "",
       "# Body",
+      "",
       "Opening this file in rich text should not rewrite frontmatter.",
       "",
     ].join("\n");
@@ -1293,6 +1294,67 @@ describe("Markdown rich-text round-trip regressions", () => {
       `| Pipe-sensitive | ${value} |`,
       "",
     ].join("\n");
+
+    expect(richTextRoundTrip(input)).toBe(input);
+  });
+});
+
+describe("Markdown rich-text round-trip of agent-written block layout", () => {
+  it.each([
+    { label: "bullet", input: "- a\n- b\n- c\n" },
+    { label: "numbered", input: "1. a\n2. b\n" },
+  ])("keeps tight $label lists free of whitespace-only lines", ({ input }) => {
+    expect(richTextRoundTrip(input)).toBe(input);
+  });
+
+  it.each([
+    {
+      label: "a one-digit marker",
+      input: ["1. First:", "   - x", "   - y", "2. Second", ""].join("\n"),
+    },
+    {
+      label: "a two-digit marker",
+      input: ["10. Item:", "    - x", "    - y", "11. Next", ""].join("\n"),
+    },
+  ])("keeps bullets nested under $label across two round trips", ({
+    input,
+  }) => {
+    const once = richTextRoundTrip(input);
+    const twice = richTextRoundTrip(once);
+
+    expect({ once, twice }).toEqual({ once: input, twice: input });
+  });
+
+  it.each([
+    {
+      label: "consecutive blank lines in a text fence",
+      input: ["```text", "first", "", "", "second", "```", ""].join("\n"),
+    },
+    {
+      label: "blank lines around comment lines in a bash fence",
+      input: [
+        "```bash",
+        "echo a",
+        "",
+        "# comment",
+        "",
+        "echo b",
+        "```",
+        "",
+      ].join("\n"),
+    },
+  ])("preserves $label", ({ input }) => {
+    expect(richTextRoundTrip(input)).toBe(input);
+  });
+
+  it("keeps one blank line before and after headings", () => {
+    const input = "# Title\n\nIntro.\n\n## Section\n\nBody.\n";
+
+    expect(richTextRoundTrip(input)).toBe(input);
+  });
+
+  it("keeps compact table delimiter rows and their alignment", () => {
+    const input = "| A | B | C |\n|---|---:|:---:|\n| 1 | 2 | 3 |\n";
 
     expect(richTextRoundTrip(input)).toBe(input);
   });
