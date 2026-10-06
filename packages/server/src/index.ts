@@ -14,6 +14,7 @@ import {
 } from "./network.js";
 import { markdownTreeFromQuery } from "./markdown-tree.js";
 import { OpenRequestBroker } from "./open-requests.js";
+import { moveToTrash } from "./trash.js";
 import { resolveUpdateStatus } from "./update-status.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -65,6 +66,8 @@ interface CreateAppOptions {
   fetchImpl?: typeof fetch;
   packageName?: string;
   remoteDocumentToken?: string;
+  /** Moves an absolute file path to the OS Trash; tests inject a fake. */
+  trashFile?: (absolutePath: string) => Promise<void>;
 }
 
 interface CreateAppResult {
@@ -383,6 +386,7 @@ export function createApp(options: CreateAppOptions = {}): CreateAppResult {
   const serverRoot = path.resolve(options.serverRoot ?? defaultServerRoot);
   const staticDirPath = options.staticDirPath ?? staticDir;
   const fetchImpl = options.fetchImpl ?? fetch;
+  const trashFile = options.trashFile ?? ((filePath) => moveToTrash(filePath));
   const remoteDocumentToken =
     typeof options.remoteDocumentToken === "string" &&
     options.remoteDocumentToken.length > 0
@@ -604,6 +608,43 @@ export function createApp(options: CreateAppOptions = {}): CreateAppResult {
     req.on("close", () => {
       fs.unwatchFile(absolutePath, listener);
     });
+  });
+
+  app.post("/api/markdown-file/trash", async (req, res) => {
+    const requestedPath: unknown = req.body?.path;
+    if (typeof requestedPath !== "string" || requestedPath.length === 0) {
+      res.status(400).json({ error: "path is required" });
+      return;
+    }
+    if (!path.isAbsolute(requestedPath)) {
+      res.status(400).json({ error: "path must be absolute" });
+      return;
+    }
+
+    const absolutePath = path.resolve(requestedPath);
+    let isRegularFile = false;
+    try {
+      isRegularFile = fs.statSync(absolutePath).isFile();
+    } catch {
+      isRegularFile = false;
+    }
+    if (!absolutePath.toLowerCase().endsWith(".md") || !isRegularFile) {
+      res.status(404).json({ error: "Markdown file not found" });
+      return;
+    }
+
+    try {
+      await trashFile(absolutePath);
+    } catch (error) {
+      const message =
+        error instanceof Error && error.message.length > 0
+          ? error.message
+          : "Couldn't move the file to the Trash.";
+      res.status(500).json({ error: message });
+      return;
+    }
+
+    res.json({ path: absolutePath });
   });
 
   app.get("/api/review-index", (req, res) => {
@@ -1150,9 +1191,14 @@ export function createApp(options: CreateAppOptions = {}): CreateAppResult {
 
 export const ROUGHDRAFT_TOKEN_ENV = "ROUGHDRAFT_TOKEN";
 
+export interface CreateServerOptions {
+  trashFile?: CreateAppOptions["trashFile"];
+}
+
 export async function createServer(
   port = ROUGHDRAFT_DEFAULT_PORT,
   projectDir?: string,
+  serverOptions: CreateServerOptions = {},
 ): Promise<void> {
   const bindHosts = resolveBindHosts();
   const remoteDocumentToken = process.env[ROUGHDRAFT_TOKEN_ENV] ?? "";
@@ -1174,6 +1220,7 @@ export async function createServer(
     projectDir,
     remoteDocumentToken:
       remoteDocumentToken.length > 0 ? remoteDocumentToken : undefined,
+    trashFile: serverOptions.trashFile,
   });
   const listeningHosts: string[] = [];
 
