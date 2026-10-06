@@ -12,6 +12,7 @@ import {
   ROUGHDRAFT_PUBLIC_HOST,
   resolveBindHosts,
 } from "./network.js";
+import { markdownTreeFromQuery } from "./markdown-tree.js";
 import { OpenRequestBroker } from "./open-requests.js";
 import { resolveUpdateStatus } from "./update-status.js";
 
@@ -1039,6 +1040,18 @@ export function createApp(options: CreateAppOptions = {}): CreateAppResult {
     if (!projectDir) return;
 
     res.json(listProjectTree(projectDir));
+  });
+
+  app.get("/api/markdown-tree", async (req, res) => {
+    const result = await markdownTreeFromQuery(
+      { file: req.query.file, root: req.query.root },
+      homeDir,
+    );
+    if (result.status === 200) {
+      res.json(result.listing);
+      return;
+    }
+    res.status(result.status).json({ error: result.error });
   });
 
   app.post("/api/project/open", (req, res) => {
