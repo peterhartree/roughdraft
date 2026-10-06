@@ -65,13 +65,16 @@ import {
   type DocumentViewState,
   getRestorableDocumentViewState,
 } from "./document-view-state";
+import { FileBrowser } from "./FileBrowser";
 import { cn } from "./lib/utils";
 import { MissingFilePanel } from "./MissingFilePanel";
-import { OpenFileSidebar } from "./OpenFileSidebar";
+import { OpenFileSidebar, type SidebarBrowseSection } from "./OpenFileSidebar";
 import { OpenFileSwitcher } from "./OpenFileSwitcher";
 import {
   getOpenFileCloseCandidates,
   getOpenFileShortcut,
+  getOpenFileStepShortcut,
+  getSteppedOpenFilePath,
   isCloseAllOpenFilesShortcut,
   isCloseOpenFileShortcut,
   isOpenFileSwitcherShortcut,
@@ -106,6 +109,7 @@ import {
 } from "./storage";
 import { UpdateNotice } from "./UpdateNotice";
 import { fetchUpdateStatus, type UpdateStatus } from "./update-status";
+import { useFileBrowser } from "./useFileBrowser";
 
 export type { DocumentDiskChangeState } from "./disk-change-state";
 
@@ -133,6 +137,7 @@ export function shouldWarnBeforeUnload({
 const AGENT_SETUP_PROMPT =
   "Install Roughdraft for me using `npm i -g roughdraft`, then read https://roughdraft.md/setup.md and set yourself up to use it.";
 const PREVIEW_DOCUMENT_PATH = "preview.md";
+const SIDEBAR_WIDTH = "15.5rem";
 const PREVIEW_INITIAL_MARKDOWN = [
   "# Live Preview",
   "",
@@ -2604,6 +2609,19 @@ export function App() {
         return;
       }
 
+      const step = getOpenFileStepShortcut(event);
+      if (step) {
+        event.preventDefault();
+        event.stopPropagation();
+        const targetPath = getSteppedOpenFilePath(
+          openFiles,
+          missingOpenFilePath ?? activeDocumentAbsolutePathRef.current,
+          step,
+        );
+        if (targetPath) void switchToOpenFile(targetPath);
+        return;
+      }
+
       const shortcut = getOpenFileShortcut(event, openFiles.length);
       if (!shortcut) return;
 
@@ -2757,6 +2775,80 @@ export function App() {
     window.location.assign(nextUrl.href);
   }, []);
 
+  const fileBrowser = useFileBrowser({
+    enabled: backend?.info.kind === "local-files",
+    activePath: activeDocumentAbsolutePath,
+  });
+
+  // A file chosen in the browser behaves like an explicit open request:
+  // it joins the open list and becomes active unless the switch is blocked,
+  // in which case it waits there unread.
+  const openFileFromBrowser = useCallback(
+    (path: string, modifiedAt: number) => {
+      const activePath = activeDocumentAbsolutePathRef.current;
+      if (openFilesRef.current.some((file) => file.path === path)) {
+        void switchToOpenFile(path);
+        return;
+      }
+      if (
+        !shouldHandleOpenRequestInSession(
+          backendRef.current?.info.kind,
+          activePath,
+        )
+      ) {
+        handleOpenRecentDocument(path);
+        return;
+      }
+      setOpenFiles((current) =>
+        upsertOpenFile(current, {
+          path,
+          modifiedAt,
+          openedAt: Date.now(),
+          unread: true,
+        }),
+      );
+      setPendingOpenRequestPath(path);
+    },
+    [handleOpenRecentDocument, switchToOpenFile],
+  );
+
+  const copyPathToClipboard = useCallback(async (path: string) => {
+    try {
+      await navigator.clipboard.writeText(path);
+    } catch (error) {
+      console.error("Failed to copy document path:", error);
+    }
+  }, []);
+
+  const fileSwitchBlocked =
+    fileSwitchPending ||
+    diskChangeStateBlocksFileSwitch(documentDiskChangeState);
+  const sidebarBrowseSection: SidebarBrowseSection = {
+    content: (
+      <FileBrowser
+        project={fileBrowser.project}
+        pinnedRoots={fileBrowser.pinnedRoots}
+        pins={fileBrowser.pins}
+        pinnedFolders={fileBrowser.preferences.pinnedFolders}
+        activePath={activeDocumentAbsolutePath}
+        openPaths={new Set(openFiles.map((file) => file.path))}
+        disabled={fileSwitchBlocked}
+        isFolderOpen={fileBrowser.isFolderOpen}
+        onToggleFolder={fileBrowser.toggleFolder}
+        onOpenFile={openFileFromBrowser}
+        onPinFolder={fileBrowser.pinFolder}
+        onUnpinFolder={fileBrowser.unpinFolder}
+        onCopyPath={copyPathToClipboard}
+      />
+    ),
+    openSectionHeight: fileBrowser.preferences.openSectionHeight,
+    openSectionCollapsed: fileBrowser.preferences.openSectionCollapsed,
+    browseSectionCollapsed: fileBrowser.preferences.browseSectionCollapsed,
+    onOpenSectionHeightChange: fileBrowser.setOpenSectionHeight,
+    onToggleOpenSection: fileBrowser.toggleOpenSection,
+    onToggleBrowseSection: fileBrowser.toggleBrowseSection,
+  };
+
   if (loading) {
     return (
       <div
@@ -2781,7 +2873,7 @@ export function App() {
   }
 
   if (!requestedPathState.rawPath || loadError) {
-    return (
+    const recentDocumentsPage = (
       <RecentDocumentsPage
         documents={recentDocuments}
         error={loadError}
@@ -2790,6 +2882,31 @@ export function App() {
           updateStatus ? <UpdateNotice updateStatus={updateStatus} /> : null
         }
       />
+    );
+    if (
+      backend?.info.kind !== "local-files" ||
+      fileBrowser.preferences.pinnedFolders.length === 0
+    ) {
+      return recentDocumentsPage;
+    }
+    return (
+      <div
+        className="flex h-screen min-w-0 overflow-hidden bg-[#FCFCFC] dark:bg-background"
+        style={{ "--roughdraft-sidebar-width": SIDEBAR_WIDTH } as CSSProperties}
+      >
+        <OpenFileSidebar
+          files={[]}
+          activePath={null}
+          disabled={false}
+          error={null}
+          onSelect={handleOpenRecentDocument}
+          onCopyPath={copyPathToClipboard}
+          browse={sidebarBrowseSection}
+        />
+        <div className="min-w-0 flex-1 overflow-y-auto">
+          {recentDocumentsPage}
+        </div>
+      </div>
     );
   }
 
@@ -2810,7 +2927,7 @@ export function App() {
       className="relative flex h-screen min-w-0 overflow-hidden bg-[#FCFCFC] text-slate-950 dark:bg-background dark:text-slate-50"
       style={
         showOpenFileSidebar
-          ? ({ "--roughdraft-sidebar-width": "14rem" } as CSSProperties)
+          ? ({ "--roughdraft-sidebar-width": SIDEBAR_WIDTH } as CSSProperties)
           : undefined
       }
     >
@@ -2824,13 +2941,8 @@ export function App() {
           }
           error={fileSwitchError}
           onSelect={(path) => void switchToOpenFile(path)}
-          onCopyPath={async (path) => {
-            try {
-              await navigator.clipboard.writeText(path);
-            } catch (error) {
-              console.error("Failed to copy document path:", error);
-            }
-          }}
+          onCopyPath={copyPathToClipboard}
+          browse={sidebarBrowseSection}
         />
       ) : null}
       {hasOpenFileSidebar ? (

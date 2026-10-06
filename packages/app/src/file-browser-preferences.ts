@@ -1,0 +1,123 @@
+const FILE_BROWSER_PREFERENCES_KEY = "roughdraft.file-browser.v1";
+const MAX_PINNED_FOLDERS = 50;
+const MAX_FOLDER_STATES = 500;
+
+type PreferencesStorage = Pick<Storage, "getItem" | "setItem">;
+
+export interface FileBrowserPreferences {
+  pinnedFolders: string[];
+  /** Explicit open/closed choices; folders without one use the default. */
+  folderOpenStates: Record<string, boolean>;
+  openSectionHeight: number | null;
+  openSectionCollapsed: boolean;
+  browseSectionCollapsed: boolean;
+}
+
+export const DEFAULT_FILE_BROWSER_PREFERENCES: FileBrowserPreferences = {
+  pinnedFolders: [],
+  folderOpenStates: {},
+  openSectionHeight: null,
+  openSectionCollapsed: false,
+  browseSectionCollapsed: false,
+};
+
+function isAbsolutePath(value: unknown): value is string {
+  return typeof value === "string" && value.startsWith("/");
+}
+
+function parsePreferences(value: string): FileBrowserPreferences {
+  const parsed = JSON.parse(value) as Record<string, unknown>;
+  const preferences = { ...DEFAULT_FILE_BROWSER_PREFERENCES };
+
+  if (Array.isArray(parsed.pinnedFolders)) {
+    preferences.pinnedFolders = [
+      ...new Set(parsed.pinnedFolders.filter(isAbsolutePath)),
+    ].slice(0, MAX_PINNED_FOLDERS);
+  }
+
+  if (
+    parsed.folderOpenStates &&
+    typeof parsed.folderOpenStates === "object" &&
+    !Array.isArray(parsed.folderOpenStates)
+  ) {
+    const entries = Object.entries(
+      parsed.folderOpenStates as Record<string, unknown>,
+    ).filter(
+      (entry): entry is [string, boolean] =>
+        isAbsolutePath(entry[0]) && typeof entry[1] === "boolean",
+    );
+    preferences.folderOpenStates = Object.fromEntries(
+      entries.slice(-MAX_FOLDER_STATES),
+    );
+  }
+
+  if (
+    typeof parsed.openSectionHeight === "number" &&
+    Number.isFinite(parsed.openSectionHeight) &&
+    parsed.openSectionHeight > 0
+  ) {
+    preferences.openSectionHeight = parsed.openSectionHeight;
+  }
+
+  preferences.openSectionCollapsed = parsed.openSectionCollapsed === true;
+  preferences.browseSectionCollapsed = parsed.browseSectionCollapsed === true;
+  return preferences;
+}
+
+export function readFileBrowserPreferences(
+  storage: PreferencesStorage,
+): FileBrowserPreferences {
+  try {
+    const value = storage.getItem(FILE_BROWSER_PREFERENCES_KEY);
+    if (value) return parsePreferences(value);
+  } catch {
+    // Corrupt or inaccessible storage falls back to defaults.
+  }
+  return { ...DEFAULT_FILE_BROWSER_PREFERENCES };
+}
+
+export function writeFileBrowserPreferences(
+  storage: PreferencesStorage,
+  preferences: FileBrowserPreferences,
+): void {
+  try {
+    const folderOpenStates = Object.fromEntries(
+      Object.entries(preferences.folderOpenStates).slice(-MAX_FOLDER_STATES),
+    );
+    storage.setItem(
+      FILE_BROWSER_PREFERENCES_KEY,
+      JSON.stringify({
+        ...preferences,
+        pinnedFolders: preferences.pinnedFolders.slice(0, MAX_PINNED_FOLDERS),
+        folderOpenStates,
+      }),
+    );
+  } catch {
+    // Storage failures must not block browsing.
+  }
+}
+
+/**
+ * Records an explicit folder choice, moving it to the end so the oldest
+ * choices are the first dropped when the cap is reached.
+ */
+export function setFolderOpenState(
+  states: Record<string, boolean>,
+  folder: string,
+  open: boolean,
+): Record<string, boolean> {
+  const { [folder]: _previous, ...rest } = states;
+  const next = { ...rest, [folder]: open };
+  const entries = Object.entries(next);
+  return entries.length > MAX_FOLDER_STATES
+    ? Object.fromEntries(entries.slice(-MAX_FOLDER_STATES))
+    : next;
+}
+
+export function isFolderOpen(
+  states: Record<string, boolean>,
+  folder: string,
+  isRoot: boolean,
+) {
+  return states[folder] ?? isRoot;
+}

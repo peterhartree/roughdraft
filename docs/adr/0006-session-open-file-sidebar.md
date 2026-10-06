@@ -6,7 +6,7 @@ Roughdraft can receive document-open intents while its desktop renderer is alrea
 
 ## Decision
 
-The local-file renderer keeps a locally persisted list of Markdown files explicitly opened through its initial URL or later open intents. It does not discover or index neighbouring files.
+The local-file renderer keeps a locally persisted list of Markdown files explicitly opened through its initial URL or later open intents. The list itself does not discover or index neighbouring files; browsing them is a separate sidebar section (see 0007).
 
 The list is ordered by the time each file was opened, most recently opened first (amended 2026-07-28; previously ordered by filesystem modification time, which made entries jump when a file changed on disk or was saved). A file's open time is stamped when it enters the list and refreshed when a later open intent targets it; selecting an already-open file in the sidebar or switcher does not reorder the list. Sessions stored before open times existed restore in their stored order. An incoming open intent immediately becomes the active document (amended 2026-07-21; intents previously stayed queued in the background). When activation is blocked — a pending switch, or an unsaved, conflicted or unsavable current file — the intent stays queued unread until selected. The active path, ordered list and unread state are stored in browser-local storage. On a normal app launch at the root URL, Roughdraft reopens the most recently active available file and restores the sidebar. If that file is unavailable, it tries the other stored files in order and removes unavailable entries. An explicit file URL still wins over the stored active path.
 

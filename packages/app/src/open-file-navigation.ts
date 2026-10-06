@@ -136,6 +136,36 @@ export function getOpenFileShortcut(
   return null;
 }
 
+/** Command+Option+Left/Right step to the previous or next open file. */
+export function getOpenFileStepShortcut(
+  event: OpenFileShortcutEvent,
+): -1 | 1 | null {
+  if (
+    !event.metaKey ||
+    !event.altKey ||
+    event.ctrlKey ||
+    event.shiftKey ||
+    event.repeat ||
+    event.isComposing
+  ) {
+    return null;
+  }
+  if (event.key === "ArrowLeft") return -1;
+  if (event.key === "ArrowRight") return 1;
+  return null;
+}
+
+/** The neighbouring open file in list order; null at either end. */
+export function getSteppedOpenFilePath(
+  files: OpenFileItem[],
+  activePath: string | null,
+  step: -1 | 1,
+) {
+  const activeIndex = files.findIndex((file) => file.path === activePath);
+  if (activeIndex === -1) return null;
+  return files[activeIndex + step]?.path ?? null;
+}
+
 export function isOpenFileSwitcherShortcut(event: OpenFileShortcutEvent) {
   return event.code === "KeyP" && hasExactCommandModifiers(event);
 }
