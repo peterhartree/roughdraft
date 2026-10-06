@@ -7,6 +7,7 @@ import {
   FolderOpen,
   Pin,
   PinOff,
+  Trash2,
 } from "lucide-react";
 import { useRef } from "react";
 import { abbreviateDisplayPath, getPathLeaf } from "./app-navigation";
@@ -21,25 +22,36 @@ import {
   buildFileBrowserTree,
   type FileBrowserDirectory,
   type FileBrowserNode,
+  getPinnedNodesInTree,
 } from "./file-browser";
 import { cn } from "./lib/utils";
 import type { TreeLoadState } from "./useFileBrowser";
 
 const TREE_INDENT_REM = 0.75;
 
+interface ContextTarget {
+  path: string;
+  kind: "file" | "directory";
+  isRoot: boolean;
+}
+
 interface FileBrowserProps {
   project: TreeLoadState | null;
+  projectRootIsPinned: boolean;
   pinnedRoots: string[];
   pins: Record<string, TreeLoadState>;
-  pinnedFolders: string[];
+  projectPins: string[];
   activePath: string | null;
   openPaths: Set<string>;
   disabled: boolean;
   isFolderOpen: (folder: string, isRoot: boolean) => boolean;
   onToggleFolder: (folder: string, isRoot: boolean) => void;
   onOpenFile: (path: string, modifiedAt: number) => void;
-  onPinFolder: (folder: string) => void;
-  onUnpinFolder: (folder: string) => void;
+  onPinProject: (folder: string) => void;
+  onUnpinProject: (folder: string) => void;
+  onPinToProject: (path: string) => void;
+  onUnpinFromProject: (path: string) => void;
+  onMoveToTrash: (path: string) => void;
   onCopyPath: (path: string) => void | Promise<void>;
 }
 
@@ -59,31 +71,54 @@ function EmptyNote({ children }: { children: string }) {
   );
 }
 
+function PinMarker() {
+  return (
+    <Pin
+      className="size-3 shrink-0 fill-current text-stone-400 dark:text-stone-500"
+      aria-label="Pinned"
+    />
+  );
+}
+
 const rowClassName =
   "h-[1.625rem] w-full max-w-full justify-start gap-1.5 overflow-hidden rounded-[0.3rem] pr-2 text-left text-[0.78rem] font-normal hover:bg-stone-200/75 dark:hover:bg-slate-800";
 const activeRowClassName =
   "bg-white font-medium text-slate-950 shadow-[0_1px_2px_rgba(15,23,42,0.08)] hover:bg-white dark:bg-slate-800 dark:text-slate-50 dark:hover:bg-slate-800";
+// The ghost variant tints aria-expanded buttons; folder rows only signal
+// expansion with the chevron.
+const folderRowClassName =
+  "aria-expanded:bg-transparent aria-expanded:hover:bg-stone-200/75 dark:aria-expanded:hover:bg-slate-800";
+const hintClassName =
+  "min-w-0 truncate text-[0.64rem] font-normal text-stone-400 dark:text-stone-500";
+
+function relativeParent(rootPath: string, path: string) {
+  const parent = path.slice(0, path.lastIndexOf("/"));
+  return parent.length > rootPath.length
+    ? parent.slice(rootPath.length + 1)
+    : "";
+}
 
 export function FileBrowser({
   project,
+  projectRootIsPinned,
   pinnedRoots,
   pins,
-  pinnedFolders,
+  projectPins,
   activePath,
   openPaths,
   disabled,
   isFolderOpen,
   onToggleFolder,
   onOpenFile,
-  onPinFolder,
-  onUnpinFolder,
+  onPinProject,
+  onUnpinProject,
+  onPinToProject,
+  onUnpinFromProject,
+  onMoveToTrash,
   onCopyPath,
 }: FileBrowserProps) {
-  const contextTargetRef = useRef<{
-    path: string;
-    kind: "file" | "directory";
-  } | null>(null);
-  const pinnedSet = new Set(pinnedFolders);
+  const contextTargetRef = useRef<ContextTarget | null>(null);
+  const projectPinSet = new Set(projectPins);
 
   function renderNodes(nodes: FileBrowserNode[], depth: number) {
     return (
@@ -91,7 +126,7 @@ export function FileBrowser({
         {nodes.map((node) => (
           <li key={node.path} className="min-w-0">
             {node.kind === "directory"
-              ? renderDirectory(node, depth, false)
+              ? renderDirectory(node, depth)
               : renderFile(node.path, node.name, node.modifiedAt, depth)}
           </li>
         ))}
@@ -104,8 +139,10 @@ export function FileBrowser({
     name: string,
     modifiedAt: number,
     depth: number,
+    pinnedHint?: string,
   ) {
     const active = path === activePath;
+    const pinned = pinnedHint !== undefined;
     return (
       <Button
         type="button"
@@ -138,25 +175,72 @@ export function FileBrowser({
         <span
           className={cn(
             "min-w-0 truncate text-stone-600 dark:text-stone-300",
+            pinned && "max-w-[70%] shrink-0",
             (active || openPaths.has(path)) &&
               "text-slate-950 dark:text-slate-50",
           )}
         >
           {name}
         </span>
+        {pinned ? (
+          <>
+            <span className={hintClassName}>{pinnedHint}</span>
+            <span className="ml-auto" />
+            <PinMarker />
+          </>
+        ) : null}
       </Button>
+    );
+  }
+
+  function renderPinnedNodes(directory: FileBrowserDirectory, depth: number) {
+    const pinnedNodes = getPinnedNodesInTree(directory, projectPins);
+    if (pinnedNodes.length === 0) return null;
+    return (
+      <>
+        <ul
+          className="m-0 list-none p-0"
+          aria-label={`Pinned in ${directory.name}`}
+          data-testid="file-browser-project-pins"
+        >
+          {pinnedNodes.map((node) => {
+            const hint = relativeParent(directory.path, node.path);
+            return (
+              <li key={node.path} className="min-w-0">
+                {node.kind === "directory"
+                  ? renderDirectory(node, depth, { pinnedHint: hint })
+                  : renderFile(
+                      node.path,
+                      node.name,
+                      node.modifiedAt,
+                      depth,
+                      hint,
+                    )}
+              </li>
+            );
+          })}
+        </ul>
+        <div
+          className="my-1 mr-1.5 ml-6 h-px bg-stone-200 dark:bg-slate-800"
+          aria-hidden="true"
+        />
+      </>
     );
   }
 
   function renderDirectory(
     directory: FileBrowserDirectory,
     depth: number,
-    isRoot: boolean,
-    rootIcon?: "git" | "folder" | "pin",
-    truncated?: boolean,
+    options: {
+      isRoot?: boolean;
+      rootIcon?: "git" | "folder" | "pin";
+      truncated?: boolean;
+      pinnedHint?: string;
+    } = {},
   ) {
+    const { isRoot = false, rootIcon, truncated, pinnedHint } = options;
+    const pinned = pinnedHint !== undefined;
     const open = isFolderOpen(directory.path, isRoot);
-    const pinned = pinnedSet.has(directory.path);
     const FolderIcon = open ? FolderOpen : Folder;
     return (
       <>
@@ -168,11 +252,10 @@ export function FileBrowser({
           data-testid={isRoot ? "file-browser-root" : "file-browser-folder"}
           data-browser-path={directory.path}
           data-browser-kind="directory"
+          data-browser-root={isRoot ? "true" : undefined}
           className={cn(
             rowClassName,
-            // The ghost variant tints aria-expanded buttons; folder rows only
-            // signal expansion with the chevron.
-            "aria-expanded:bg-transparent aria-expanded:hover:bg-stone-200/75 dark:aria-expanded:hover:bg-slate-800",
+            folderRowClassName,
             isRoot && "h-[1.875rem]",
           )}
           style={{ paddingLeft: `${0.375 + depth * TREE_INDENT_REM}rem` }}
@@ -204,17 +287,19 @@ export function FileBrowser({
           <span
             className={cn(
               "min-w-0 truncate text-stone-700 dark:text-stone-200",
+              pinned && "max-w-[70%] shrink-0",
               isRoot &&
                 "max-w-[72%] shrink-0 font-semibold text-slate-950 dark:text-slate-50",
             )}
           >
             {directory.name}
           </span>
-          {pinned && rootIcon !== "pin" ? (
-            <Pin
-              className="size-3 fill-current text-stone-400 dark:text-stone-500"
-              aria-label="Pinned"
-            />
+          {pinned ? (
+            <>
+              <span className={hintClassName}>{pinnedHint}</span>
+              <span className="ml-auto" />
+              <PinMarker />
+            </>
           ) : null}
           {isRoot ? (
             <span className="ml-auto min-w-0 truncate pl-1.5 text-[0.64rem] font-normal text-stone-400 dark:text-stone-500">
@@ -226,6 +311,7 @@ export function FileBrowser({
         </Button>
         {open ? (
           <>
+            {isRoot ? renderPinnedNodes(directory, depth + 1) : null}
             {renderNodes(directory.children, depth + 1)}
             {truncated ? (
               <p
@@ -256,6 +342,7 @@ export function FileBrowser({
               className="flex h-[1.875rem] items-center gap-1.5 px-1.5 text-[0.78rem] font-semibold"
               data-browser-path={rootPath}
               data-browser-kind="directory"
+              data-browser-root="true"
               title={rootPath}
             >
               <span className="w-3 shrink-0" aria-hidden="true" />
@@ -280,18 +367,29 @@ export function FileBrowser({
     const tree = buildFileBrowserTree(listing);
     return (
       <div key={rootPath} data-testid={`file-browser-${kind}-root`}>
-        {renderDirectory(
-          tree,
-          0,
-          true,
-          kind === "pin" ? "pin" : listing.kind,
-          listing.truncated,
-        )}
+        {renderDirectory(tree, 0, {
+          isRoot: true,
+          rootIcon: kind === "pin" ? "pin" : listing.kind,
+          truncated: listing.truncated,
+        })}
         {tree.children.length === 0 && isFolderOpen(tree.path, true) ? (
           <EmptyNote>No Markdown files here.</EmptyNote>
         ) : null}
       </div>
     );
+  }
+
+  function renderProjectGroup() {
+    if (!activePath) {
+      return <EmptyNote>Open a document to browse its project here.</EmptyNote>;
+    }
+    const projectRoot = project?.listing?.root ?? null;
+    if (projectRoot && projectRootIsPinned) {
+      return (
+        <EmptyNote>{`${getPathLeaf(projectRoot) ?? projectRoot} is pinned above.`}</EmptyNote>
+      );
+    }
+    return renderRoot(projectRoot ?? "", project, "project");
   }
 
   return (
@@ -317,35 +415,34 @@ export function FileBrowser({
                   target.dataset.browserKind === "directory"
                     ? "directory"
                     : "file",
+                isRoot: target.dataset.browserRoot === "true",
               };
             }}
           >
-            <GroupLabel>Project</GroupLabel>
-            {activePath ? (
-              renderRoot(project?.listing?.root ?? "", project, "project")
-            ) : (
-              <EmptyNote>Open a document to browse its project here.</EmptyNote>
-            )}
-            <GroupLabel>Pinned</GroupLabel>
             {pinnedRoots.length > 0 ? (
-              pinnedRoots.map((root) => renderRoot(root, pins[root], "pin"))
-            ) : (
-              <EmptyNote>
-                Right-click a folder and choose Pin folder to keep it here.
-              </EmptyNote>
-            )}
+              <>
+                <GroupLabel>Pinned</GroupLabel>
+                {pinnedRoots.map((root) => renderRoot(root, pins[root], "pin"))}
+              </>
+            ) : null}
+            <GroupLabel>Project</GroupLabel>
+            {renderProjectGroup()}
           </div>
         }
       />
       <ContextMenuContent
-        aria-label="Folder actions"
+        aria-label="File actions"
         data-open-file-sidebar-context-menu=""
       >
         <FileBrowserMenuItems
           targetRef={contextTargetRef}
-          pinnedSet={pinnedSet}
-          onPinFolder={onPinFolder}
-          onUnpinFolder={onUnpinFolder}
+          pinnedRoots={pinnedRoots}
+          projectPinSet={projectPinSet}
+          onPinProject={onPinProject}
+          onUnpinProject={onUnpinProject}
+          onPinToProject={onPinToProject}
+          onUnpinFromProject={onUnpinFromProject}
+          onMoveToTrash={onMoveToTrash}
           onCopyPath={onCopyPath}
         />
       </ContextMenuContent>
@@ -353,49 +450,91 @@ export function FileBrowser({
   );
 }
 
+const menuIconClassName = "size-3.5 text-stone-500 dark:text-slate-400";
+
 function FileBrowserMenuItems({
   targetRef,
-  pinnedSet,
-  onPinFolder,
-  onUnpinFolder,
+  pinnedRoots,
+  projectPinSet,
+  onPinProject,
+  onUnpinProject,
+  onPinToProject,
+  onUnpinFromProject,
+  onMoveToTrash,
   onCopyPath,
 }: {
-  targetRef: React.RefObject<{
-    path: string;
-    kind: "file" | "directory";
-  } | null>;
-  pinnedSet: Set<string>;
-  onPinFolder: (folder: string) => void;
-  onUnpinFolder: (folder: string) => void;
+  targetRef: React.RefObject<ContextTarget | null>;
+  pinnedRoots: string[];
+  projectPinSet: Set<string>;
+  onPinProject: (folder: string) => void;
+  onUnpinProject: (folder: string) => void;
+  onPinToProject: (path: string) => void;
+  onUnpinFromProject: (path: string) => void;
+  onMoveToTrash: (path: string) => void;
   onCopyPath: (path: string) => void | Promise<void>;
 }) {
   const target = targetRef.current;
   if (!target) return null;
-  const pinned = pinnedSet.has(target.path);
+
+  const pinnedAsProject = pinnedRoots.includes(target.path);
+  const pinnedInProject = projectPinSet.has(target.path);
   return (
     <>
-      {target.kind === "directory" ? (
+      {target.isRoot ? (
         <ContextMenuItem
-          data-testid={pinned ? "file-browser-unpin" : "file-browser-pin"}
+          data-testid={
+            pinnedAsProject ? "file-browser-unpin" : "file-browser-pin"
+          }
           onClick={() =>
-            pinned ? onUnpinFolder(target.path) : onPinFolder(target.path)
+            pinnedAsProject
+              ? onUnpinProject(target.path)
+              : onPinProject(target.path)
           }
         >
-          {pinned ? (
-            <PinOff className="size-3.5 text-stone-500 dark:text-slate-400" />
+          {pinnedAsProject ? (
+            <PinOff className={menuIconClassName} />
           ) : (
-            <Pin className="size-3.5 text-stone-500 dark:text-slate-400" />
+            <Pin className={menuIconClassName} />
           )}
-          {pinned ? "Unpin folder" : "Pin folder"}
+          {pinnedAsProject ? "Unpin project" : "Pin project"}
         </ContextMenuItem>
-      ) : null}
+      ) : (
+        <ContextMenuItem
+          data-testid={
+            pinnedInProject
+              ? "file-browser-unpin-from-top"
+              : "file-browser-pin-to-top"
+          }
+          onClick={() =>
+            pinnedInProject
+              ? onUnpinFromProject(target.path)
+              : onPinToProject(target.path)
+          }
+        >
+          {pinnedInProject ? (
+            <PinOff className={menuIconClassName} />
+          ) : (
+            <Pin className={menuIconClassName} />
+          )}
+          {pinnedInProject ? "Unpin from top" : "Pin to top"}
+        </ContextMenuItem>
+      )}
       <ContextMenuItem
         data-testid="file-browser-copy-path"
         onClick={() => void onCopyPath(target.path)}
       >
-        <Copy className="size-3.5 text-stone-500 dark:text-slate-400" />
+        <Copy className={menuIconClassName} />
         Copy path
       </ContextMenuItem>
+      {target.kind === "file" ? (
+        <ContextMenuItem
+          data-testid="file-browser-move-to-trash"
+          onClick={() => onMoveToTrash(target.path)}
+        >
+          <Trash2 className={menuIconClassName} />
+          Move to Trash
+        </ContextMenuItem>
+      ) : null}
     </>
   );
 }

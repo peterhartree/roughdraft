@@ -2437,79 +2437,89 @@ export function App() {
     setPendingOpenRequestPath(chosenPath);
   }, [missingOpenFilePath, pruneOpenFileSessionEntries]);
 
-  const closeActiveOpenFile = useCallback(async (): Promise<boolean> => {
-    const closingPath = activeDocumentAbsolutePathRef.current;
-    const currentFiles = openFilesRef.current;
-    if (
-      !closingPath ||
-      !currentFiles.some((file) => file.path === closingPath) ||
-      fileSwitchPendingRef.current ||
-      diskChangeStateBlocksFileSwitch(documentDiskChangeState)
-    ) {
-      return false;
-    }
-
-    const unavailablePaths: string[] = [];
-    const closeCandidates = getOpenFileCloseCandidates(
-      currentFiles,
-      closingPath,
-    );
-    for (const candidatePath of closeCandidates) {
-      const result = await switchToOpenFileResult(candidatePath, "close");
-      if (result === "blocked") return false;
-      if (result === "unavailable") {
-        unavailablePaths.push(candidatePath);
-        continue;
+  // `onClosing` runs once the closing file has been saved and the view has
+  // moved on, or just before leaving for the start page when it was the last
+  // open file; returning false there keeps that last file open.
+  const closeActiveOpenFile = useCallback(
+    async (onClosing?: () => Promise<boolean>): Promise<boolean> => {
+      const closingPath = activeDocumentAbsolutePathRef.current;
+      const currentFiles = openFilesRef.current;
+      if (
+        !closingPath ||
+        !currentFiles.some((file) => file.path === closingPath) ||
+        fileSwitchPendingRef.current ||
+        diskChangeStateBlocksFileSwitch(documentDiskChangeState)
+      ) {
+        return false;
       }
 
-      pruneOpenFileSessionEntries([closingPath, ...unavailablePaths]);
-      setFileSwitcherOpen(false);
-      return true;
-    }
+      const unavailablePaths: string[] = [];
+      const closeCandidates = getOpenFileCloseCandidates(
+        currentFiles,
+        closingPath,
+      );
+      for (const candidatePath of closeCandidates) {
+        const result = await switchToOpenFileResult(candidatePath, "close");
+        if (result === "blocked") return false;
+        if (result === "unavailable") {
+          unavailablePaths.push(candidatePath);
+          continue;
+        }
 
-    if (closeCandidates.length === 0) {
-      fileSwitchPendingRef.current = true;
-      setFileSwitchPending(true);
-      setFileSwitchError(null);
+        pruneOpenFileSessionEntries([closingPath, ...unavailablePaths]);
+        setFileSwitcherOpen(false);
+        await onClosing?.();
+        return true;
+      }
 
-      try {
-        const saveResult = await documentSaveControllerRef.current?.flushSave();
-        if (saveResult && saveResult.status !== "saved") {
+      if (closeCandidates.length === 0) {
+        fileSwitchPendingRef.current = true;
+        setFileSwitchPending(true);
+        setFileSwitchError(null);
+
+        try {
+          const saveResult =
+            await documentSaveControllerRef.current?.flushSave();
+          if (saveResult && saveResult.status !== "saved") {
+            setFileSwitchError(
+              saveResult.status === "error"
+                ? "Could not close the file because it could not be saved."
+                : "Resolve the current file changes before closing it.",
+            );
+            return false;
+          }
+        } catch (error) {
+          console.error("Failed to save the closing Markdown file:", error);
           setFileSwitchError(
-            saveResult.status === "error"
-              ? "Could not close the file because it could not be saved."
-              : "Resolve the current file changes before closing it.",
+            "Could not close the file because it could not be saved.",
           );
           return false;
+        } finally {
+          fileSwitchPendingRef.current = false;
+          setFileSwitchPending(false);
         }
-      } catch (error) {
-        console.error("Failed to save the closing Markdown file:", error);
-        setFileSwitchError(
-          "Could not close the file because it could not be saved.",
-        );
-        return false;
-      } finally {
-        fileSwitchPendingRef.current = false;
-        setFileSwitchPending(false);
       }
-    }
 
-    pruneOpenFileSessionEntries([closingPath, ...unavailablePaths]);
-    activeDocumentPathRef.current = null;
-    activeDocumentAbsolutePathRef.current = null;
-    setActiveDocumentPath(null);
-    setActiveDocumentAbsolutePath(null);
-    documentPageRef.current = null;
-    setDocumentPage(null);
-    clearOpenFileSession(window.localStorage);
-    setFileSwitcherOpen(false);
-    window.location.assign("/");
-    return true;
-  }, [
-    documentDiskChangeState,
-    pruneOpenFileSessionEntries,
-    switchToOpenFileResult,
-  ]);
+      if (onClosing && !(await onClosing())) return false;
+
+      pruneOpenFileSessionEntries([closingPath, ...unavailablePaths]);
+      activeDocumentPathRef.current = null;
+      activeDocumentAbsolutePathRef.current = null;
+      setActiveDocumentPath(null);
+      setActiveDocumentAbsolutePath(null);
+      documentPageRef.current = null;
+      setDocumentPage(null);
+      clearOpenFileSession(window.localStorage);
+      setFileSwitcherOpen(false);
+      window.location.assign("/");
+      return true;
+    },
+    [
+      documentDiskChangeState,
+      pruneOpenFileSessionEntries,
+      switchToOpenFileResult,
+    ],
+  );
 
   const closeAllOpenFiles = useCallback(async (): Promise<boolean> => {
     const currentFiles = openFilesRef.current;
@@ -2820,6 +2830,63 @@ export function App() {
     }
   }, []);
 
+  const moveFileToTrash = useCallback(
+    async (path: string) => {
+      setFileSwitchError(null);
+      const trash = async () => {
+        try {
+          const response = await fetch("/api/markdown-file/trash", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ path }),
+          });
+          if (!response.ok) {
+            const body = (await response.json().catch(() => null)) as {
+              error?: string;
+            } | null;
+            throw new Error(
+              body?.error ??
+                `Couldn't move ${getPathLeaf(path) ?? "the file"} to the Trash.`,
+            );
+          }
+        } catch (error) {
+          console.error("Failed to move a Markdown file to the Trash:", error);
+          setFileSwitchError(
+            error instanceof Error
+              ? error.message
+              : `Couldn't move ${getPathLeaf(path) ?? "the file"} to the Trash.`,
+          );
+          return false;
+        }
+        forgetRecentDocument(path);
+        fileBrowser.refresh();
+        return true;
+      };
+
+      // The active file is closed first, so no pending save or autosave can
+      // write it back after it has gone.
+      if (
+        path === activeDocumentAbsolutePathRef.current &&
+        path !== missingOpenFilePath
+      ) {
+        await closeActiveOpenFile(trash);
+        return;
+      }
+      if (!(await trash())) return;
+      if (openFilesRef.current.some((file) => file.path === path)) {
+        pruneOpenFileSessionEntries([path]);
+      }
+      if (path === missingOpenFilePath) setMissingOpenFilePath(null);
+    },
+    [
+      closeActiveOpenFile,
+      fileBrowser.refresh,
+      forgetRecentDocument,
+      missingOpenFilePath,
+      pruneOpenFileSessionEntries,
+    ],
+  );
+
   const fileSwitchBlocked =
     fileSwitchPending ||
     diskChangeStateBlocksFileSwitch(documentDiskChangeState);
@@ -2827,17 +2894,21 @@ export function App() {
     content: (
       <FileBrowser
         project={fileBrowser.project}
+        projectRootIsPinned={fileBrowser.projectRootIsPinned}
         pinnedRoots={fileBrowser.pinnedRoots}
         pins={fileBrowser.pins}
-        pinnedFolders={fileBrowser.preferences.pinnedFolders}
+        projectPins={fileBrowser.preferences.projectPins}
         activePath={activeDocumentAbsolutePath}
         openPaths={new Set(openFiles.map((file) => file.path))}
         disabled={fileSwitchBlocked}
         isFolderOpen={fileBrowser.isFolderOpen}
         onToggleFolder={fileBrowser.toggleFolder}
         onOpenFile={openFileFromBrowser}
-        onPinFolder={fileBrowser.pinFolder}
-        onUnpinFolder={fileBrowser.unpinFolder}
+        onPinProject={fileBrowser.pinFolder}
+        onUnpinProject={fileBrowser.unpinFolder}
+        onPinToProject={fileBrowser.pinToProject}
+        onUnpinFromProject={fileBrowser.unpinFromProject}
+        onMoveToTrash={(path) => void moveFileToTrash(path)}
         onCopyPath={copyPathToClipboard}
       />
     ),
@@ -2942,6 +3013,7 @@ export function App() {
           error={fileSwitchError}
           onSelect={(path) => void switchToOpenFile(path)}
           onCopyPath={copyPathToClipboard}
+          onMoveToTrash={(path) => void moveFileToTrash(path)}
           browse={sidebarBrowseSection}
         />
       ) : null}
@@ -3049,6 +3121,11 @@ export function App() {
           documentSidebarVisible={showOpenFileSidebar}
           onToggleDocumentSidebar={() =>
             setOpenFileSidebarVisible((visible) => !visible)
+          }
+          onMoveDocumentToTrash={
+            backend?.info.kind === "local-files" && activeDocumentAbsolutePath
+              ? () => moveFileToTrash(activeDocumentAbsolutePath)
+              : undefined
           }
         />
         {missingOpenFilePath ? (

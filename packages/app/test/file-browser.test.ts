@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   buildFileBrowserTree,
   type FileBrowserDirectory,
-  getPinnedRootsToShow,
+  findFileBrowserNode,
+  getPinnedNodesInTree,
   getRevealFolders,
   type MarkdownTreeListing,
 } from "../src/file-browser";
@@ -90,12 +91,31 @@ describe("file browser tree", () => {
     expect(getRevealFolders(root, "/Users/me/project-two/plan.md")).toEqual([]);
   });
 
-  it("shows a pinned folder that is the current project only once", () => {
-    expect(getPinnedRootsToShow(["/a", root, "/b"], root)).toEqual([
-      "/a",
-      "/b",
-    ]);
-    expect(getPinnedRootsToShow(["/a"], null)).toEqual(["/a"]);
+  it("finds pinned files and folders inside a tree in pin order", () => {
+    const tree = buildFileBrowserTree(
+      listing(["README.md", "docs/guide.md", "docs/adr/0001.md"]),
+    );
+
+    expect(
+      getPinnedNodesInTree(tree, [
+        `${root}/docs/adr`,
+        "/Users/me/elsewhere/notes.md",
+        `${root}/README.md`,
+        `${root}/docs/missing.md`,
+      ]).map((node) => `${node.kind}:${node.path}`),
+    ).toEqual([`directory:${root}/docs/adr`, `file:${root}/README.md`]);
+  });
+
+  it("looks up nodes by absolute path", () => {
+    const tree = buildFileBrowserTree(listing(["docs/guide.md"]));
+
+    expect(findFileBrowserNode(tree, root)).toBe(tree);
+    expect(findFileBrowserNode(tree, `${root}/docs/guide.md`)).toMatchObject({
+      kind: "file",
+      name: "guide.md",
+    });
+    expect(findFileBrowserNode(tree, `${root}/docs/guide.md/x`)).toBeNull();
+    expect(findFileBrowserNode(tree, "/Users/me/project-two/a.md")).toBeNull();
   });
 });
 
@@ -117,6 +137,7 @@ describe("file browser preferences", () => {
     const storage = memoryStorage();
     writeFileBrowserPreferences(storage, {
       pinnedFolders: ["/Users/me/notes"],
+      projectPins: ["/Users/me/notes/plan.md"],
       folderOpenStates: { "/Users/me/notes/drafts": true },
       openSectionHeight: 240,
       openSectionCollapsed: false,
@@ -125,6 +146,7 @@ describe("file browser preferences", () => {
 
     expect(readFileBrowserPreferences(storage)).toEqual({
       pinnedFolders: ["/Users/me/notes"],
+      projectPins: ["/Users/me/notes/plan.md"],
       folderOpenStates: { "/Users/me/notes/drafts": true },
       openSectionHeight: 240,
       openSectionCollapsed: false,
@@ -135,6 +157,7 @@ describe("file browser preferences", () => {
   it("falls back to defaults for corrupt storage and drops invalid entries", () => {
     expect(readFileBrowserPreferences(memoryStorage("{not json"))).toEqual({
       pinnedFolders: [],
+      projectPins: [],
       folderOpenStates: {},
       openSectionHeight: null,
       openSectionCollapsed: false,

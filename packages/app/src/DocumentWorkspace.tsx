@@ -54,6 +54,7 @@ import {
   getRestorableDocumentViewStateForMode,
 } from "./document-view-state";
 import { cn } from "./lib/utils";
+import { MoveToTrashButton } from "./MoveToTrashButton";
 import {
   type DocumentInteractionMode,
   type DocumentSaveController,
@@ -321,6 +322,7 @@ interface DocumentWorkspaceProps {
   documentSidebarAvailable?: boolean;
   documentSidebarVisible?: boolean;
   onToggleDocumentSidebar?: () => void;
+  onMoveDocumentToTrash?: () => Promise<void>;
   onSaveControllerChange?: (controller: DocumentSaveController | null) => void;
   onViewControllerChange?: (controller: DocumentViewController | null) => void;
 }
@@ -347,6 +349,7 @@ export function DocumentWorkspace({
   documentSidebarAvailable = false,
   documentSidebarVisible = false,
   onToggleDocumentSidebar,
+  onMoveDocumentToTrash,
   onSaveControllerChange,
   onViewControllerChange,
 }: DocumentWorkspaceProps) {
@@ -954,6 +957,12 @@ export function DocumentWorkspace({
                       : "Copy path (⌥⌘C)"}
                   </TooltipContent>
                 </Tooltip>
+                {onMoveDocumentToTrash ? (
+                  <MoveToTrashButton
+                    key={documentCopyPath ?? ""}
+                    onConfirm={onMoveDocumentToTrash}
+                  />
+                ) : null}
                 <div className="ml-auto inline-flex h-[1.25rem] shrink-0 items-center">
                   <Select<DocumentInteractionMode>
                     value={documentInteractionMode}

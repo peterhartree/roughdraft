@@ -120,13 +120,40 @@ export function getRevealFolders(root: string, filePath: string): string[] {
   return folders;
 }
 
+export function findFileBrowserNode(
+  root: FileBrowserDirectory,
+  path: string,
+): FileBrowserNode | null {
+  if (path === root.path) return root;
+  if (!isPathInside(root.path, path)) return null;
+
+  let current: FileBrowserNode = root;
+  for (const segment of path
+    .slice(root.path.length)
+    .split("/")
+    .filter(Boolean)) {
+    if (current.kind !== "directory") return null;
+    const next: FileBrowserNode | undefined = current.children.find(
+      (child) => child.name === segment,
+    );
+    if (!next) return null;
+    current = next;
+  }
+  return current;
+}
+
 /**
- * Pinned roots shown below the current project. A pin that is the current
- * project is shown once, as the project.
+ * Files and folders pinned within `root`, in pin order. Pins that no longer
+ * appear in the listing are skipped rather than forgotten, so a file that
+ * returns keeps its pin.
  */
-export function getPinnedRootsToShow(
-  pinnedFolders: string[],
-  projectRoot: string | null,
-) {
-  return pinnedFolders.filter((folder) => folder !== projectRoot);
+export function getPinnedNodesInTree(
+  root: FileBrowserDirectory,
+  projectPins: string[],
+): FileBrowserNode[] {
+  return projectPins.flatMap((pin) => {
+    if (!isPathInside(root.path, pin)) return [];
+    const node = findFileBrowserNode(root, pin);
+    return node ? [node] : [];
+  });
 }

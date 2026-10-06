@@ -1,9 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import {
-  getPinnedRootsToShow,
-  getRevealFolders,
-  type MarkdownTreeListing,
-} from "./file-browser";
+import { getRevealFolders, type MarkdownTreeListing } from "./file-browser";
 import {
   type FileBrowserPreferences,
   isFolderOpen,
@@ -53,6 +49,7 @@ export function useFileBrowser({
   const [pins, setPins] = useState<Record<string, TreeLoadState>>({});
   const [refreshToken, setRefreshToken] = useState(0);
   const projectRequestRef = useRef(0);
+  const refresh = useCallback(() => setRefreshToken((token) => token + 1), []);
 
   const updatePreferences = useCallback(
     (update: (current: FileBrowserPreferences) => FileBrowserPreferences) => {
@@ -69,7 +66,6 @@ export function useFileBrowser({
 
   useEffect(() => {
     if (!enabled) return;
-    const refresh = () => setRefreshToken((token) => token + 1);
     const handleVisibility = () => {
       if (document.visibilityState === "visible") refresh();
     };
@@ -79,7 +75,7 @@ export function useFileBrowser({
       window.removeEventListener("focus", refresh);
       document.removeEventListener("visibilitychange", handleVisibility);
     };
-  }, [enabled]);
+  }, [enabled, refresh]);
 
   // refreshToken is a trigger: each focus refetches the same paths.
   // biome-ignore lint/correctness/useExhaustiveDependencies: see above
@@ -181,7 +177,21 @@ export function useFileBrowser({
     preferences,
     project,
     projectRoot,
-    pinnedRoots: getPinnedRootsToShow(pinnedFolders, projectRoot),
+    pinnedRoots: pinnedFolders,
+    projectRootIsPinned:
+      projectRoot !== null && pinnedFolders.includes(projectRoot),
+    refresh,
+    pinToProject: (path: string) =>
+      updatePreferences((current) =>
+        current.projectPins.includes(path)
+          ? current
+          : { ...current, projectPins: [...current.projectPins, path] },
+      ),
+    unpinFromProject: (path: string) =>
+      updatePreferences((current) => ({
+        ...current,
+        projectPins: current.projectPins.filter((pin) => pin !== path),
+      })),
     pins,
     isFolderOpen: (folder: string, isRoot: boolean) =>
       isFolderOpen(preferences.folderOpenStates, folder, isRoot),

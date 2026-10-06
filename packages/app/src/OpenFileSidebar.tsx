@@ -1,4 +1,4 @@
-import { ChevronDown, Copy, FileText } from "lucide-react";
+import { ChevronDown, Copy, FileText, Trash2 } from "lucide-react";
 import { type ReactNode, useRef, useState } from "react";
 import { Button } from "./components/ui/button";
 import {
@@ -90,6 +90,7 @@ export function OpenFileSidebar({
   error,
   onSelect,
   onCopyPath,
+  onMoveToTrash,
   browse,
 }: {
   files: OpenFileItem[];
@@ -98,6 +99,7 @@ export function OpenFileSidebar({
   error: string | null;
   onSelect: (path: string) => void;
   onCopyPath: (path: string) => void | Promise<void>;
+  onMoveToTrash?: (path: string) => void;
   browse?: SidebarBrowseSection;
 }) {
   const contextMenuPathRef = useRef<string | null>(null);
@@ -263,6 +265,20 @@ export function OpenFileSidebar({
                   <Copy className="size-3.5 text-stone-500 dark:text-slate-400" />
                   Copy path
                 </ContextMenuItem>
+                {onMoveToTrash ? (
+                  <ContextMenuItem
+                    data-testid="open-file-sidebar-move-to-trash"
+                    onClick={() => {
+                      const path = contextMenuPathRef.current;
+                      if (path && files.some((file) => file.path === path)) {
+                        onMoveToTrash(path);
+                      }
+                    }}
+                  >
+                    <Trash2 className="size-3.5 text-stone-500 dark:text-slate-400" />
+                    Move to Trash
+                  </ContextMenuItem>
+                ) : null}
               </ContextMenuContent>
             </ContextMenu>
             {files.length === 0 ? (

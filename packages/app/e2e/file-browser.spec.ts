@@ -103,34 +103,164 @@ test.describe("file browser", () => {
     ).toHaveAttribute("aria-expanded", "true");
   });
 
-  test("pins a folder from its context menu and keeps it after a reload", async ({
+  test("pins a project above the current project and keeps it after a reload", async ({
+    page,
+  }) => {
+    const otherProjectDir = createMarkdownProject("file-browser-other");
+    const otherPath = writeProjectFile(
+      otherProjectDir,
+      "notes.md",
+      "# Notes\n",
+    );
+    try {
+      await openMarkdownFile(page, readmePath);
+      await page
+        .getByTestId("file-browser-project-root")
+        .getByTestId("file-browser-root")
+        .click({ button: "right" });
+      await page.getByTestId("file-browser-pin").click();
+
+      const pinnedRoot = page.getByTestId("file-browser-pin-root");
+      await expect(pinnedRoot.getByTestId("file-browser-root")).toContainText(
+        path.basename(projectDir),
+      );
+      await expect(page.getByTestId("file-browser")).toContainText(
+        `${path.basename(projectDir)} is pinned above.`,
+      );
+
+      await openMarkdownFile(page, otherPath);
+      const projectRoot = page.getByTestId("file-browser-project-root");
+      await expect(projectRoot).toContainText(path.basename(otherProjectDir));
+      const pinnedBox = await pinnedRoot.boundingBox();
+      const projectBox = await projectRoot.boundingBox();
+      expect(pinnedBox?.y ?? 0).toBeLessThan(projectBox?.y ?? 0);
+
+      await page.reload();
+      await pinnedRoot
+        .getByTestId("file-browser-root")
+        .click({ button: "right" });
+      await page.getByTestId("file-browser-unpin").click();
+      await expect(pinnedRoot).toHaveCount(0);
+    } finally {
+      removeMarkdownProject(otherProjectDir);
+    }
+  });
+
+  test("pins files and folders to the top of their project", async ({
     page,
   }) => {
     await openMarkdownFile(page, readmePath);
     const docsPath = path.join(projectDir, "docs");
+    const adrPath = path.join(docsPath, "adr");
+    const projectRoot = page.getByTestId("file-browser-project-root");
 
-    await browserFolder(page, docsPath).click({ button: "right" });
-    await page.getByTestId("file-browser-pin").click();
+    await browserFolder(page, docsPath).click();
+    await browserFolder(page, adrPath).click({ button: "right" });
+    await page.getByTestId("file-browser-pin-to-top").click();
+    await browserFile(page, guidePath).first().click({ button: "right" });
+    await page.getByTestId("file-browser-pin-to-top").click();
 
-    const pinnedRoot = page.getByTestId("file-browser-pin-root");
-    await expect(pinnedRoot).toHaveCount(1);
-    await expect(pinnedRoot.getByTestId("file-browser-root")).toContainText(
-      "docs",
-    );
+    const pins = projectRoot.getByTestId("file-browser-project-pins");
+    const pinnedPaths = () =>
+      pins
+        .locator(":scope > li > [data-browser-path]")
+        .evaluateAll((elements) =>
+          elements.map(
+            (element) => (element as HTMLElement).dataset.browserPath,
+          ),
+        );
+    await expect.poll(pinnedPaths).toEqual([adrPath, guidePath]);
+    await expect(pins).toContainText("docs");
 
     await page.reload();
-    await expect(
-      page
-        .getByTestId("file-browser-pin-root")
-        .getByTestId("file-browser-root"),
-    ).toContainText("docs");
+    await expect.poll(pinnedPaths).toEqual([adrPath, guidePath]);
 
-    await page
-      .getByTestId("file-browser-pin-root")
-      .getByTestId("file-browser-root")
+    await pins
+      .locator(`[data-browser-path="${guidePath}"]`)
       .click({ button: "right" });
-    await page.getByTestId("file-browser-unpin").click();
-    await expect(page.getByTestId("file-browser-pin-root")).toHaveCount(0);
+    await page.getByTestId("file-browser-unpin-from-top").click();
+    await expect.poll(pinnedPaths).toEqual([adrPath]);
+  });
+
+  test("moves a file to the Trash from the browser without confirmation", async ({
+    page,
+  }) => {
+    await openMarkdownFile(page, readmePath);
+    await browserFolder(page, path.join(projectDir, "docs")).click();
+    await browserFile(page, guidePath).click({ button: "right" });
+    await page.getByTestId("file-browser-move-to-trash").click();
+
+    await expect.poll(() => fs.existsSync(guidePath)).toBe(false);
+    await expect(browserFile(page, guidePath)).toHaveCount(0);
+    await expect(openListItem(page, readmePath)).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+  });
+
+  test("moves an inactive open file to the Trash from the Open list", async ({
+    page,
+  }) => {
+    await openMarkdownFile(page, readmePath);
+    await browserFolder(page, path.join(projectDir, "docs")).click();
+    await browserFile(page, guidePath).click();
+    await expect(openListItem(page, guidePath)).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+
+    await openListItem(page, readmePath).click({ button: "right" });
+    await page.getByTestId("open-file-sidebar-move-to-trash").click();
+
+    await expect.poll(() => fs.existsSync(readmePath)).toBe(false);
+    await expect(openListItem(page, readmePath)).toHaveCount(0);
+    await expect(openListItem(page, guidePath)).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+  });
+
+  test("moves the active file to the Trash from the top bar after an inline confirmation @smoke", async ({
+    page,
+  }) => {
+    await openMarkdownFile(page, readmePath);
+    await browserFolder(page, path.join(projectDir, "docs")).click();
+    await browserFile(page, guidePath).click();
+    await expect(openListItem(page, guidePath)).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+
+    const trashButton = page.getByTestId("document-move-to-trash-button");
+    await trashButton.click();
+    await expect(trashButton).toHaveAttribute("data-state", "armed");
+    await expect(trashButton).toContainText("Move to Trash?");
+    expect(fs.existsSync(guidePath)).toBe(true);
+
+    await trashButton.click();
+    await expect.poll(() => fs.existsSync(guidePath)).toBe(false);
+    await expect(openListItem(page, guidePath)).toHaveCount(0);
+    await expect(openListItem(page, readmePath)).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+  });
+
+  test("returns to recent documents after moving the last open file to the Trash", async ({
+    page,
+  }) => {
+    await openMarkdownFile(page, readmePath);
+    const trashButton = page.getByTestId("document-move-to-trash-button");
+    await trashButton.click();
+    await trashButton.click();
+
+    await expect(page.getByTestId("recent-documents")).toBeVisible();
+    expect(fs.existsSync(readmePath)).toBe(false);
+    await expect(
+      page.locator(
+        `[data-testid="recent-document-item"][data-file-path="${readmePath}"]`,
+      ),
+    ).toHaveCount(0);
   });
 
   test("shows pinned folders beside recent documents when nothing is open", async ({

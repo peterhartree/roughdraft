@@ -1,11 +1,15 @@
 const FILE_BROWSER_PREFERENCES_KEY = "roughdraft.file-browser.v1";
 const MAX_PINNED_FOLDERS = 50;
+const MAX_PROJECT_PINS = 200;
 const MAX_FOLDER_STATES = 500;
 
 type PreferencesStorage = Pick<Storage, "getItem" | "setItem">;
 
 export interface FileBrowserPreferences {
+  /** Projects and folders shown as their own trees above the current project. */
   pinnedFolders: string[];
+  /** Files and folders pinned to the top of whichever tree contains them. */
+  projectPins: string[];
   /** Explicit open/closed choices; folders without one use the default. */
   folderOpenStates: Record<string, boolean>;
   openSectionHeight: number | null;
@@ -15,6 +19,7 @@ export interface FileBrowserPreferences {
 
 export const DEFAULT_FILE_BROWSER_PREFERENCES: FileBrowserPreferences = {
   pinnedFolders: [],
+  projectPins: [],
   folderOpenStates: {},
   openSectionHeight: null,
   openSectionCollapsed: false,
@@ -33,6 +38,12 @@ function parsePreferences(value: string): FileBrowserPreferences {
     preferences.pinnedFolders = [
       ...new Set(parsed.pinnedFolders.filter(isAbsolutePath)),
     ].slice(0, MAX_PINNED_FOLDERS);
+  }
+
+  if (Array.isArray(parsed.projectPins)) {
+    preferences.projectPins = [
+      ...new Set(parsed.projectPins.filter(isAbsolutePath)),
+    ].slice(0, MAX_PROJECT_PINS);
   }
 
   if (
@@ -89,6 +100,7 @@ export function writeFileBrowserPreferences(
       JSON.stringify({
         ...preferences,
         pinnedFolders: preferences.pinnedFolders.slice(0, MAX_PINNED_FOLDERS),
+        projectPins: preferences.projectPins.slice(0, MAX_PROJECT_PINS),
         folderOpenStates,
       }),
     );
