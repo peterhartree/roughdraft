@@ -57,7 +57,12 @@ export function startManagedServer({
   env?: NodeJS.ProcessEnv;
   homeDir?: string;
 } = {}): Promise<void> {
-  const childEnv = { ...env, PATH: desktopPath(env, homeDir) };
+  // Tells the CLI to start the server itself rather than ask this app to.
+  const childEnv = {
+    ...env,
+    PATH: desktopPath(env, homeDir),
+    ROUGHDRAFT_DESKTOP_MANAGED: "1",
+  };
   appendDesktopSlog("desktop.server-start.requested", {
     command: "roughdraft",
   });

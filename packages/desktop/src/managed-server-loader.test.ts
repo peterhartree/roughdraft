@@ -51,11 +51,21 @@ function createHarness() {
   const retryTimers: Array<() => void> = [];
   let origin: string | null = null;
   let connected = false;
+  let serverAlive = false;
+  let serverStarts = 0;
 
   const loader = createManagedServerLoader<FakePage>({
     resolvePage: () => page,
-    startServer: async () => {},
-    resolveTarget: async () => ({ port: 7373, url: SERVER_URL }),
+    startServer: async () => {
+      serverStarts += 1;
+      serverAlive = true;
+    },
+    resolveTarget: async () => {
+      if (!serverAlive) {
+        throw new Error("connect ECONNREFUSED 127.0.0.1:7373");
+      }
+      return { port: 7373, url: SERVER_URL };
+    },
     loadUrl: (target, url) => target.loadURL(url),
     loadErrorDocument: async (target, message) => {
       errorDocuments.push(message);
@@ -90,6 +100,12 @@ function createHarness() {
     get connected() {
       return connected;
     },
+    get serverStarts() {
+      return serverStarts;
+    },
+    killServer() {
+      serverAlive = false;
+    },
   };
 }
 
@@ -119,5 +135,56 @@ describe("managed server loader", () => {
     expect(harness.origin).toBe(SERVER_URL);
     expect(harness.connected).toBe(true);
     expect(harness.page.currentUrl).toBe(SERVER_URL);
+  });
+
+  it("leaves a healthy connection alone when the app is activated", async () => {
+    const harness = createHarness();
+    const initialLoad = harness.loader.load();
+    await vi.runAllTimersAsync();
+    await initialLoad;
+
+    const activation = harness.loader.ensureConnected();
+    await vi.runAllTimersAsync();
+    await activation;
+
+    expect(harness.serverStarts).toBe(1);
+    expect(harness.page.loadedUrls).toEqual([SERVER_URL]);
+    expect(harness.origin).toBe(SERVER_URL);
+    expect(harness.connected).toBe(true);
+  });
+
+  it("restarts the server and reloads when activation finds the server gone", async () => {
+    const harness = createHarness();
+    const initialLoad = harness.loader.load();
+    await vi.runAllTimersAsync();
+    await initialLoad;
+    harness.killServer();
+
+    const activation = harness.loader.ensureConnected();
+    await vi.runAllTimersAsync();
+    await activation;
+
+    expect(harness.serverStarts).toBe(2);
+    expect(harness.errorDocuments).toEqual([]);
+    expect(harness.page.loadedUrls).toEqual([SERVER_URL, SERVER_URL]);
+    expect(harness.page.currentUrl).toBe(SERVER_URL);
+    expect(harness.origin).toBe(SERVER_URL);
+    expect(harness.connected).toBe(true);
+  });
+
+  it("joins a load already in flight when the app is activated during launch", async () => {
+    const harness = createHarness();
+
+    const loads = Promise.allSettled([
+      harness.loader.load(),
+      harness.loader.ensureConnected(),
+    ]);
+    await vi.runAllTimersAsync();
+    await loads;
+
+    expect(harness.serverStarts).toBe(1);
+    expect(harness.errorDocuments).toEqual([]);
+    expect(harness.page.loadedUrls).toEqual([SERVER_URL]);
+    expect(harness.connected).toBe(true);
   });
 });

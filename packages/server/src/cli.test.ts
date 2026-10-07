@@ -8,7 +8,9 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   createCliDependencies,
   createDefaultBrowserOpenUrl,
+  createDefaultDesktopServerStarter,
   createDefaultOpenUrl,
+  DESKTOP_SERVER_START_TIMEOUT_MS,
   ensureServerRunning,
   getServerStateFilePath,
   runCli,
@@ -245,6 +247,124 @@ describe("cli", () => {
     expect(typeof persisted.startedAt).toBe("string");
   });
 
+  // Roughdraft.app starts the server itself and writes server.json, as the
+  // desktop app does when `open -g -b is.pjh.roughdraft` launches it.
+  async function startServerAsDesktopApp(
+    env: NodeJS.ProcessEnv,
+    port: number,
+  ): Promise<number> {
+    const pid = nextPid;
+    nextPid += 1;
+    const { app } = createApp({
+      port,
+      projectDir: os.homedir(),
+      serverRoot,
+      staticDirPath: projectDir,
+    });
+    const started = await listenOnLoopbackServers(port, app);
+    runningPids.add(pid);
+    serverByPid.set(pid, started);
+    portByPid.set(pid, port);
+    const stateFilePath = getServerStateFilePath(env);
+    fs.mkdirSync(path.dirname(stateFilePath), { recursive: true });
+    fs.writeFileSync(
+      stateFilePath,
+      `${JSON.stringify({
+        port,
+        pid,
+        startedAt: new Date().toISOString(),
+        url: `http://localhost:${port}`,
+      })}\n`,
+    );
+    return pid;
+  }
+
+  it("starts the server through Roughdraft.app instead of spawning a sandbox-inheriting child", async () => {
+    const test = createTestDependencies();
+    const appPort = await test.deps.findAvailablePortImpl(
+      ROUGHDRAFT_DEFAULT_PORT + 100,
+    );
+    const env = { ...test.deps.env, ROUGHDRAFT_PORT: String(appPort + 1) };
+    let desktopStarts = 0;
+    let sleeps = 0;
+    let appPid: number | null = null;
+
+    const result = await ensureServerRunning(
+      {
+        ...test.deps,
+        env,
+        startServerViaDesktopApp: () => {
+          desktopStarts += 1;
+          return true;
+        },
+        sleepImpl: async () => {
+          sleeps += 1;
+          // The app needs a few polls before its server is up.
+          if (sleeps === 3) {
+            appPid = await startServerAsDesktopApp(env, appPort);
+          }
+        },
+      },
+      { projectDir },
+    );
+
+    expect(desktopStarts).toBe(1);
+    expect(test.getSpawnCount()).toBe(0);
+    expect(result.reused).toBe(false);
+    expect(result.portChanged).toBe(true);
+    expect(result.server.port).toBe(appPort);
+    expect(result.server.pid).toBe(appPid);
+  });
+
+  it("fails with a Roughdraft.app error when the app never starts the server", async () => {
+    const test = createTestDependencies();
+    let sleptMs = 0;
+
+    await expect(
+      ensureServerRunning(
+        {
+          ...test.deps,
+          startServerViaDesktopApp: () => true,
+          sleepImpl: async (ms) => {
+            sleptMs += ms;
+          },
+        },
+        { projectDir },
+      ),
+    ).rejects.toThrow(/Roughdraft\.app/);
+
+    expect(test.getSpawnCount()).toBe(0);
+    expect(sleptMs).toBeGreaterThanOrEqual(DESKTOP_SERVER_START_TIMEOUT_MS);
+  });
+
+  it("spawns the server directly when Roughdraft.app cannot start it", async () => {
+    const test = createTestDependencies();
+    let desktopStarts = 0;
+    const deps = {
+      ...test.deps,
+      startServerViaDesktopApp: () => {
+        desktopStarts += 1;
+        return false;
+      },
+    };
+
+    const first = await ensureServerRunning(deps, { projectDir });
+    const second = await ensureServerRunning(deps, { projectDir });
+
+    expect(desktopStarts).toBe(1);
+    expect(test.getSpawnCount()).toBe(1);
+    expect(first.reused).toBe(false);
+    expect(second.reused).toBe(true);
+  });
+
+  it("never launches Roughdraft.app by default when tests inject a server spawner", () => {
+    const deps = createCliDependencies({
+      spawnServerProcess: () => ({ pid: 1 }),
+    });
+
+    expect(deps.startServerViaDesktopApp()).toBe(false);
+  });
+
   it("auto-starts from open and opens the requested markdown file URL", async () => {
     const test = createTestDependencies();
     const documentPath = path.join(projectDir, "draft.md");
@@ -433,6 +553,94 @@ describe("cli", () => {
     expect(test.logs).not.toContain(
       expect.stringContaining("Opened Roughdraft.app"),
     );
+  });
+
+  function fakeSpawnSyncResult(status: number) {
+    return {
+      status,
+      stdout: "",
+    } as ReturnType<typeof import("node:child_process").spawnSync>;
+  }
+
+  it("starts the server by launching Roughdraft.app in the background on macOS", () => {
+    const invocations: Array<{ command: string; args: readonly string[] }> = [];
+    const startServer = createDefaultDesktopServerStarter({
+      env: {},
+      platform: "darwin",
+      spawnSyncCommand: (command, args) => {
+        invocations.push({ command, args: args ?? [] });
+        return fakeSpawnSyncResult(0);
+      },
+    });
+
+    expect(startServer()).toBe(true);
+    expect(invocations).toEqual([
+      { command: "open", args: ["-g", "-b", "is.pjh.roughdraft"] },
+    ]);
+  });
+
+  it("reports that Roughdraft.app could not start the server when the app is missing", () => {
+    const startServer = createDefaultDesktopServerStarter({
+      env: {},
+      platform: "darwin",
+      spawnSyncCommand: () => fakeSpawnSyncResult(1),
+    });
+
+    expect(startServer()).toBe(false);
+  });
+
+  it.each([
+    {
+      case: "on Linux",
+      platform: "linux" as const,
+      env: {},
+    },
+    {
+      case: "on Windows",
+      platform: "win32" as const,
+      env: {},
+    },
+    {
+      case: "when Roughdraft.app itself asks the CLI to start the server",
+      platform: "darwin" as const,
+      env: { ROUGHDRAFT_DESKTOP_MANAGED: "1" },
+    },
+    {
+      case: "when opening apps is disabled",
+      platform: "darwin" as const,
+      env: { ROUGHDRAFT_NO_OPEN: "1" },
+    },
+    {
+      case: "for an isolated state directory",
+      platform: "darwin" as const,
+      env: { ROUGHDRAFT_STATE_DIR: "/tmp/roughdraft-isolated" },
+    },
+    {
+      case: "for an isolated state file",
+      platform: "darwin" as const,
+      env: { ROUGHDRAFT_STATE_FILE: "/tmp/roughdraft-isolated/server.json" },
+    },
+    {
+      case: "for an explicit port",
+      platform: "darwin" as const,
+      env: { ROUGHDRAFT_PORT: "4999" },
+    },
+  ])("does not launch Roughdraft.app to start the server $case", ({
+    platform,
+    env,
+  }) => {
+    let spawned = false;
+    const startServer = createDefaultDesktopServerStarter({
+      env,
+      platform,
+      spawnSyncCommand: () => {
+        spawned = true;
+        return fakeSpawnSyncResult(0);
+      },
+    });
+
+    expect(startServer()).toBe(false);
+    expect(spawned).toBe(false);
   });
 
   it("activates Roughdraft.app on macOS when it is installed", () => {

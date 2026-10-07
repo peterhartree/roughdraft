@@ -34,6 +34,9 @@ const SERVER_WAIT_ATTEMPTS = 40;
 const SERVER_WAIT_DELAY_MS = 150;
 const PROCESS_WAIT_ATTEMPTS = 20;
 const PROCESS_WAIT_DELAY_MS = 150;
+export const DESKTOP_SERVER_START_TIMEOUT_MS = 30_000;
+const DESKTOP_SERVER_POLL_DELAY_MS = 250;
+const DESKTOP_APP_BUNDLE_ID = "is.pjh.roughdraft";
 const USAGE_ERROR = 2;
 const KNOWN_COMMANDS = [
   "open",
@@ -93,6 +96,7 @@ export interface CliDependencies {
     port: number;
     projectDir: string;
   }) => Promise<SpawnedServer> | SpawnedServer;
+  startServerViaDesktopApp: () => boolean;
   isProcessRunning: (pid: number) => boolean;
   stopProcess: (pid: number) => Promise<void>;
   openUrl: (url: string) => OpenMode;
@@ -457,6 +461,40 @@ export function createDefaultOpenUrl({
   };
 }
 
+// A server spawned by the CLI inherits the caller's macOS sandbox, so a CLI
+// run by a sandboxed agent would leave behind a server that cannot read
+// most of the disk. Asking Roughdraft.app to start the server avoids that:
+// LaunchServices starts the app outside the caller's sandbox.
+export function createDefaultDesktopServerStarter({
+  env = process.env,
+  platform = process.platform,
+  spawnSyncCommand = spawnSync,
+}: {
+  env?: NodeJS.ProcessEnv;
+  platform?: NodeJS.Platform;
+  spawnSyncCommand?: SpawnSyncCommand;
+} = {}): () => boolean {
+  return () => {
+    if (
+      platform !== "darwin" ||
+      env.ROUGHDRAFT_DESKTOP_MANAGED === "1" ||
+      env.ROUGHDRAFT_NO_OPEN === "1" ||
+      env.ROUGHDRAFT_STATE_DIR?.trim() ||
+      env.ROUGHDRAFT_STATE_FILE?.trim() ||
+      env.ROUGHDRAFT_PORT?.trim()
+    ) {
+      return false;
+    }
+
+    const result = spawnSyncCommand(
+      "open",
+      ["-g", "-b", DESKTOP_APP_BUNDLE_ID],
+      { stdio: "ignore", windowsHide: true },
+    );
+    return result.status === 0;
+  };
+}
+
 export function createDefaultBrowserOpenUrl({
   env = process.env,
   platform = process.platform,
@@ -591,6 +629,11 @@ export function createCliDependencies(
     sleepImpl: overrides.sleepImpl ?? ((ms) => sleep(ms)),
     spawnServerProcess:
       overrides.spawnServerProcess ?? defaultSpawnServerProcess,
+    startServerViaDesktopApp:
+      overrides.startServerViaDesktopApp ??
+      (overrides.spawnServerProcess
+        ? () => false
+        : createDefaultDesktopServerStarter({ env: overrides.env })),
     isProcessRunning: overrides.isProcessRunning ?? defaultIsProcessRunning,
     stopProcess: overrides.stopProcess ?? defaultStopProcess,
     openUrl: overrides.openUrl ?? defaultOpenUrl,
@@ -1586,6 +1629,26 @@ export async function readRunningServerState(
   };
 }
 
+async function waitForDesktopAppServer(
+  deps: CliDependencies,
+): Promise<ReusableServer> {
+  for (
+    let waitedMs = 0;
+    waitedMs < DESKTOP_SERVER_START_TIMEOUT_MS;
+    waitedMs += DESKTOP_SERVER_POLL_DELAY_MS
+  ) {
+    await deps.sleepImpl(DESKTOP_SERVER_POLL_DELAY_MS);
+    const server = await findReusableServer(deps, {
+      serverRoot: currentServerRoot,
+    });
+    if (server) return server;
+  }
+
+  throw new Error(
+    "Timed out waiting for Roughdraft.app to start the Roughdraft server.",
+  );
+}
+
 export async function ensureServerRunning(
   deps: CliDependencies,
   options: { projectDir?: string } = {},
@@ -1598,6 +1661,15 @@ export async function ensureServerRunning(
   }
 
   const preferredPort = getPreferredPort(deps.env);
+  if (deps.startServerViaDesktopApp()) {
+    const server = await waitForDesktopAppServer(deps);
+    return {
+      server,
+      reused: false,
+      portChanged: server.port !== preferredPort,
+    };
+  }
+
   const port = await deps.findAvailablePortImpl(preferredPort);
   const projectDir = path.resolve(options.projectDir ?? deps.cwd);
   const spawned = await deps.spawnServerProcess({

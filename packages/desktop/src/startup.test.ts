@@ -171,6 +171,30 @@ describe("desktop startup", () => {
   });
 });
 
+describe("startManagedServer", () => {
+  it("marks the CLI start as desktop-managed so the CLI does not relaunch Roughdraft.app", async () => {
+    const { startManagedServer } = await import("./startup.js");
+    let childEnv: NodeJS.ProcessEnv | undefined;
+    mocks.childProcess.execFile.mockImplementationOnce((...args: unknown[]) => {
+      childEnv = (args[2] as { env?: NodeJS.ProcessEnv }).env;
+      const callback = args.find((arg) => typeof arg === "function");
+      (callback as (error: null, stdout: string, stderr: string) => void)(
+        null,
+        "",
+        "",
+      );
+      return { pid: 1234, status: 0, unref: vi.fn() };
+    });
+
+    await startManagedServer({
+      env: { PATH: "/usr/bin" },
+      homeDir: "/tmp/roughdraft-home",
+    });
+
+    expect(childEnv).toMatchObject({ ROUGHDRAFT_DESKTOP_MANAGED: "1" });
+  });
+});
+
 describe("nextServerLoadRetryDelay", () => {
   it("backs off across failures and gives up after the schedule ends", async () => {
     const { nextServerLoadRetryDelay } = await import("./startup.js");

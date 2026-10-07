@@ -393,6 +393,8 @@ if (!hasSingleInstanceLock) {
       void loadManagedServer().finally(focusMainWindow);
       return;
     }
+    // The CLI activates the app when it finds no server running.
+    void managedServerLoader.ensureConnected();
     focusMainWindow();
   });
 

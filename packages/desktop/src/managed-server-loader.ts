@@ -19,6 +19,8 @@ export interface ManagedServerLoaderDeps<Page> {
 
 export interface ManagedServerLoader {
   load(): Promise<void>;
+  // Reloads only when the connected server has gone away.
+  ensureConnected(): Promise<void>;
 }
 
 export function createManagedServerLoader<Page>(
@@ -79,5 +81,16 @@ export function createManagedServerLoader<Page>(
     }
   }
 
-  return { load };
+  async function ensureConnected(): Promise<void> {
+    if (inFlight) return inFlight;
+    try {
+      await deps.resolveTarget();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      deps.slog("desktop.server-target.lost", { message });
+      await load();
+    }
+  }
+
+  return { load, ensureConnected };
 }
