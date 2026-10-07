@@ -459,7 +459,7 @@ describe("cli", () => {
     expect(opened).toEqual([]);
   });
 
-  it("falls back to the default browser when Roughdraft.app is not installed", () => {
+  it("never falls back to a browser on macOS when Roughdraft.app cannot launch", () => {
     const opened: Array<{ command: string; args: string[] }> = [];
     const openUrl = createDefaultOpenUrl({
       env: {},
@@ -479,13 +479,8 @@ describe("cli", () => {
 
     const mode = openUrl("http://localhost:4020/?file=draft.md");
 
-    expect(mode).toBe("browser");
-    expect(opened).toEqual([
-      {
-        command: "open",
-        args: ["http://localhost:4020/?file=draft.md"],
-      },
-    ]);
+    expect(mode).toBe("app-unavailable");
+    expect(opened).toEqual([]);
   });
 
   it("opens remote-session URLs in the browser without activating Roughdraft.app", () => {

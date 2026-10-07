@@ -103,7 +103,12 @@ export interface CliDependencies {
   readStdin: () => Promise<string | null>;
 }
 
-type OpenMode = "browser" | "desktop-app" | "disabled" | "none";
+type OpenMode =
+  | "browser"
+  | "desktop-app"
+  | "app-unavailable"
+  | "disabled"
+  | "none";
 
 interface EnsureRunningResult {
   server: {
@@ -445,9 +450,8 @@ export function createDefaultOpenUrl({
         ["-b", "is.pjh.roughdraft"],
         { stdio: "ignore", windowsHide: true },
       );
-      if (desktopResult.status === 0) {
-        return "desktop-app";
-      }
+      // Documents open only in Roughdraft.app on macOS, never in a browser.
+      return desktopResult.status === 0 ? "desktop-app" : "app-unavailable";
     }
     return openUrlInDefaultBrowser(platform, openDetachedCommand, url);
   };
@@ -2441,6 +2445,12 @@ export async function runCli(
           modifiedAt,
         );
         openMode = deps.openUrl(targetUrl);
+        if (openMode === "app-unavailable") {
+          deps.error(
+            "Roughdraft.app could not be launched. See the README's Local macOS app section to build and install it.",
+          );
+          return 1;
+        }
         if (openMode === "desktop-app" && !openRequest.accepted) {
           deps.error(
             "Roughdraft.app was activated, but the server did not accept the document-open request. Restart Roughdraft and try again.",

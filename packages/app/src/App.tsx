@@ -1777,7 +1777,10 @@ export function App() {
 
   useEffect(() => {
     const sourceUrl = new URL("/api/open-requests", window.location.origin);
-    const source = new EventSource(sourceUrl.pathname);
+    if (window.roughdraftDesktop) {
+      sourceUrl.searchParams.set("client", "desktop");
+    }
+    const source = new EventSource(sourceUrl.pathname + sourceUrl.search);
     const handleOpenRequest = (event: Event) => {
       try {
         const payload = JSON.parse((event as MessageEvent<string>).data) as {

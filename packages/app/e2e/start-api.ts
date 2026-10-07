@@ -22,4 +22,6 @@ async function moveToFakeTrash(absolutePath: string): Promise<void> {
 
 await createServer(Number(process.env.API_PORT ?? 4317), undefined, {
   trashFile: moveToFakeTrash,
+  // Playwright drives the app in a browser, so documents must open there.
+  appOnly: false,
 });

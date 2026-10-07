@@ -563,6 +563,60 @@ describe("createApp", () => {
     expect(response.body).toEqual({ accepted: true, delivered: false });
   });
 
+  it("refuses open-request streams from browser tabs when app-only", async () => {
+    const { app } = createApp({
+      homeDir,
+      staticDirPath: projectDir,
+      appOnly: true,
+    });
+
+    const response = await request(app).get("/api/open-requests");
+
+    expect(response.status).toBe(204);
+  });
+
+  it("hands a browser-loaded document to the desktop app when app-only", async () => {
+    const launches: string[] = [];
+    const { app } = createApp({
+      homeDir,
+      staticDirPath: projectDir,
+      appOnly: true,
+      launchDesktopApp: () => {
+        launches.push("launch");
+        return true;
+      },
+    });
+    const draftPath = path.join(projectDir, "draft.md");
+
+    const handOff = await request(app)
+      .post("/api/open-in-app")
+      .send({ path: draftPath });
+    expect(handOff.body).toEqual({ handedOff: true });
+    expect(launches).toEqual(["launch"]);
+
+    // The app has not connected yet, so the document waits for it.
+    const queued = await request(app)
+      .post("/api/open-request")
+      .send({ path: draftPath });
+    expect(queued.body).toEqual({ accepted: true, delivered: false });
+  });
+
+  it("keeps browser-loaded documents in the browser when not app-only", async () => {
+    const { app } = createApp({
+      homeDir,
+      staticDirPath: projectDir,
+      launchDesktopApp: () => {
+        throw new Error("must not launch");
+      },
+    });
+
+    const handOff = await request(app)
+      .post("/api/open-in-app")
+      .send({ path: path.join(projectDir, "draft.md") });
+
+    expect(handOff.body).toEqual({ handedOff: false });
+  });
+
   it("serves local files and stores uploaded assets inside the project", async () => {
     fs.writeFileSync(path.join(projectDir, "image.txt"), "asset text\n");
 

@@ -116,7 +116,7 @@ mkdir -p /Users/ph/Applications
 ditto packages/desktop/out/Roughdraft-darwin-arm64/Roughdraft.app /Users/ph/Applications/Roughdraft.app
 ```
 
-The local app is named `Roughdraft` and uses bundle identifier `is.pjh.roughdraft`. It is unsigned and intended only for local use. `roughdraft open <file.md>` first sends the document to the managed server and then launches or activates this app. If the bundle cannot be found, the command opens the document URL in the default browser instead; it does not use Chrome app mode.
+The local app is named `Roughdraft` and uses bundle identifier `is.pjh.roughdraft`. It is unsigned and intended only for local use. `roughdraft open <file.md>` first sends the document to the managed server and then launches or activates this app. Documents open only in this app: if the bundle cannot be launched, the command fails rather than opening a browser. A document URL loaded in a local browser tab is handed to the app, and browser tabs never receive open requests.
 
 The writable fork is `origin`; the read-only upstream source is `upstream`. To incorporate upstream changes deliberately:
 

@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import { createServer as createHttpServer } from "node:http";
@@ -68,6 +69,24 @@ interface CreateAppOptions {
   remoteDocumentToken?: string;
   /** Moves an absolute file path to the OS Trash; tests inject a fake. */
   trashFile?: (absolutePath: string) => Promise<void>;
+  /**
+   * Documents open only in Roughdraft.app: open requests reach desktop
+   * windows alone, and a browser tab that loads a document hands it to the
+   * app instead. Off for browser-driven tests.
+   */
+  appOnly?: boolean;
+  /** Launches or activates Roughdraft.app; returns false when it cannot. */
+  launchDesktopApp?: () => boolean;
+}
+
+export const DESKTOP_APP_BUNDLE_ID = "is.pjh.roughdraft";
+
+function launchDesktopAppOnMac(): boolean {
+  if (process.platform !== "darwin") return false;
+  const result = spawnSync("open", ["-b", DESKTOP_APP_BUNDLE_ID], {
+    stdio: "ignore",
+  });
+  return result.status === 0;
 }
 
 interface CreateAppResult {
@@ -387,6 +406,8 @@ export function createApp(options: CreateAppOptions = {}): CreateAppResult {
   const staticDirPath = options.staticDirPath ?? staticDir;
   const fetchImpl = options.fetchImpl ?? fetch;
   const trashFile = options.trashFile ?? ((filePath) => moveToTrash(filePath));
+  const appOnly = options.appOnly ?? false;
+  const launchDesktopApp = options.launchDesktopApp ?? launchDesktopAppOnMac;
   const remoteDocumentToken =
     typeof options.remoteDocumentToken === "string" &&
     options.remoteDocumentToken.length > 0
@@ -778,6 +799,11 @@ export function createApp(options: CreateAppOptions = {}): CreateAppResult {
   });
 
   app.get("/api/open-requests", (req, res) => {
+    // 204 tells a browser's EventSource to stop reconnecting.
+    if (appOnly && req.query.client !== "desktop") {
+      res.status(204).end();
+      return;
+    }
     res.setHeader("Content-Type", "text/event-stream");
     res.setHeader("Cache-Control", "no-cache, no-transform");
     res.setHeader("Connection", "keep-alive");
@@ -822,6 +848,30 @@ export function createApp(options: CreateAppOptions = {}): CreateAppResult {
         ...(payload.activate === true ? { activate: true } : {}),
       }),
     );
+  });
+
+  app.post("/api/open-in-app", (req, res) => {
+    const payload = req.body as OpenRequestPayload;
+    const targetPath =
+      typeof payload.path === "string" && payload.path.trim().length > 0
+        ? payload.path.trim()
+        : null;
+    if (!targetPath) {
+      res.status(400).json({ error: "path is required" });
+      return;
+    }
+    if (!appOnly || !launchDesktopApp()) {
+      res.json({ handedOff: false });
+      return;
+    }
+    let modifiedAt: number | null = null;
+    try {
+      modifiedAt = fs.statSync(targetPath).mtimeMs;
+    } catch {
+      // The app reports a missing file itself.
+    }
+    openRequests.request({ path: targetPath, modifiedAt, activate: true });
+    res.json({ handedOff: true });
   });
 
   app.post("/api/remote-document", (req, res) => {
@@ -1193,6 +1243,8 @@ export const ROUGHDRAFT_TOKEN_ENV = "ROUGHDRAFT_TOKEN";
 
 export interface CreateServerOptions {
   trashFile?: CreateAppOptions["trashFile"];
+  /** Defaults to true: a real server keeps documents in Roughdraft.app. */
+  appOnly?: boolean;
 }
 
 export async function createServer(
@@ -1221,6 +1273,7 @@ export async function createServer(
     remoteDocumentToken:
       remoteDocumentToken.length > 0 ? remoteDocumentToken : undefined,
     trashFile: serverOptions.trashFile,
+    appOnly: serverOptions.appOnly ?? true,
   });
   const listeningHosts: string[] = [];
 
