@@ -247,7 +247,7 @@ function listComments(
 ): number {
   const index = extractRoughdraftReviewIndex(markdown);
   const items = options.unresolved
-    ? index.items.filter((item) => item.status !== "resolved")
+    ? withoutResolvedThreads(index.items)
     : index.items;
 
   if (json) {
@@ -291,6 +291,20 @@ function listComments(
   return 0;
 }
 
+/** Drops resolved items along with every reply beneath them. */
+function withoutResolvedThreads(items: RfmReviewItem[]): RfmReviewItem[] {
+  const byId = new Map(items.map((item) => [item.id, item]));
+  const isResolved = (item: RfmReviewItem, seen = new Set<string>()) => {
+    if (item.status === "resolved") return true;
+    if (!item.parentId || seen.has(item.id)) return false;
+    seen.add(item.id);
+    const parent = byId.get(item.parentId);
+    return parent ? isResolved(parent, seen) : false;
+  };
+
+  return items.filter((item) => !isResolved(item));
+}
+
 function formatItem(item: RfmReviewItem, depth: number): string {
   const indent = "  ".repeat(depth);
   const status = item.status === "resolved" ? ", resolved" : "";
@@ -304,7 +318,8 @@ function formatItem(item: RfmReviewItem, depth: number): string {
   ]
     .filter(Boolean)
     .join(", ");
-  const anchor = item.anchorText ? ` on "${oneLine(item.anchorText)}"` : "";
+  const anchor =
+    depth === 0 && item.anchorText ? ` on "${oneLine(item.anchorText)}"` : "";
   const text =
     item.kind === "suggestion"
       ? (item.replacementText ?? item.text)

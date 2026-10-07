@@ -194,6 +194,18 @@ describe("roughdraft comments", () => {
   });
 });
 
+describe("roughdraft comments --unresolved", () => {
+  it("hides replies to a resolved comment", async () => {
+    const draftPath = writeDraft(
+      'One {>>Done already<<}{id="c1" by="user" at="2026-10-07T08:00:00.000Z" status="resolved"}{>>Agreed<<}{id="c2" by="AI" at="2026-10-07T08:01:00.000Z" re="c1"} two {>>Open<<}{id="c3" by="user" at="2026-10-07T08:02:00.000Z"}.\n',
+    );
+
+    const result = await run(["comments", draftPath, "--unresolved"]);
+
+    expect(result.logs).toEqual(["c3, by user, line 1: Open"]);
+  });
+});
+
 describe("roughdraft resolve", () => {
   it("marks an inline comment resolved with a summary", async () => {
     const draftPath = writeDraft(inlineParent);
