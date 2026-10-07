@@ -5,6 +5,7 @@ import {
   Node,
   mergeAttributes,
 } from "@tiptap/core";
+import { reviewAuthorFromBy, reviewAuthorToBy } from "./review-author";
 import Code from "@tiptap/extension-code";
 import CodeBlock from "@tiptap/extension-code-block";
 import Image from "@tiptap/extension-image";
@@ -184,14 +185,15 @@ function readCriticChangeAttrs(element: HTMLElement): CriticChangeAttrs | null {
     return null;
   }
 
-  const rawBy = element.getAttribute("data-critic-change-by") || "user";
-  const authorType = rawBy.toUpperCase() === "AI" ? "ai" : "user";
+  const { authorType, authorId } = reviewAuthorFromBy(
+    element.getAttribute("data-critic-change-by"),
+  );
 
   return {
     kind,
     changeId,
     authorType,
-    authorId: authorType === "ai" ? null : rawBy,
+    authorId,
     createdAt,
   };
 }
@@ -315,10 +317,7 @@ const CriticChange = Mark.create({
         parseHTML: (element) =>
           readCriticChangeAttrs(element as HTMLElement)?.authorId ?? "user",
         renderHTML: (attributes) => ({
-          "data-critic-change-by":
-            attributes.authorType === "ai"
-              ? "AI"
-              : attributes.authorId || "user",
+          "data-critic-change-by": reviewAuthorToBy(attributes),
         }),
       },
       createdAt: {

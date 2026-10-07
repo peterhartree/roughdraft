@@ -34,6 +34,7 @@ import {
   type CriticReaction,
 } from "./critic-markup";
 import { cn } from "./lib/utils";
+import { agentLabel } from "./review-author";
 
 interface CommentEditorListProps {
   comments: CriticComment[];
@@ -459,11 +460,11 @@ function CommentThreadNode({
   const isHovered = comment.id === hoveredCommentId;
   const isEditing = interactive && editingCommentIds.includes(comment.id);
   const isAiAuthor = comment.authorType === "ai";
-  const userAuthorId = comment.authorId?.trim();
+  const authorName = comment.authorId?.trim();
   const authorLabel = isAiAuthor
-    ? "AI"
-    : userAuthorId && userAuthorId.toLowerCase() !== "user"
-      ? userAuthorId
+    ? agentLabel(authorName)
+    : authorName && authorName.toLowerCase() !== "user"
+      ? authorName
       : "Me";
   const AuthorIcon = isAiAuthor ? Bot : User;
   const draftContent = drafts[comment.id] ?? comment.content;

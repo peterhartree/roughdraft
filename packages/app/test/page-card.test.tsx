@@ -96,6 +96,18 @@ function createBackend(): StorageBackend {
   };
 }
 
+function escapeRegExp(text: string) {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+// Matches a save whose only review data is suggestion s1 by the user, in the
+// compact form: `{#s1}` inline and its metadata in YAML endmatter.
+function savedWithUserSuggestion(body: string) {
+  return new RegExp(
+    `^${escapeRegExp(body)}\\n\\n---\\nsuggestions:\\n {2}s1:\\n {4}by: user\\n {4}at: \\S+\\n$`,
+  );
+}
+
 function findTextRange(editor: Editor, text: string) {
   let range: { from: number; to: number } | null = null;
 
@@ -1011,9 +1023,7 @@ describe("PageCard editor integration", () => {
 
     expect(rendered.onSave).toHaveBeenCalledWith(
       "doc-suggesting-1",
-      expect.stringMatching(
-        /^Start \{\+\+now\+\+\}\{id="s1" by="user" at="[^"]+"\}\n$/,
-      ),
+      expect.stringMatching(savedWithUserSuggestion("Start {++now++}{#s1}")),
     );
   });
 
@@ -1046,9 +1056,7 @@ describe("PageCard editor integration", () => {
 
     expect(rendered.onSave).toHaveBeenCalledWith(
       "doc-suggesting-grouped-insertion-1",
-      expect.stringMatching(
-        /^Start-\{\+\+now\+\+\}\{id="s1" by="user" at="[^"]+"\}\n$/,
-      ),
+      expect.stringMatching(savedWithUserSuggestion("Start-{++now++}{#s1}")),
     );
   });
 
@@ -1082,7 +1090,7 @@ describe("PageCard editor integration", () => {
     expect(rendered.onSave).toHaveBeenCalledWith(
       "doc-suggesting-2",
       expect.stringMatching(
-        /^Use \{~~old~>new~~\}\{id="s1" by="user" at="[^"]+"\} text\n$/,
+        savedWithUserSuggestion("Use {~~old~>new~~}{#s1} text"),
       ),
     );
   });
@@ -1111,7 +1119,7 @@ describe("PageCard editor integration", () => {
     expect(rendered.onSave).toHaveBeenCalledWith(
       "doc-suggesting-grouped-replacement-1",
       expect.stringMatching(
-        /^Use \{~~old~>new~~\}\{id="s1" by="user" at="[^"]+"\} text\n$/,
+        savedWithUserSuggestion("Use {~~old~>new~~}{#s1} text"),
       ),
     );
   });
@@ -1148,9 +1156,7 @@ describe("PageCard editor integration", () => {
 
     expect(rendered.onSave).toHaveBeenCalledWith(
       "doc-suggesting-repeated-delete-1",
-      expect.stringMatching(
-        /^S\{--tar--\}\{id="s1" by="user" at="[^"]+"\}t\n$/,
-      ),
+      expect.stringMatching(savedWithUserSuggestion("S{--tar--}{#s1}t")),
     );
   });
 
@@ -1187,7 +1193,7 @@ describe("PageCard editor integration", () => {
     expect(rendered.onSave).toHaveBeenCalledWith(
       "doc-suggesting-enter-paragraph-1",
       expect.stringMatching(
-        /^Start\n\n\{\+\+\u2060\+\+\}\{id="s1" by="user" at="[^"]+"\}\n$/,
+        savedWithUserSuggestion("Start\n\n{++\u2060++}{#s1}"),
       ),
     );
   });
@@ -1504,7 +1510,7 @@ describe("PageCard editor integration", () => {
 
     const savedMarkdown = rendered.onSave.mock.calls[0]?.[1];
     expect(savedMarkdown).toMatch(
-      /^Plain \{\+\+now\+\+\}\{id="s1" by="user" at="[^"]+"\}\n$/,
+      savedWithUserSuggestion("Plain {++now++}{#s1}"),
     );
     expect(savedMarkdown).not.toContain("---\ncomments:");
     expect(savedMarkdown).not.toContain("Needs a source.");
@@ -1622,6 +1628,37 @@ describe("PageCard editor integration", () => {
     expect(rendered.container.textContent).toContain("Me");
   });
 
+  it("labels an agent comment with its author name", async () => {
+    const rendered = await renderPageCard({
+      page: {
+        id: "doc-agent-label-1",
+        title: "Doc Agent Label 1",
+        content: [
+          "{==alpha==}{>>Comment body<<}{#c1}",
+          "",
+          "Paragraph",
+          "",
+          "---",
+          "comments:",
+          "  c1:",
+          "    by: Claude",
+          "    at: 2026-10-07T08:00:00.000Z",
+          "",
+        ].join("\n"),
+      },
+      selected: true,
+    });
+
+    await selectText(rendered.getEditor(), "alpha");
+
+    const fallback = queryByTestId(
+      rendered.container,
+      "document-comment-fallback",
+    );
+    expect(fallback?.textContent).toContain("Comment body");
+    expect(fallback?.textContent).toContain("Claude");
+  });
+
   it("does not autosave a newly-created empty comment before it is submitted", async () => {
     const rendered = await renderPageCard({
       page: {
@@ -1689,7 +1726,7 @@ describe("PageCard editor integration", () => {
     expect(rendered.onSave).toHaveBeenCalledWith(
       "doc-comment-empty-draft-1",
       expect.stringMatching(
-        /\{==target==\}\{>>Draft comment<<\}\{id="c1" by="user" at="[^"]+"\}/,
+        /\{==target==\}\{>>Draft comment<<\}\{#c1\}[\s\S]*\n---\ncomments:\n {2}c1:\n {4}by: user\n/,
       ),
     );
   });

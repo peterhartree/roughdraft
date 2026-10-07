@@ -88,8 +88,16 @@ describe("CriticMarkup comments", () => {
   });
 
   it("round-trips a highlighted comment anchor", () => {
-    const input =
-      'This is {==highlighted==}{>>comment text<<}{id="cmt1" by="AI" at="2024-01-15T10:30:00.000Z"} text.\n';
+    const input = [
+      "This is {==highlighted==}{>>comment text<<}{#cmt1} text.",
+      "",
+      "---",
+      "comments:",
+      "  cmt1:",
+      "    by: AI",
+      "    at: 2024-01-15T10:30:00.000Z",
+      "",
+    ].join("\n");
 
     const { doc, comments } = criticMarkdownToEditorState(input);
 
@@ -499,8 +507,16 @@ describe("CriticMarkup comments", () => {
   });
 
   it("preserves formatting nested inside a comment anchor", () => {
-    const input =
-      'The {==**important**==}{>>Review this phrasing<<}{id="cmt2" by="user@example.com" at="2024-01-15T10:31:00.000Z"} section stays bold.\n';
+    const input = [
+      "The {==**important**==}{>>Review this phrasing<<}{#cmt2} section stays bold.",
+      "",
+      "---",
+      "comments:",
+      "  cmt2:",
+      "    by: user@example.com",
+      "    at: 2024-01-15T10:31:00.000Z",
+      "",
+    ].join("\n");
 
     const { doc, comments } = criticMarkdownToEditorState(input);
 
@@ -508,8 +524,16 @@ describe("CriticMarkup comments", () => {
   });
 
   it("preserves inline code nested inside a comment anchor", () => {
-    const input =
-      'Check {==`roughdraft open`==}{>>Make sure this command is visible<<}{id="cmt-code" by="user" at="2024-01-15T10:31:00.000Z"} before sharing.\n';
+    const input = [
+      "Check {==`roughdraft open`==}{>>Make sure this command is visible<<}{#cmt-code} before sharing.",
+      "",
+      "---",
+      "comments:",
+      "  cmt-code:",
+      "    by: user",
+      "    at: 2024-01-15T10:31:00.000Z",
+      "",
+    ].join("\n");
 
     const { doc, comments } = criticMarkdownToEditorState(input);
     const paragraph = doc.content?.[0];
@@ -565,7 +589,16 @@ describe("CriticMarkup comments", () => {
           ]),
         ),
       ).toBe(
-        'Each dev wrapper keeps {==its own server state under `~/.roughdraft/dev/<wrapper-name>` by default==}{>>test<<}{id="c1" by="user" at="2026-04-25T21:54:47.475Z"}, so opening works.\n',
+        [
+          "Each dev wrapper keeps {==its own server state under `~/.roughdraft/dev/<wrapper-name>` by default==}{>>test<<}{#c1}, so opening works.",
+          "",
+          "---",
+          "comments:",
+          "  c1:",
+          "    by: user",
+          "    at: 2026-04-25T21:54:47.475Z",
+          "",
+        ].join("\n"),
       );
     } finally {
       editor.destroy();
@@ -573,8 +606,15 @@ describe("CriticMarkup comments", () => {
   });
 
   it("keeps the anchor attached when nearby text changes", () => {
-    const input =
-      'Before {==target==}{>>Check this<<}{id="cmt3" by="AI" at="2024-01-15T10:32:00.000Z"} after.\n';
+    const endmatter = [
+      "---",
+      "comments:",
+      "  cmt3:",
+      "    by: AI",
+      "    at: 2024-01-15T10:32:00.000Z",
+      "",
+    ].join("\n");
+    const input = `Before {==target==}{>>Check this<<}{#cmt3} after.\n\n${endmatter}`;
     const { doc, comments } = criticMarkdownToEditorState(input);
     const nextDoc = structuredClone(doc);
     const firstParagraph = nextDoc.content?.[0];
@@ -587,7 +627,7 @@ describe("CriticMarkup comments", () => {
     firstTextNode.text = "Before nearby ";
 
     expect(editorStateToCriticMarkdown(nextDoc, comments)).toBe(
-      'Before nearby {==target==}{>>Check this<<}{id="cmt3" by="AI" at="2024-01-15T10:32:00.000Z"} after.\n',
+      `Before nearby {==target==}{>>Check this<<}{#cmt3} after.\n\n${endmatter}`,
     );
   });
 
@@ -595,17 +635,24 @@ describe("CriticMarkup comments", () => {
     const input = `## Sprint Notes
 
 * First item
-* {==Second item==}{>>Needs review<<}{id="cmt4" by="AI" at="2024-01-15T10:33:00.000Z"}
+* {==Second item==}{>>Needs review<<}{#cmt4}
+
+---
+comments:
+  cmt4:
+    by: AI
+    at: 2024-01-15T10:33:00.000Z
 `;
 
     const { doc, comments } = criticMarkdownToEditorState(input);
     const output = editorStateToCriticMarkdown(doc, comments);
 
     expect(output).toContain("## Sprint Notes");
-    expect(output).toContain(
-      '{==Second item==}{>>Needs review<<}{id="cmt4" by="AI" at="2024-01-15T10:33:00.000Z"}',
-    );
+    expect(output).toContain("{==Second item==}{>>Needs review<<}{#cmt4}");
     expect(output).toContain("- First item");
+    expect(output).toContain(
+      "  cmt4:\n    by: AI\n    at: 2024-01-15T10:33:00.000Z\n",
+    );
   });
 
   it("does not import a trailing blank line into fenced code blocks", () => {
@@ -699,8 +746,14 @@ const command = "roughdraft open";
           ]),
         ),
       ).toBe(`\`\`\`ts
-const command = "{==roughdraft open==}{>>test<<}{id="c1" by="user" at="2026-04-25T22:14:08.827Z"}";
+const command = "{==roughdraft open==}{>>test<<}{#c1}";
 \`\`\`
+
+---
+comments:
+  c1:
+    by: user
+    at: 2026-04-25T22:14:08.827Z
 `);
     } finally {
       editor.destroy();
@@ -711,8 +764,14 @@ const command = "{==roughdraft open==}{>>test<<}{id="c1" by="user" at="2026-04-2
     const input = `\`\`\`ts
 const first = 1;
 
-const {==second==}{>>Check this value<<}{id="c1" by="user" at="2026-08-06T10:30:00.000Z"} = 2;
+const {==second==}{>>Check this value<<}{#c1} = 2;
 \`\`\`
+
+---
+comments:
+  c1:
+    by: user
+    at: 2026-08-06T10:30:00.000Z
 `;
 
     const { doc, comments } = criticMarkdownToEditorState(input);
@@ -767,8 +826,14 @@ flowchart LR
 
   it("round-trips comment anchors inside fenced code blocks", () => {
     const input = `\`\`\`ts
-const command = "{==roughdraft open==}{>>test<<}{id="c1" by="user" at="2026-04-25T22:14:08.827Z"}";
+const command = "{==roughdraft open==}{>>test<<}{#c1}";
 \`\`\`
+
+---
+comments:
+  c1:
+    by: user
+    at: 2026-04-25T22:14:08.827Z
 `;
 
     const { doc, comments } = criticMarkdownToEditorState(input);
@@ -808,10 +873,16 @@ const command = "{==roughdraft open==}{>>test<<}{id="c1" by="user" at="2026-04-2
     const input = `\`\`\`python
 def outer():
     if flag:
-        {==return 1==}{>>Check this branch<<}{id="c1" by="user" at="2026-01-01T00:00:00.000Z"}
+        {==return 1==}{>>Check this branch<<}{#c1}
 
     return 2
 \`\`\`
+
+---
+comments:
+  c1:
+    by: user
+    at: 2026-01-01T00:00:00.000Z
 `;
 
     const { doc, comments } = criticMarkdownToEditorState(input);
@@ -824,8 +895,21 @@ def outer():
   });
 
   it("round-trips an anchored reply thread", () => {
-    const input =
-      'Please revisit {==this sentence==}{>>Needs a source<<}{id="c1" by="user" at="2024-01-15T10:30:00.000Z"}{>>I can add one from the intro.<<}{id="c2" by="AI" at="2024-01-15T10:31:00.000Z" re="c1"}.\n';
+    const input = [
+      "Please revisit {==this sentence==}{>>Needs a source<<}{#c1}.",
+      "",
+      "---",
+      "comments:",
+      "  c1:",
+      "    by: user",
+      "    at: 2024-01-15T10:30:00.000Z",
+      "  c2:",
+      "    by: AI",
+      "    at: 2024-01-15T10:31:00.000Z",
+      "    body: I can add one from the intro.",
+      "    re: c1",
+      "",
+    ].join("\n");
 
     const { doc, comments } = criticMarkdownToEditorState(input);
 
@@ -838,8 +922,26 @@ def outer():
   });
 
   it("round-trips nested replies in preorder", () => {
-    const input =
-      'Please revisit {==this sentence==}{>>Needs a source<<}{id="c1" by="user" at="2024-01-15T10:30:00.000Z"}{>>I can add one from the intro.<<}{id="c2" by="AI" at="2024-01-15T10:31:00.000Z" re="c1"}{>>Use the market report too.<<}{id="c3" by="user" at="2024-01-15T10:32:00.000Z" re="c2"}.\n';
+    const input = [
+      "Please revisit {==this sentence==}{>>Needs a source<<}{#c1}.",
+      "",
+      "---",
+      "comments:",
+      "  c1:",
+      "    by: user",
+      "    at: 2024-01-15T10:30:00.000Z",
+      "  c2:",
+      "    by: AI",
+      "    at: 2024-01-15T10:31:00.000Z",
+      "    body: I can add one from the intro.",
+      "    re: c1",
+      "  c3:",
+      "    by: user",
+      "    at: 2024-01-15T10:32:00.000Z",
+      "    body: Use the market report too.",
+      "    re: c2",
+      "",
+    ].join("\n");
 
     const { doc, comments } = criticMarkdownToEditorState(input);
 
@@ -850,7 +952,7 @@ def outer():
     expect(editorStateToCriticMarkdown(doc, comments)).toBe(input);
   });
 
-  it("migrates legacy metadata to attribute metadata on save", () => {
+  it("migrates legacy metadata to compact references and endmatter on save", () => {
     const input =
       "Please revisit {==this sentence==}{>>Needs a source<<}{@id:c1;by:user;at:2024-01-15T10:30:00.000Z@}.\n";
 
@@ -863,11 +965,20 @@ def outer():
       authorId: "user",
     });
     expect(editorStateToCriticMarkdown(doc, comments)).toBe(
-      'Please revisit {==this sentence==}{>>Needs a source<<}{id="c1" by="user" at="2024-01-15T10:30:00.000Z"}.\n',
+      [
+        "Please revisit {==this sentence==}{>>Needs a source<<}{#c1}.",
+        "",
+        "---",
+        "comments:",
+        "  c1:",
+        "    by: user",
+        "    at: 2024-01-15T10:30:00.000Z",
+        "",
+      ].join("\n"),
     );
   });
 
-  it("round-trips escaped attribute metadata values", () => {
+  it("keeps escaped attribute metadata values when migrating them to endmatter", () => {
     const input =
       'Please revisit {==this sentence==}{>>Needs a source<<}{id="c1" by="user\\\\\\"name" at="2024-01-15T10:30:00.000Z"}.\n';
 
@@ -876,7 +987,15 @@ def outer():
     expect(comments.get("c1")).toMatchObject({
       authorId: 'user\\"name',
     });
-    expect(editorStateToCriticMarkdown(doc, comments)).toBe(input);
+
+    const output = editorStateToCriticMarkdown(doc, comments);
+
+    expect(output).toContain(
+      "Please revisit {==this sentence==}{>>Needs a source<<}{#c1}.",
+    );
+    expect(criticMarkdownToEditorState(output).comments.get("c1")).toEqual(
+      comments.get("c1"),
+    );
   });
 
   it.each([
@@ -920,8 +1039,16 @@ def outer():
   });
 
   it("round-trips an insertion suggestion with metadata", () => {
-    const input =
-      'Add {++new text++}{id="s1" by="user" at="2024-01-15T10:30:00.000Z"} here.\n';
+    const input = [
+      "Add {++new text++}{#s1} here.",
+      "",
+      "---",
+      "suggestions:",
+      "  s1:",
+      "    by: user",
+      "    at: 2024-01-15T10:30:00.000Z",
+      "",
+    ].join("\n");
 
     const { doc, comments } = criticMarkdownToEditorState(input);
 
@@ -929,8 +1056,16 @@ def outer():
   });
 
   it("round-trips a deletion suggestion with metadata", () => {
-    const input =
-      'Remove {--old text--}{id="s2" by="AI" at="2024-01-15T10:31:00.000Z"} here.\n';
+    const input = [
+      "Remove {--old text--}{#s2} here.",
+      "",
+      "---",
+      "suggestions:",
+      "  s2:",
+      "    by: AI",
+      "    at: 2024-01-15T10:31:00.000Z",
+      "",
+    ].join("\n");
 
     const { doc, comments } = criticMarkdownToEditorState(input);
 
@@ -938,8 +1073,16 @@ def outer():
   });
 
   it("round-trips a substitution suggestion with metadata", () => {
-    const input =
-      'Use {~~old text~>new text~~}{id="s3" by="user@example.com" at="2024-01-15T10:32:00.000Z"} here.\n';
+    const input = [
+      "Use {~~old text~>new text~~}{#s3} here.",
+      "",
+      "---",
+      "suggestions:",
+      "  s3:",
+      "    by: user@example.com",
+      "    at: 2024-01-15T10:32:00.000Z",
+      "",
+    ].join("\n");
 
     const { doc, comments } = criticMarkdownToEditorState(input);
 
@@ -947,8 +1090,22 @@ def outer():
   });
 
   it("round-trips a substitution suggestion with an attached comment", () => {
-    const input =
-      'Use {~~old text~>new text~~}{id="s3" by="AI" at="2024-01-15T10:32:00.000Z"}{>>Confirm this with legal.<<}{id="c1" by="user" at="2024-01-15T10:33:00.000Z" re="s3"} here.\n';
+    const input = [
+      "Use {~~old text~>new text~~}{#s3} here.",
+      "",
+      "---",
+      "comments:",
+      "  c1:",
+      "    by: user",
+      "    at: 2024-01-15T10:33:00.000Z",
+      "    body: Confirm this with legal.",
+      "    re: s3",
+      "suggestions:",
+      "  s3:",
+      "    by: AI",
+      "    at: 2024-01-15T10:32:00.000Z",
+      "",
+    ].join("\n");
 
     const { doc, comments } = criticMarkdownToEditorState(input);
 
@@ -984,13 +1141,21 @@ def outer():
     );
 
     expect(editorStateToCriticMarkdown(doc, comments)).toMatch(
-      /^Add \{\+\+new text\+\+\}\{id="s1" by="user" at="[^"]+"\} here\.\n$/,
+      /^Add \{\+\+new text\+\+\}\{#s1\} here\.\n\n---\nsuggestions:\n {2}s1:\n {4}by: user\n {4}at: \S+\n$/,
     );
   });
 
   it("preserves Markdown formatting inside suggested changes", () => {
-    const input =
-      'Use {++**bold** and `code`++}{id="s1" by="user" at="2024-01-15T10:30:00.000Z"} here.\n';
+    const input = [
+      "Use {++**bold** and `code`++}{#s1} here.",
+      "",
+      "---",
+      "suggestions:",
+      "  s1:",
+      "    by: user",
+      "    at: 2024-01-15T10:30:00.000Z",
+      "",
+    ].join("\n");
 
     const { doc, comments } = criticMarkdownToEditorState(input);
 
@@ -998,8 +1163,20 @@ def outer():
   });
 
   it("preserves suggested changes next to comments", () => {
-    const input =
-      'Add {++new text++}{id="s1" by="user" at="2024-01-15T10:30:00.000Z"} near {==this==}{>>Check it<<}{id="c1" by="AI" at="2024-01-15T10:31:00.000Z"}.\n';
+    const input = [
+      "Add {++new text++}{#s1} near {==this==}{>>Check it<<}{#c1}.",
+      "",
+      "---",
+      "comments:",
+      "  c1:",
+      "    by: AI",
+      "    at: 2024-01-15T10:31:00.000Z",
+      "suggestions:",
+      "  s1:",
+      "    by: user",
+      "    at: 2024-01-15T10:30:00.000Z",
+      "",
+    ].join("\n");
 
     const { doc, comments } = criticMarkdownToEditorState(input);
 
@@ -1010,17 +1187,38 @@ def outer():
     const input =
       '{==New wording==}{>>Why this wording?<<}{id="c1" by="user" at="2024-01-15T10:31:00.000Z" re="s1"} follows {++new text++}{id="s1" by="AI" at="2024-01-15T10:30:00.000Z"}.\n';
 
-    const { doc, comments } = criticMarkdownToEditorState(input);
+    const { comments, changes } = criticMarkdownToRenderedHtml(input);
+    const parsed = criticMarkdownToEditorState(input);
 
     expect(comments.get("c1")).toMatchObject({
       parentCommentId: "s1",
     });
-    expect(editorStateToCriticMarkdown(doc, comments)).toBe(input);
+
+    const output = editorStateToCriticMarkdown(parsed.doc, parsed.comments);
+    const reparsed = criticMarkdownToRenderedHtml(output);
+
+    expect(output).toContain("{==New wording==}");
+    expect(reparsed.comments).toEqual(comments);
+    expect(reparsed.changes).toEqual(changes);
   });
 
   it("round-trips a comment attached directly to a suggestion", () => {
-    const input =
-      '{++new text++}{id="s1" by="AI" at="2024-01-15T10:30:00.000Z"}{>>Why this wording?<<}{id="c1" by="user" at="2024-01-15T10:31:00.000Z" re="s1"}\n';
+    const input = [
+      "{++new text++}{#s1}",
+      "",
+      "---",
+      "comments:",
+      "  c1:",
+      "    by: user",
+      "    at: 2024-01-15T10:31:00.000Z",
+      "    body: Why this wording?",
+      "    re: s1",
+      "suggestions:",
+      "  s1:",
+      "    by: AI",
+      "    at: 2024-01-15T10:30:00.000Z",
+      "",
+    ].join("\n");
 
     const { doc, comments } = criticMarkdownToEditorState(input);
 
@@ -1031,19 +1229,27 @@ def outer():
   });
 
   it("preserves suggested changes in headings and list items", () => {
-    const input = `## Use {++new title++}{id="s1" by="user" at="2024-01-15T10:30:00.000Z"}
+    const input = `## Use {++new title++}{#s1}
 
-* Keep {--old item--}{id="s2" by="user" at="2024-01-15T10:31:00.000Z"}
+* Keep {--old item--}{#s2}
+
+---
+suggestions:
+  s1:
+    by: user
+    at: 2024-01-15T10:30:00.000Z
+  s2:
+    by: user
+    at: 2024-01-15T10:31:00.000Z
 `;
 
     const { doc, comments } = criticMarkdownToEditorState(input);
     const output = editorStateToCriticMarkdown(doc, comments);
 
+    expect(output).toContain("## Use {++new title++}{#s1}");
+    expect(output).toContain("- Keep {--old item--}{#s2}");
     expect(output).toContain(
-      '## Use {++new title++}{id="s1" by="user" at="2024-01-15T10:30:00.000Z"}',
-    );
-    expect(output).toContain(
-      '- Keep {--old item--}{id="s2" by="user" at="2024-01-15T10:31:00.000Z"}',
+      "suggestions:\n  s1:\n    by: user\n    at: 2024-01-15T10:30:00.000Z\n  s2:\n    by: user\n    at: 2024-01-15T10:31:00.000Z\n",
     );
   });
 
@@ -1419,5 +1625,166 @@ describe("endmatter replies to inline-attribute parents", () => {
     expect(parseYaml(yamlEndmatter)).toMatchObject({
       comments: { c2: { body: "Done.", re: "c1" } },
     });
+  });
+});
+
+describe("compact metadata on save", () => {
+  function saveRoundTrip(markdown: string): string {
+    const { doc, comments } = criticMarkdownToEditorState(markdown);
+    return editorStateToCriticMarkdown(doc, comments);
+  }
+
+  function reviewData(markdown: string) {
+    const { comments, changes } = criticMarkdownToRenderedHtml(markdown);
+    return {
+      comments: [...comments.values()]
+        .map((comment) => ({
+          id: comment.id,
+          parentCommentId: comment.parentCommentId ?? null,
+          content: comment.content,
+          authorType: comment.authorType,
+          authorId: comment.authorId,
+          createdAt: comment.createdAt,
+          reaction: comment.reaction ?? null,
+        }))
+        // Inline comments load before endmatter-only replies, so compare by id.
+        .sort((left, right) => left.id.localeCompare(right.id)),
+      changes: [...changes.values()],
+    };
+  }
+
+  it("migrates an inline-attribute document to compact references and endmatter without losing review data", () => {
+    const input = [
+      "# Draft",
+      "",
+      'Please revisit {==this claim==}{>>Needs a source.<<}{id="c1" by="user" at="2026-10-07T08:00:00.000Z"}{>>I can add one.<<}{id="c2" by="Claude" at="2026-10-07T08:01:00.000Z" re="c1"}{>>Use the 2025 report.<<}{id="c3" by="user" at="2026-10-07T08:02:00.000Z" re="c2"}.',
+      "",
+      'Add {++one concrete example++}{id="s1" by="Claude" at="2026-10-07T08:03:00.000Z"}{>>Is this the right one?<<}{id="c4" by="user" at="2026-10-07T08:04:00.000Z" re="s1"} here.',
+      "",
+      'Keep {==the launch date==}{>>Fixed in the latest draft.<<}{id="c5" by="AI" at="2026-10-07T08:05:00.000Z" status="resolved"} and {==the tone==}{>>Nice.<<}{id="c6" by="user" at="2026-10-07T08:06:00.000Z" reaction="up"}.',
+      "",
+    ].join("\n");
+
+    const output = saveRoundTrip(input);
+
+    expect(output).toContain(
+      "Please revisit {==this claim==}{>>Needs a source.<<}{#c1}.",
+    );
+    expect(output).toContain("Add {++one concrete example++}{#s1} here.");
+    expect(output).toContain(
+      "Keep {==the launch date==}{>>Fixed in the latest draft.<<}{#c5} and {==the tone==}{>>Nice.<<}{#c6}.",
+    );
+    expect(output).not.toMatch(/\{id="/);
+    expect(output).toContain("\n---\ncomments:\n");
+    expect(reviewData(output)).toEqual(reviewData(input));
+    expect(saveRoundTrip(output)).toBe(output);
+  });
+
+  it("keeps resolved status and unknown inline attributes when migrating", () => {
+    const input = [
+      'Keep {==the launch date==}{>>Check this.<<}{id="c1" by="user" at="2026-10-07T08:00:00.000Z" status="resolved" resolved="Checked against the plan"} and {++the date++}{id="s1" by="Claude" at="2026-10-07T08:01:00.000Z" source="planning-doc"}.',
+      "",
+    ].join("\n");
+
+    const output = saveRoundTrip(input);
+    const endmatter = parseYaml(
+      output.slice(output.lastIndexOf("\n---\n") + 5),
+    );
+
+    expect(output).toContain(
+      "Keep {==the launch date==}{>>Check this.<<}{#c1} and {++the date++}{#s1}.",
+    );
+    expect(endmatter.comments.c1).toMatchObject({
+      by: "user",
+      status: "resolved",
+      resolved: "Checked against the plan",
+    });
+    expect(endmatter.suggestions.s1).toMatchObject({
+      by: "Claude",
+      source: "planning-doc",
+    });
+    expect(saveRoundTrip(output)).toBe(output);
+  });
+
+  it("saves a document without review data unchanged", () => {
+    const input = "# Notes\n\nPlain paragraph with **bold** text.\n";
+
+    const output = saveRoundTrip(input);
+
+    expect(output).toBe(input);
+    expect(output).not.toContain("---");
+  });
+
+  it("keeps agent author labels when loading and saving", () => {
+    const input = [
+      'Check {==alpha==}{>>From Claude.<<}{id="c1" by="Claude" at="2026-10-07T08:00:00.000Z"} and {==beta==}{>>From Codex.<<}{#c2} and {==gamma==}{>>From an agent.<<}{#c3} and {==delta==}{>>From me.<<}{#c4}.',
+      "",
+      "---",
+      "comments:",
+      "  c2:",
+      "    by: Codex",
+      "    at: 2026-10-07T08:01:00.000Z",
+      "  c3:",
+      "    by: AI",
+      "    at: 2026-10-07T08:02:00.000Z",
+      "  c4:",
+      "    by: user",
+      "    at: 2026-10-07T08:03:00.000Z",
+      "",
+    ].join("\n");
+
+    const { doc, comments } = criticMarkdownToEditorState(input);
+
+    expect(comments.get("c1")).toMatchObject({
+      authorType: "ai",
+      authorId: "Claude",
+    });
+    expect(comments.get("c2")).toMatchObject({
+      authorType: "ai",
+      authorId: "Codex",
+    });
+    expect(comments.get("c3")).toMatchObject({
+      authorType: "ai",
+      authorId: null,
+    });
+    expect(comments.get("c4")).toMatchObject({
+      authorType: "user",
+      authorId: "user",
+    });
+
+    const output = editorStateToCriticMarkdown(doc, comments);
+    const endmatter = parseYaml(
+      output.slice(output.lastIndexOf("\n---\n") + 5),
+    );
+
+    expect(endmatter.comments).toMatchObject({
+      c1: { by: "Claude" },
+      c2: { by: "Codex" },
+      c3: { by: "AI" },
+      c4: { by: "user" },
+    });
+  });
+
+  it.each([
+    "AI",
+    "Claude",
+  ])("keeps a suggestion by %s as an agent suggestion on save", (by) => {
+    const input = [
+      "Add {++one example++}{#s1}.",
+      "",
+      "---",
+      "suggestions:",
+      "  s1:",
+      `    by: ${by}`,
+      "    at: 2026-10-07T08:00:00.000Z",
+      "",
+    ].join("\n");
+
+    const output = saveRoundTrip(input);
+
+    expect(output).toBe(input);
+    expect(
+      criticMarkdownToRenderedHtml(output).changes.get("s1"),
+    ).toMatchObject({ authorType: "ai" });
   });
 });

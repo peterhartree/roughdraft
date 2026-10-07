@@ -14,4 +14,10 @@ Keep `{>>literal inline comment<<}` and this fenced example:
 {++literal insertion++}
 ```
 
-Review {==this line==}{>>Needs one more example<<}{id="c1" by="user" at="2024-01-15T10:30:00.000Z"}.
+Review {==this line==}{>>Needs one more example<<}{#c1}.
+
+---
+comments:
+  c1:
+    by: user
+    at: 2024-01-15T10:30:00.000Z

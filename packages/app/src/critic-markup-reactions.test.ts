@@ -41,24 +41,28 @@ describe("comment reactions round-trip", () => {
     expect(comments.get("c1")?.reaction).toBeNull();
   });
 
-  it("serializes reaction='up' back into inline metadata", () => {
+  it("serializes reaction='up' into endmatter on save", () => {
     const markdown =
       'Hello {==world=={>>Nice!<<}{id="c1" by="user" at="2024-01-01T00:00:00.000Z" reaction="up"}\n';
 
     const { doc, comments } = criticMarkdownToEditorState(markdown);
     const serialized = editorStateToCriticMarkdown(doc, comments);
 
-    expect(serialized).toContain('reaction="up"');
+    expect(serialized).toContain("{>>Nice!<<}{#c1}");
+    expect(serialized).toContain("reaction: up");
+    expect(serialized).not.toContain('reaction="up"');
   });
 
-  it("serializes reaction='down' back into inline metadata", () => {
+  it("serializes reaction='down' into endmatter on save", () => {
     const markdown =
       'Hello {==world=={>>Needs work<<}{id="c1" by="user" at="2024-01-01T00:00:00.000Z" reaction="down"}\n';
 
     const { doc, comments } = criticMarkdownToEditorState(markdown);
     const serialized = editorStateToCriticMarkdown(doc, comments);
 
-    expect(serialized).toContain('reaction="down"');
+    expect(serialized).toContain("{>>Needs work<<}{#c1}");
+    expect(serialized).toContain("reaction: down");
+    expect(serialized).not.toContain('reaction="down"');
   });
 
   it("omits reaction key when reaction is null", () => {
@@ -69,6 +73,7 @@ describe("comment reactions round-trip", () => {
     const serialized = editorStateToCriticMarkdown(doc, comments);
 
     expect(serialized).not.toContain("reaction=");
+    expect(serialized).not.toContain("reaction:");
   });
 
   it("round-trips reaction through endmatter YAML", () => {
