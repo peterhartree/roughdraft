@@ -16,6 +16,12 @@ import {
   ROUGHDRAFT_PUBLIC_HOST,
 } from "./network.js";
 import { findAvailablePort } from "./ports.js";
+import {
+  isReviewCommand,
+  printReviewCommandHelp,
+  readProcessStdin,
+  runReviewCommand,
+} from "./review-commands.js";
 import { resolveUpdateStatus, type UpdateStatus } from "./update-status.js";
 
 const AGENT_SETUP_URL = "https://roughdraft.md/setup.md";
@@ -36,6 +42,9 @@ const KNOWN_COMMANDS = [
   "stop",
   "mcp",
   "doctor",
+  "comments",
+  "reply",
+  "resolve",
   "help",
   "agent-setup",
   "criticmarkup",
@@ -91,6 +100,7 @@ export interface CliDependencies {
   resolveUpdateStatus: () => Promise<UpdateStatus>;
   log: (message: string) => void;
   error: (message: string) => void;
+  readStdin: () => Promise<string | null>;
 }
 
 type OpenMode = "browser" | "desktop-app" | "disabled" | "none";
@@ -587,6 +597,7 @@ export function createCliDependencies(
       (() => resolveUpdateStatus({ fetchImpl })),
     log: overrides.log ?? ((message) => console.log(message)),
     error: overrides.error ?? ((message) => console.error(message)),
+    readStdin: overrides.readStdin ?? readProcessStdin,
   };
 }
 
@@ -615,6 +626,9 @@ function printHelp(log: (message: string) => void) {
   log("  stop               Stop the managed background server");
   log("  mcp                Start the experimental stdio MCP server");
   log("  doctor [path]      Diagnose setup or validate Markdown");
+  log("  comments <path>    List review comments, replies and suggestions");
+  log("  reply <path>       Reply to a comment: --to <id> [--by <label>]");
+  log("  resolve <path> <id> Mark a comment or suggestion resolved");
   log("  help agent         Print the agent setup prompt");
   log("  help criticmarkup  Show CriticMarkup examples");
   log("  agent-setup        Print the agent setup prompt");
@@ -640,6 +654,11 @@ function printCommandHelp(
   command: KnownCommand,
   log: (message: string) => void,
 ) {
+  if (isReviewCommand(command)) {
+    printReviewCommandHelp(command, log);
+    return;
+  }
+
   if (command === "open") {
     log("Usage:");
     log("  roughdraft open <path> [--no-open] [--print-url] [--port <port>]");
@@ -815,9 +834,14 @@ function printCriticMarkupHelp(log: (message: string) => void) {
   log('      at: "2026-04-28T12:11:00.000Z"');
   log("");
   log("Reply to an existing comment:");
-  log("  Store replies in `comments.<id>.body` with `re: <parent-id>`.");
+  log("  roughdraft reply <path> --to c1 --by <label> --body <text>");
+  log("  The command picks the id and format. Omit --body to read the reply");
+  log("  from stdin. List threads with `roughdraft comments <path>`.");
   log("");
   log("Reply guidance:");
+  log(
+    "  If you write a reply by hand, store it in `comments.<id>.body` with `re: <parent-id>`.",
+  );
   log(
     "  Existing inline attribute metadata is still accepted for compatibility.",
   );
@@ -2307,6 +2331,10 @@ export async function runCli(
       const { startMcpServer } = await import("./mcp.js");
       startMcpServer();
       return new Promise<number>(() => {});
+    }
+
+    if (isReviewCommand(command)) {
+      return runReviewCommand(command, rest, deps, parsed.global.json);
     }
 
     if (command === "doctor") {

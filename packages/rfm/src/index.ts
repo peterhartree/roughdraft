@@ -694,7 +694,12 @@ export function appendRoughdraftReply(
 
   const endmatter = parseRoughdraftEndmatter(markdown);
   const replyId = options.id ?? nextRoughdraftCommentId(markdown);
-  if (isEndmatterBackedItem(markdown, parent)) {
+  // Blank lines would split an inline comment span, so multi-paragraph
+  // replies always go to endmatter, which accepts any parent format.
+  if (
+    isEndmatterBackedItem(markdown, parent) ||
+    /\r?\n[ \t]*\r?\n/.test(options.message)
+  ) {
     const comments = new Map(endmatter.comments);
     comments.set(replyId, {
       body: options.message,
