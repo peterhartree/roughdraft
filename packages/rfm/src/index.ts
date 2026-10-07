@@ -11,6 +11,7 @@ export interface RfmDiagnostic {
 
 export interface RfmValidationSummary {
   comments: number;
+  replies: number;
   suggestions: number;
   legacyMetadata: number;
 }
@@ -155,6 +156,21 @@ interface YamlMetadataEntry {
   [key: string]: unknown;
 }
 
+export type RoughdraftEndmatterDetection =
+  | { kind: "none" }
+  | {
+      kind: "review";
+      offset: number;
+      raw: string;
+      data: Record<string, unknown>;
+    }
+  | {
+      kind: "invalid" | "ignored";
+      offset: number;
+      raw: string;
+      reason: string;
+    };
+
 interface RoughdraftEndmatter {
   comments: Map<string, YamlMetadataEntry>;
   suggestions: Map<string, YamlMetadataEntry>;
@@ -180,6 +196,7 @@ export function validateRoughdraftMarkdown(
   const replies: ReplyReference[] = [];
   const summary: RfmValidationSummary = {
     comments: 0,
+    replies: 0,
     suggestions: 0,
     legacyMetadata: 0,
   };
@@ -205,6 +222,16 @@ export function validateRoughdraftMarkdown(
       diagnostic.code,
       diagnostic.message,
       diagnostic.offset,
+    );
+  }
+
+  const detection = detectRoughdraftEndmatter(markdown);
+  if (detection.kind === "ignored") {
+    addDiagnostic(
+      "warning",
+      "ignored-endmatter",
+      `Review metadata was ignored. ${detection.reason}`,
+      detection.offset,
     );
   }
 
@@ -306,6 +333,7 @@ export function validateRoughdraftMarkdown(
 
     const parentId = metadata.attrs.get("re");
     if (kind === "comment" && id && parentId) {
+      summary.replies += 1;
       replies.push({ id, parentId, offset: metadata.offset });
     }
   };
@@ -408,6 +436,7 @@ export function validateRoughdraftMarkdown(
       Boolean(entry.re),
     );
     if (entry.re) {
+      summary.replies += 1;
       replies.push({
         id,
         parentId: String(entry.re),
@@ -636,9 +665,8 @@ export function appendRoughdraftDocumentComment(
 ): string {
   assertSafeCommentBodyText(options.message);
 
-  const index = extractRoughdraftReviewIndex(markdown);
   const endmatter = parseRoughdraftEndmatter(markdown);
-  const commentId = options.id ?? nextCommentId(index.items);
+  const commentId = options.id ?? nextRoughdraftCommentId(markdown);
   const comments = new Map(endmatter.comments);
   comments.set(commentId, {
     body: options.message,
@@ -665,8 +693,8 @@ export function appendRoughdraftReply(
   }
 
   const endmatter = parseRoughdraftEndmatter(markdown);
+  const replyId = options.id ?? nextRoughdraftCommentId(markdown);
   if (isEndmatterBackedItem(markdown, parent)) {
-    const replyId = options.id ?? nextCommentId(index.items);
     const comments = new Map(endmatter.comments);
     comments.set(replyId, {
       body: options.message,
@@ -681,13 +709,34 @@ export function appendRoughdraftReply(
   }
 
   const reply = `{>>${options.message}<<}${serializeMetadataAttributes({
-    id: options.id ?? nextCommentId(index.items),
+    id: replyId,
     by: options.author ?? "AI",
     at: options.at ?? new Date().toISOString(),
     re: options.parentId,
   })}`;
 
-  return `${markdown.slice(0, parent.endOffset)}${reply}${markdown.slice(parent.endOffset)}`;
+  // Insert after any comment blocks already chained to the parent, so replies
+  // stay in the order they were written.
+  let insertAt = parent.endOffset;
+  for (;;) {
+    const next = index.items.find(
+      (item) => item.kind !== "suggestion" && item.offset === insertAt,
+    );
+    if (!next) break;
+    insertAt = next.endOffset;
+  }
+
+  return `${markdown.slice(0, insertAt)}${reply}${markdown.slice(insertAt)}`;
+}
+
+/** Returns the next free `cN` id, counting ids used inline and in endmatter. */
+export function nextRoughdraftCommentId(markdown: string): string {
+  const index = extractRoughdraftReviewIndex(markdown);
+  const endmatter = parseRoughdraftEndmatter(markdown);
+  return nextCommentId([
+    ...index.items,
+    ...[...endmatter.comments.keys()].map((id) => ({ id })),
+  ]);
 }
 
 function assertSafeCommentBodyText(message: string): void {
@@ -1187,6 +1236,74 @@ function parseLegacyAttributes(metadata: string): Map<string, string> {
   return attrs;
 }
 
+/**
+ * Finds the final `---` block of a document and decides whether it holds
+ * Roughdraft review metadata. The block is review endmatter when it parses as
+ * a YAML map with a `comments` or `suggestions` map, and either the body uses a
+ * compact `{#id}` reference or at least one comment entry is complete (`body`,
+ * `by` and `at`), such as a document-level comment or a reply to an inline
+ * comment. Anything else stays ordinary document text.
+ *
+ * `ignored` reports a final block that looks like review metadata but was not
+ * accepted, so tools can warn instead of silently dropping it.
+ */
+export function detectRoughdraftEndmatter(
+  markdown: string,
+  options: { skipFrontmatter?: boolean } = {},
+): RoughdraftEndmatterDetection {
+  const match = findFinalYamlEndmatter(
+    markdown,
+    options.skipFrontmatter === false ? 0 : frontmatterEndOffset(markdown),
+  );
+  if (!match || isInsideFence(markdown, match.offset + 1)) {
+    return { kind: "none" };
+  }
+
+  const looksLikeReviewMetadata =
+    /^(?:comments|suggestions):/m.test(match.yaml) &&
+    /^[ \t]+(?:body|re):/m.test(match.yaml);
+  let parsed: unknown;
+  try {
+    parsed = parseYaml(match.yaml);
+  } catch (error) {
+    const reason = `YAML endmatter could not be parsed: ${error instanceof Error ? error.message : String(error)}`;
+    if (markdown.slice(0, match.offset).includes("{#")) {
+      return { kind: "invalid", offset: match.offset, raw: match.raw, reason };
+    }
+    return looksLikeReviewMetadata
+      ? { kind: "ignored", offset: match.offset, raw: match.raw, reason }
+      : { kind: "none" };
+  }
+
+  if (!isPlainObject(parsed)) return { kind: "none" };
+  if (!("comments" in parsed) && !("suggestions" in parsed)) {
+    return { kind: "none" };
+  }
+
+  if (
+    (isPlainObject(parsed.comments) || isPlainObject(parsed.suggestions)) &&
+    (markdown.slice(0, match.offset).includes("{#") ||
+      hasCompleteCommentEntry(parsed))
+  ) {
+    return {
+      kind: "review",
+      offset: match.offset,
+      raw: match.raw,
+      data: parsed,
+    };
+  }
+
+  if (!hasEntryWithBodyOrReply(parsed)) return { kind: "none" };
+
+  return {
+    kind: "ignored",
+    offset: match.offset,
+    raw: match.raw,
+    reason:
+      "Final YAML block has review entries with `body` or `re`, but none is complete (`body`, `by` and `at`) and the body has no `{#id}` reference, so it is treated as document text.",
+  };
+}
+
 function parseRoughdraftEndmatter(markdown: string): RoughdraftEndmatter {
   const empty: RoughdraftEndmatter = {
     comments: new Map(),
@@ -1196,57 +1313,42 @@ function parseRoughdraftEndmatter(markdown: string): RoughdraftEndmatter {
     offset: null,
     diagnostics: [],
   };
-  const match = findFinalYamlEndmatter(markdown);
-  if (!match) return empty;
+  const detection = detectRoughdraftEndmatter(markdown);
 
-  let parsed: unknown;
-  try {
-    parsed = parseYaml(match.yaml);
-  } catch (error) {
-    if (!match.raw.includes("{#")) return empty;
-
+  if (detection.kind === "invalid") {
     return {
       ...empty,
-      raw: match.raw,
-      offset: match.offset,
+      raw: detection.raw,
+      offset: detection.offset,
       diagnostics: [
         {
           code: "invalid-endmatter-yaml",
-          message: `YAML endmatter could not be parsed: ${error instanceof Error ? error.message : String(error)}`,
-          offset: match.offset,
+          message: detection.reason,
+          offset: detection.offset,
         },
       ],
     };
   }
 
-  if (!isPlainObject(parsed)) return empty;
-  const hasRoughdraftKeys = "comments" in parsed || "suggestions" in parsed;
-  if (!hasRoughdraftKeys) return empty;
-  if (
-    !markdown.slice(0, match.offset).includes("{#") &&
-    !hasDocumentLevelComment(parsed)
-  ) {
-    return empty;
-  }
+  if (detection.kind !== "review") return empty;
 
   return {
-    comments: readEndmatterEntries(parsed.comments),
-    suggestions: readEndmatterEntries(parsed.suggestions),
-    data: parsed,
-    raw: match.raw,
-    offset: match.offset,
+    comments: readEndmatterEntries(detection.data.comments),
+    suggestions: readEndmatterEntries(detection.data.suggestions),
+    data: detection.data,
+    raw: detection.raw,
+    offset: detection.offset,
     diagnostics: [],
   };
 }
 
-function hasDocumentLevelComment(parsed: Record<string, unknown>): boolean {
+function hasCompleteCommentEntry(parsed: Record<string, unknown>): boolean {
   const comments = readEndmatterEntries(parsed.comments);
   for (const entry of comments.values()) {
     if (
       typeof entry.body === "string" &&
       typeof entry.by === "string" &&
-      typeof entry.at === "string" &&
-      !entry.re
+      typeof entry.at === "string"
     ) {
       return true;
     }
@@ -1255,12 +1357,47 @@ function hasDocumentLevelComment(parsed: Record<string, unknown>): boolean {
   return false;
 }
 
+function hasEntryWithBodyOrReply(parsed: Record<string, unknown>): boolean {
+  for (const entry of readEndmatterEntries(parsed.comments).values()) {
+    if ("body" in entry || "re" in entry) return true;
+  }
+
+  return false;
+}
+
+function isInsideFence(markdown: string, offset: number): boolean {
+  let fence: FenceState | null = null;
+  let lineStart = 0;
+
+  while (lineStart < offset) {
+    const fenceMatch = matchFence(markdown, lineStart, fence);
+    if (fenceMatch) {
+      fence = fence ? null : fenceMatch.fence;
+    }
+    lineStart = nextLineOffset(markdown, lineStart);
+  }
+
+  return fence !== null;
+}
+
+function frontmatterEndOffset(markdown: string): number {
+  if (!/^---[ \t]*\r?\n/.test(markdown)) return 0;
+
+  const closing = /\r?\n(?:---|\.\.\.)[ \t]*(?:\r?\n|$)/g;
+  closing.lastIndex = 3;
+  const match = closing.exec(markdown);
+  return match ? match.index + match[0].length : 0;
+}
+
 function findFinalYamlEndmatter(
   markdown: string,
+  minimumOffset: number,
 ): { raw: string; yaml: string; offset: number } | null {
   const matches = [...markdown.matchAll(/\n---[ \t]*\r?\n/g)];
   const last = matches.at(-1);
-  if (!last || last.index === undefined) return null;
+  if (!last || last.index === undefined || last.index < minimumOffset) {
+    return null;
+  }
 
   const raw = markdown.slice(last.index);
   return {
@@ -1409,7 +1546,7 @@ function escapeMetadataAttributeValue(value: string): string {
   return value.replaceAll("\\", "\\\\").replaceAll('"', '\\"');
 }
 
-function nextCommentId(items: RfmReviewItem[]): string {
+function nextCommentId(items: Array<Pick<RfmReviewItem, "id">>): string {
   let maxId = 0;
 
   for (const item of items) {

@@ -4,6 +4,7 @@ import {
   appendRoughdraftReply,
   extractRoughdraftReviewIndex,
   markRoughdraftResolved,
+  nextRoughdraftCommentId,
   setRoughdraftReaction,
   validateRoughdraftMarkdown,
 } from "./index";
@@ -742,5 +743,221 @@ describe("comment reactions", () => {
         reaction: "love",
       }),
     ).toThrow();
+  });
+});
+
+describe("endmatter replies to inline-attribute parents", () => {
+  const inlineParent =
+    'Text {==anchor==}{>>Please fix<<}{id="c1" by="user" at="2026-10-07T08:22:07.186Z"} more.';
+  const replyEntry = [
+    "  c2:",
+    "    body: Done.",
+    "    by: Claude",
+    '    at: "2026-10-07T09:00:00.000Z"',
+    "    re: c1",
+  ];
+  const replyOnly = [
+    "# Doc",
+    "",
+    inlineParent,
+    "",
+    "---",
+    "comments:",
+    ...replyEntry,
+    "",
+  ].join("\n");
+  const stubParentAndReply = [
+    "# Doc",
+    "",
+    inlineParent,
+    "",
+    "---",
+    "comments:",
+    "  c1:",
+    "    by: user",
+    '    at: "2026-10-07T08:22:07.186Z"',
+    ...replyEntry,
+    "",
+  ].join("\n");
+
+  it.each([
+    ["endmatter holding only the reply", replyOnly],
+    ["endmatter holding a parent stub and the reply", stubParentAndReply],
+  ])("reads an endmatter reply to an inline-attribute comment (%s)", (_label, markdown) => {
+    expect(validateRoughdraftMarkdown(markdown).summary.comments).toBe(2);
+    expect(extractRoughdraftReviewIndex(markdown).items).toContainEqual(
+      expect.objectContaining({
+        id: "c2",
+        kind: "reply",
+        parentId: "c1",
+        text: "Done.",
+      }),
+    );
+  });
+
+  it("does not treat a final horizontal rule followed by prose as endmatter", () => {
+    const index = extractRoughdraftReviewIndex(
+      ["# Doc", "", inlineParent, "", "---", "", "Closing remarks.", ""].join(
+        "\n",
+      ),
+    );
+
+    expect(index.items.map((item) => item.id)).toEqual(["c1"]);
+  });
+
+  it("does not treat final YAML without review keys as endmatter", () => {
+    const markdown = [
+      "# Doc",
+      "",
+      "Plain text.",
+      "",
+      "---",
+      "title: x",
+      "",
+    ].join("\n");
+
+    expect(extractRoughdraftReviewIndex(markdown).items).toHaveLength(0);
+    expect(validateRoughdraftMarkdown(markdown).summary.comments).toBe(0);
+  });
+
+  it("does not treat a final comments list as review endmatter", () => {
+    const markdown = [
+      "# Doc",
+      "",
+      "Plain text.",
+      "",
+      "---",
+      "comments:",
+      "  - one",
+      "  - two",
+      "",
+    ].join("\n");
+
+    expect(extractRoughdraftReviewIndex(markdown).items).toHaveLength(0);
+    expect(validateRoughdraftMarkdown(markdown).summary.comments).toBe(0);
+  });
+});
+
+describe("review metadata that would otherwise be lost", () => {
+  const inlineParent =
+    'Text {==anchor==}{>>Please fix<<}{id="c1" by="user" at="2026-10-07T08:22:07.186Z"} more.';
+
+  it("warns when a final review block is ignored because its reply is incomplete", () => {
+    const result = validateRoughdraftMarkdown(
+      [
+        inlineParent,
+        "",
+        "---",
+        "comments:",
+        "  c2:",
+        "    body: Done.",
+        "    re: c1",
+        "",
+      ].join("\n"),
+    );
+
+    expect(result.warnings.map((warning) => warning.code)).toEqual([
+      "ignored-endmatter",
+    ]);
+    expect(result.summary.comments).toBe(1);
+  });
+
+  it("warns when a final review block holding a reply is not valid YAML", () => {
+    const result = validateRoughdraftMarkdown(
+      [
+        inlineParent,
+        "",
+        "---",
+        "comments:",
+        "  c2:",
+        "    body: Done: see intro",
+        "   re: c1",
+        "",
+      ].join("\n"),
+    );
+
+    expect(result.warnings.map((warning) => warning.code)).toEqual([
+      "ignored-endmatter",
+    ]);
+  });
+
+  it("counts inline and endmatter replies separately from root comments", () => {
+    const result = validateRoughdraftMarkdown(
+      [
+        `${inlineParent}{>>Inline reply<<}{id="c2" by="AI" at="2026-10-07T09:00:00.000Z" re="c1"}`,
+        "",
+        "---",
+        "comments:",
+        "  c3:",
+        "    body: Endmatter reply",
+        "    by: Claude",
+        '    at: "2026-10-07T09:05:00.000Z"',
+        "    re: c1",
+        "",
+      ].join("\n"),
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.summary).toMatchObject({ comments: 3, replies: 2 });
+  });
+
+  it("does not read a frontmatter block as endmatter", () => {
+    const result = validateRoughdraftMarkdown(
+      [
+        "---",
+        "title: Draft",
+        "---",
+        "",
+        "Text {>>Needs a source<<}{#c1} more.",
+        "",
+      ].join("\n"),
+    );
+
+    expect(result.errors.map((error) => error.code)).toEqual([
+      "missing-endmatter-entry",
+    ]);
+  });
+});
+
+describe("replying to inline comments", () => {
+  const thread =
+    'Text {==anchor==}{>>Please fix<<}{id="c1" by="user" at="2026-10-07T08:22:07.186Z"}{>>First reply<<}{id="c2" by="AI" at="2026-10-07T09:00:00.000Z" re="c1"} more.\n';
+
+  it("adds a new inline reply after the existing replies", () => {
+    const updated = appendRoughdraftReply(thread, {
+      parentId: "c1",
+      message: "Second reply",
+      author: "Claude",
+      at: "2026-10-07T10:00:00.000Z",
+    });
+
+    expect(
+      extractRoughdraftReviewIndex(updated).items.map((item) => item.text),
+    ).toEqual(["Please fix", "First reply", "Second reply"]);
+    expect(updated).toContain(
+      '{>>Second reply<<}{id="c3" by="Claude" at="2026-10-07T10:00:00.000Z" re="c1"} more.',
+    );
+  });
+
+  it("does not reuse an id that exists only as an endmatter key", () => {
+    const markdown = [
+      'Text {>>Please fix<<}{id="c1" by="user" at="2026-10-07T08:22:07.186Z"}',
+      "",
+      "---",
+      "comments:",
+      "  c1:",
+      "    by: user",
+      '    at: "2026-10-07T08:22:07.186Z"',
+      "  c4:",
+      "    body: Overall note",
+      "    by: user",
+      '    at: "2026-10-07T08:30:00.000Z"',
+      "  c7:",
+      "    by: user",
+      '    at: "2026-10-07T08:31:00.000Z"',
+      "",
+    ].join("\n");
+
+    expect(nextRoughdraftCommentId(markdown)).toBe("c8");
   });
 });

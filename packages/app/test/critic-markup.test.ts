@@ -1,7 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
 import { Editor } from "@tiptap/core";
+import { describe, expect, it } from "vitest";
+import { parse as parseYaml } from "yaml";
 import {
   createCriticChange,
   createNextChangeId,
@@ -1357,5 +1358,66 @@ describe("Markdown rich-text round-trip of agent-written block layout", () => {
     const input = "| A | B | C |\n|---|---:|:---:|\n| 1 | 2 | 3 |\n";
 
     expect(richTextRoundTrip(input)).toBe(input);
+  });
+});
+
+describe("endmatter replies to inline-attribute parents", () => {
+  const inlineParent =
+    'Text {==anchor==}{>>Please fix<<}{id="c1" by="user" at="2026-10-07T08:22:07.186Z"} more.';
+  const replyEntry = [
+    "  c2:",
+    "    body: Done.",
+    "    by: Claude",
+    '    at: "2026-10-07T09:00:00.000Z"',
+    "    re: c1",
+  ];
+  const replyOnly = [
+    "# Doc",
+    "",
+    inlineParent,
+    "",
+    "---",
+    "comments:",
+    ...replyEntry,
+    "",
+  ].join("\n");
+  const stubParentAndReply = [
+    "# Doc",
+    "",
+    inlineParent,
+    "",
+    "---",
+    "comments:",
+    "  c1:",
+    "    by: user",
+    '    at: "2026-10-07T08:22:07.186Z"',
+    ...replyEntry,
+    "",
+  ].join("\n");
+
+  it.each([
+    ["endmatter holding only the reply", replyOnly],
+    ["endmatter holding a parent stub and the reply", stubParentAndReply],
+  ])("loads an endmatter reply to an inline-attribute comment (%s)", (_label, input) => {
+    const { comments } = criticMarkdownToEditorState(input);
+
+    expect(comments.get("c1")).toMatchObject({ content: "Please fix" });
+    expect(comments.get("c2")).toMatchObject({
+      id: "c2",
+      content: "Done.",
+      parentCommentId: "c1",
+    });
+  });
+
+  it("keeps an endmatter reply to an inline-attribute comment as YAML on save", () => {
+    const { doc, comments } = criticMarkdownToEditorState(replyOnly);
+    const output = editorStateToCriticMarkdown(doc, comments);
+
+    expect(output).not.toContain("* * *");
+    expect(output).not.toMatch(/comments:\s*c2:/);
+    const yamlEndmatter = output.slice(output.lastIndexOf("\n---\n") + 5);
+    expect(parseYaml(yamlEndmatter)).toMatchObject({
+      comments: { c2: { body: "Done.", re: "c1" } },
+    });
   });
 });

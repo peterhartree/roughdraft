@@ -181,6 +181,12 @@ comments:
     re: c1
 ```
 
+Readers MUST treat the document's final `---` block as review endmatter when all of these hold, and as ordinary Markdown otherwise:
+
+- It is not inside a fenced code block or YAML frontmatter.
+- It parses as a YAML map with a `comments` or `suggestions` map.
+- The body uses at least one compact reference, or at least one `comments` entry has `body`, `by` and `at`, such as a document-level comment or a reply.
+
 Suggested-change metadata lives under `suggestions:`:
 
 ```markdown
@@ -254,6 +260,20 @@ comments:
 ```
 
 A reply whose `re` points to a missing id SHOULD be treated as a top-level comment. A comment MUST NOT be its own parent.
+
+A reply's `re` MAY point to a parent written in either metadata form. An endmatter reply to a comment that uses an inline attribute block is valid:
+
+```markdown
+Review {==this sentence==}{>>Needs a source.<<}{id="c1" by="user" at="2026-04-28T12:00:00.000Z"}.
+
+---
+comments:
+  c2:
+    body: I can add one from the intro.
+    by: AI
+    at: "2026-04-28T12:05:00.000Z"
+    re: c1
+```
 
 ## Parsing And Round Trips
 

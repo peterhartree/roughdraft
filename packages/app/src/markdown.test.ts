@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import {
   rawMarkdownBlockAttribute,
   renderRawMarkdownBlockPreview,
+  splitYamlDocumentMetadata,
   splitYamlFrontmatter,
   toHtml,
   toMarkdown,
@@ -254,5 +255,25 @@ describe("renderRawMarkdownBlockPreview", () => {
     expect(preview?.html).not.toContain("onerror");
     expect(preview?.html).not.toContain("javascript:");
     expect(preview?.html).toContain("link");
+  });
+});
+
+describe("splitYamlDocumentMetadata", () => {
+  it("does not treat a final horizontal rule followed by prose as endmatter", () => {
+    const input = "# Doc\n\nText.\n\n---\n\nClosing remarks.\n";
+
+    expect(splitYamlDocumentMetadata(input).endmatter).toBeNull();
+  });
+
+  it("does not treat final YAML without review keys as endmatter", () => {
+    const input = "# Doc\n\nText.\n\n---\ntitle: x\n";
+
+    expect(splitYamlDocumentMetadata(input).endmatter).toBeNull();
+  });
+
+  it("does not treat a final comments list as review endmatter", () => {
+    const input = "# Doc\n\nText.\n\n---\ncomments:\n  - one\n  - two\n";
+
+    expect(splitYamlDocumentMetadata(input).endmatter).toBeNull();
   });
 });

@@ -1452,6 +1452,67 @@ describe("cli", () => {
     expect(payload.errors.map((error) => error.code)).toContain("duplicate-id");
   });
 
+  it("counts an endmatter reply to an inline comment from doctor path", async () => {
+    const test = createTestDependencies();
+    const documentPath = path.join(projectDir, "draft.md");
+    fs.writeFileSync(
+      documentPath,
+      [
+        'Please revisit {==this sentence==}{>>Needs a source.<<}{id="c1" by="user" at="2026-04-28T12:00:00.000Z"}.',
+        "",
+        "---",
+        "comments:",
+        "  c2:",
+        "    body: Added one from the intro.",
+        "    by: Claude",
+        '    at: "2026-04-28T12:05:00.000Z"',
+        "    re: c1",
+        "",
+      ].join("\n"),
+    );
+
+    const exitCode = await runCli(["doctor", documentPath], test.deps);
+
+    expect(exitCode).toBe(0);
+    expect(test.logs).toContain(
+      "Found 2 comment(s), including 1 reply, and 0 suggestion(s).",
+    );
+  });
+
+  it("warns from doctor path when review endmatter is ignored", async () => {
+    const test = createTestDependencies();
+    const documentPath = path.join(projectDir, "draft.md");
+    fs.writeFileSync(
+      documentPath,
+      [
+        'Please revisit {==this sentence==}{>>Needs a source.<<}{id="c1" by="user" at="2026-04-28T12:00:00.000Z"}.',
+        "",
+        "---",
+        "comments:",
+        "  c2:",
+        "    body: Missing its timestamp.",
+        "    re: c1",
+        "",
+      ].join("\n"),
+    );
+
+    const exitCode = await runCli(
+      ["doctor", documentPath, "--json"],
+      test.deps,
+    );
+    const payload = parseOnlyJsonLog<{
+      ok: boolean;
+      warnings: Array<{ code: string }>;
+      summary: { comments: number; replies: number };
+    }>(test.logs);
+
+    expect(exitCode).toBe(0);
+    expect(payload.warnings.map((warning) => warning.code)).toEqual([
+      "ignored-endmatter",
+    ]);
+    expect(payload.summary).toMatchObject({ comments: 1, replies: 0 });
+  });
+
   it("rejects missing markdown files from doctor path before validation", async () => {
     const test = createTestDependencies();
     const documentPath = path.join(projectDir, "missing.md");

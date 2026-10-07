@@ -1864,8 +1864,12 @@ async function runMarkdownDoctor(
 
   if (validation.errors.length === 0 && validation.warnings.length === 0) {
     deps.log("");
+    const replies =
+      validation.summary.replies > 0
+        ? `, including ${validation.summary.replies} repl${validation.summary.replies === 1 ? "y" : "ies"},`
+        : "";
     deps.log(
-      `Found ${validation.summary.comments} comment(s) and ${validation.summary.suggestions} suggestion(s).`,
+      `Found ${validation.summary.comments} comment(s)${replies} and ${validation.summary.suggestions} suggestion(s).`,
     );
   }
 
