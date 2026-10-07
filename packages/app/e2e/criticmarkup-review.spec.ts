@@ -56,7 +56,13 @@ test.describe("CriticMarkup review flows", () => {
     await expect
       .poll(() => readProjectFile(projectDir, "comment.md"))
       .toContain("Added context looks good.");
-    expect(readProjectFile(projectDir, "comment.md")).toContain('re="c1"');
+    const saved = readProjectFile(projectDir, "comment.md");
+    expect(saved).toContain(
+      "This paragraph has {==target text==}{>>Needs detail<<}{#c1}.",
+    );
+    expect(saved).toMatch(
+      /\n {2}c2:\n {4}by: user\n {4}at: \S+\n {4}body: Added context looks good\.\n {4}re: c1\n/,
+    );
 
     logE2eEvent("criticmarkup.reply-saved", {
       file: "comment.md",
@@ -88,7 +94,7 @@ test.describe("CriticMarkup review flows", () => {
     await expect
       .poll(() => readProjectFile(projectDir, "new-comment.md"))
       .toMatch(
-        /\{==target text==\}\{>>Clarify this phrase\.<<\}\{id="c1" by="user" at="[^"]+"\}/,
+        /\{==target text==\}\{>>Clarify this phrase\.<<\}\{#c1\}[\s\S]*\n---\ncomments:\n {2}c1:\n {4}by: user\n/,
       );
 
     logE2eEvent("criticmarkup.root-comment-saved", {
