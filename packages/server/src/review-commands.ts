@@ -294,7 +294,10 @@ function listComments(
 /** Drops resolved items along with every reply beneath them. */
 function withoutResolvedThreads(items: RfmReviewItem[]): RfmReviewItem[] {
   const byId = new Map(items.map((item) => [item.id, item]));
-  const isResolved = (item: RfmReviewItem, seen = new Set<string>()) => {
+  const isResolved = (
+    item: RfmReviewItem,
+    seen = new Set<string>(),
+  ): boolean => {
     if (item.status === "resolved") return true;
     if (!item.parentId || seen.has(item.id)) return false;
     seen.add(item.id);
