@@ -1,4 +1,7 @@
 import {
+  ArrowDownAZ,
+  ArrowDownZA,
+  Check,
   ChevronRight,
   Copy,
   FileText,
@@ -16,13 +19,16 @@ import {
   ContextMenu,
   ContextMenuContent,
   ContextMenuItem,
+  ContextMenuSeparator,
   ContextMenuTrigger,
 } from "./components/ui/context-menu";
 import {
   buildFileBrowserTree,
   type FileBrowserDirectory,
   type FileBrowserNode,
+  type FolderSortOrder,
   getPinnedNodesInTree,
+  orderFileBrowserChildren,
 } from "./file-browser";
 import { cn } from "./lib/utils";
 import type { TreeLoadState } from "./useFileBrowser";
@@ -39,6 +45,7 @@ interface FileBrowserProps {
   project: TreeLoadState | null;
   projectRootIsPinned: boolean;
   pinnedRoots: string[];
+  pinnedFiles: string[];
   pins: Record<string, TreeLoadState>;
   projectPins: string[];
   activePath: string | null;
@@ -47,8 +54,12 @@ interface FileBrowserProps {
   isFolderOpen: (folder: string, isRoot: boolean) => boolean;
   onToggleFolder: (folder: string, isRoot: boolean) => void;
   onOpenFile: (path: string, modifiedAt: number) => void;
-  onPinProject: (folder: string) => void;
-  onUnpinProject: (folder: string) => void;
+  onAddFolderToPinned: (folder: string) => void;
+  onRemoveFolderFromPinned: (folder: string) => void;
+  onAddFileToPinned: (path: string) => void;
+  onRemoveFileFromPinned: (path: string) => void;
+  folderSortOrder: (folder: string) => FolderSortOrder;
+  onSetFolderSortOrder: (folder: string, order: FolderSortOrder) => void;
   onPinToProject: (path: string) => void;
   onUnpinFromProject: (path: string) => void;
   onMoveToTrash: (path: string) => void;
@@ -102,6 +113,7 @@ export function FileBrowser({
   project,
   projectRootIsPinned,
   pinnedRoots,
+  pinnedFiles,
   pins,
   projectPins,
   activePath,
@@ -110,8 +122,12 @@ export function FileBrowser({
   isFolderOpen,
   onToggleFolder,
   onOpenFile,
-  onPinProject,
-  onUnpinProject,
+  onAddFolderToPinned,
+  onRemoveFolderFromPinned,
+  onAddFileToPinned,
+  onRemoveFileFromPinned,
+  folderSortOrder,
+  onSetFolderSortOrder,
   onPinToProject,
   onUnpinFromProject,
   onMoveToTrash,
@@ -312,7 +328,13 @@ export function FileBrowser({
         {open ? (
           <>
             {isRoot ? renderPinnedNodes(directory, depth + 1) : null}
-            {renderNodes(directory.children, depth + 1)}
+            {renderNodes(
+              orderFileBrowserChildren(
+                directory.children,
+                folderSortOrder(directory.path),
+              ),
+              depth + 1,
+            )}
             {truncated ? (
               <p
                 className="mt-1 mr-1.5 mb-1 ml-6 rounded-md bg-stone-200/60 px-2 py-1.5 text-[0.68rem] leading-4 text-stone-600 dark:bg-slate-800 dark:text-stone-300"
@@ -419,9 +441,30 @@ export function FileBrowser({
               };
             }}
           >
-            {pinnedRoots.length > 0 ? (
+            {pinnedFiles.length > 0 || pinnedRoots.length > 0 ? (
               <>
                 <GroupLabel>Pinned</GroupLabel>
+                {pinnedFiles.length > 0 ? (
+                  <ul
+                    className="m-0 list-none p-0"
+                    aria-label="Pinned files"
+                    data-testid="file-browser-pinned-files"
+                  >
+                    {pinnedFiles.map((path) => (
+                      <li key={path} className="min-w-0">
+                        {renderFile(
+                          path,
+                          getPathLeaf(path) ?? path,
+                          0,
+                          0,
+                          abbreviateDisplayPath(
+                            path.slice(0, path.lastIndexOf("/")) || "/",
+                          ),
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
                 {pinnedRoots.map((root) => renderRoot(root, pins[root], "pin"))}
               </>
             ) : null}
@@ -437,9 +480,14 @@ export function FileBrowser({
         <FileBrowserMenuItems
           targetRef={contextTargetRef}
           pinnedRoots={pinnedRoots}
+          pinnedFiles={pinnedFiles}
           projectPinSet={projectPinSet}
-          onPinProject={onPinProject}
-          onUnpinProject={onUnpinProject}
+          onAddFolderToPinned={onAddFolderToPinned}
+          onRemoveFolderFromPinned={onRemoveFolderFromPinned}
+          onAddFileToPinned={onAddFileToPinned}
+          onRemoveFileFromPinned={onRemoveFileFromPinned}
+          folderSortOrder={folderSortOrder}
+          onSetFolderSortOrder={onSetFolderSortOrder}
           onPinToProject={onPinToProject}
           onUnpinFromProject={onUnpinFromProject}
           onMoveToTrash={onMoveToTrash}
@@ -455,9 +503,14 @@ const menuIconClassName = "size-3.5 text-stone-500 dark:text-slate-400";
 function FileBrowserMenuItems({
   targetRef,
   pinnedRoots,
+  pinnedFiles,
   projectPinSet,
-  onPinProject,
-  onUnpinProject,
+  onAddFolderToPinned,
+  onRemoveFolderFromPinned,
+  onAddFileToPinned,
+  onRemoveFileFromPinned,
+  folderSortOrder,
+  onSetFolderSortOrder,
   onPinToProject,
   onUnpinFromProject,
   onMoveToTrash,
@@ -465,9 +518,14 @@ function FileBrowserMenuItems({
 }: {
   targetRef: React.RefObject<ContextTarget | null>;
   pinnedRoots: string[];
+  pinnedFiles: string[];
   projectPinSet: Set<string>;
-  onPinProject: (folder: string) => void;
-  onUnpinProject: (folder: string) => void;
+  onAddFolderToPinned: (folder: string) => void;
+  onRemoveFolderFromPinned: (folder: string) => void;
+  onAddFileToPinned: (path: string) => void;
+  onRemoveFileFromPinned: (path: string) => void;
+  folderSortOrder: (folder: string) => FolderSortOrder;
+  onSetFolderSortOrder: (folder: string, order: FolderSortOrder) => void;
   onPinToProject: (path: string) => void;
   onUnpinFromProject: (path: string) => void;
   onMoveToTrash: (path: string) => void;
@@ -476,29 +534,36 @@ function FileBrowserMenuItems({
   const target = targetRef.current;
   if (!target) return null;
 
-  const pinnedAsProject = pinnedRoots.includes(target.path);
+  const isFolder = target.kind === "directory";
+  const inPinned = isFolder
+    ? pinnedRoots.includes(target.path)
+    : pinnedFiles.includes(target.path);
   const pinnedInProject = projectPinSet.has(target.path);
+  const sortOrder = isFolder ? folderSortOrder(target.path) : null;
+
   return (
     <>
-      {target.isRoot ? (
-        <ContextMenuItem
-          data-testid={
-            pinnedAsProject ? "file-browser-unpin" : "file-browser-pin"
+      <ContextMenuItem
+        data-testid={inPinned ? "file-browser-unpin" : "file-browser-pin"}
+        onClick={() => {
+          if (isFolder) {
+            if (inPinned) onRemoveFolderFromPinned(target.path);
+            else onAddFolderToPinned(target.path);
+          } else if (inPinned) {
+            onRemoveFileFromPinned(target.path);
+          } else {
+            onAddFileToPinned(target.path);
           }
-          onClick={() =>
-            pinnedAsProject
-              ? onUnpinProject(target.path)
-              : onPinProject(target.path)
-          }
-        >
-          {pinnedAsProject ? (
-            <PinOff className={menuIconClassName} />
-          ) : (
-            <Pin className={menuIconClassName} />
-          )}
-          {pinnedAsProject ? "Unpin project" : "Pin project"}
-        </ContextMenuItem>
-      ) : (
+        }}
+      >
+        {inPinned ? (
+          <PinOff className={menuIconClassName} />
+        ) : (
+          <Pin className={menuIconClassName} />
+        )}
+        {inPinned ? "Remove from Pinned" : "Add to Pinned"}
+      </ContextMenuItem>
+      {target.isRoot ? null : (
         <ContextMenuItem
           data-testid={
             pinnedInProject
@@ -516,9 +581,39 @@ function FileBrowserMenuItems({
           ) : (
             <Pin className={menuIconClassName} />
           )}
-          {pinnedInProject ? "Unpin from top" : "Pin to top"}
+          {pinnedInProject
+            ? "Unpin from top of project"
+            : "Pin to top of project"}
         </ContextMenuItem>
       )}
+      {sortOrder ? (
+        <>
+          <ContextMenuSeparator />
+          {(
+            [
+              ["asc", "Sort A–Z", ArrowDownAZ],
+              ["desc", "Sort Z–A", ArrowDownZA],
+            ] as const
+          ).map(([order, label, Icon]) => (
+            <ContextMenuItem
+              key={order}
+              data-testid={`file-browser-sort-${order}`}
+              data-checked={sortOrder === order ? "true" : undefined}
+              onClick={() => onSetFolderSortOrder(target.path, order)}
+            >
+              <Icon className={menuIconClassName} />
+              {label}
+              {sortOrder === order ? (
+                <Check
+                  className="ml-auto size-3.5 text-stone-500 dark:text-slate-400"
+                  aria-label="Current order"
+                />
+              ) : null}
+            </ContextMenuItem>
+          ))}
+        </>
+      ) : null}
+      <ContextMenuSeparator />
       <ContextMenuItem
         data-testid="file-browser-copy-path"
         onClick={() => void onCopyPath(target.path)}
@@ -526,7 +621,7 @@ function FileBrowserMenuItems({
         <Copy className={menuIconClassName} />
         Copy path
       </ContextMenuItem>
-      {target.kind === "file" ? (
+      {isFolder ? null : (
         <ContextMenuItem
           data-testid="file-browser-move-to-trash"
           onClick={() => onMoveToTrash(target.path)}
@@ -534,7 +629,7 @@ function FileBrowserMenuItems({
           <Trash2 className={menuIconClassName} />
           Move to Trash
         </ContextMenuItem>
-      ) : null}
+      )}
     </>
   );
 }

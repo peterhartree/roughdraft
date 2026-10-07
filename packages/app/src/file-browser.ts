@@ -157,3 +157,19 @@ export function getPinnedNodesInTree(
     return node ? [node] : [];
   });
 }
+
+export type FolderSortOrder = "asc" | "desc";
+
+/**
+ * Children in display order. Folders stay above files either way; Z–A
+ * reverses the name order within each group.
+ */
+export function orderFileBrowserChildren(
+  children: FileBrowserNode[],
+  order: FolderSortOrder,
+): FileBrowserNode[] {
+  if (order === "asc") return children;
+  const directories = children.filter((child) => child.kind === "directory");
+  const files = children.filter((child) => child.kind === "file");
+  return [...directories.reverse(), ...files.reverse()];
+}

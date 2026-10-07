@@ -182,6 +182,97 @@ test.describe("file browser", () => {
     await expect.poll(pinnedPaths).toEqual([adrPath]);
   });
 
+  test("adds files and project subfolders to the Pinned section", async ({
+    page,
+  }) => {
+    await openMarkdownFile(page, readmePath);
+    const docsPath = path.join(projectDir, "docs");
+
+    await browserFolder(page, docsPath).click();
+    await browserFile(page, guidePath).click({ button: "right" });
+    await page.getByTestId("file-browser-pin").click();
+    await browserFolder(page, docsPath).first().click({ button: "right" });
+    await page.getByTestId("file-browser-pin").click();
+
+    const pinnedFiles = page.getByTestId("file-browser-pinned-files");
+    await expect(
+      pinnedFiles.locator(`[data-browser-path="${guidePath}"]`),
+    ).toBeVisible();
+    await expect(
+      page
+        .getByTestId("file-browser-pin-root")
+        .getByTestId("file-browser-root"),
+    ).toContainText("docs");
+
+    await page.reload();
+    await pinnedFiles.locator(`[data-browser-path="${guidePath}"]`).click();
+    await expect(openListItem(page, guidePath)).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+
+    await pinnedFiles
+      .locator(`[data-browser-path="${guidePath}"]`)
+      .click({ button: "right" });
+    await page.getByTestId("file-browser-unpin").click();
+    await expect(pinnedFiles).toHaveCount(0);
+  });
+
+  test("sorts a folder Z–A and remembers the choice for that folder only", async ({
+    page,
+  }) => {
+    writeProjectFile(projectDir, "a-first.md", "# A\n");
+    writeProjectFile(projectDir, "z-last.md", "# Z\n");
+    await openMarkdownFile(page, readmePath);
+    const projectRoot = page.getByTestId("file-browser-project-root");
+    const docsPath = path.join(projectDir, "docs");
+    const rootChildren = () =>
+      projectRoot
+        .locator(":scope > ul > li > [data-browser-path]")
+        .evaluateAll((elements) =>
+          elements.map((element) =>
+            (element as HTMLElement).dataset.browserPath?.split("/").pop(),
+          ),
+        );
+    const docsChildren = () =>
+      projectRoot
+        .locator(
+          `[data-browser-path="${docsPath}"] + ul > li > [data-browser-path]`,
+        )
+        .evaluateAll((elements) =>
+          elements.map((element) =>
+            (element as HTMLElement).dataset.browserPath?.split("/").pop(),
+          ),
+        );
+
+    await expect
+      .poll(rootChildren)
+      .toEqual(["docs", "a-first.md", "README.md", "z-last.md"]);
+
+    await projectRoot
+      .getByTestId("file-browser-root")
+      .click({ button: "right" });
+    await page.getByTestId("file-browser-sort-desc").click();
+    await expect
+      .poll(rootChildren)
+      .toEqual(["docs", "z-last.md", "README.md", "a-first.md"]);
+
+    await page.reload();
+    await expect
+      .poll(rootChildren)
+      .toEqual(["docs", "z-last.md", "README.md", "a-first.md"]);
+    await browserFolder(page, docsPath).click();
+    await expect.poll(docsChildren).toEqual(["adr", "guide.md"]);
+
+    await projectRoot
+      .getByTestId("file-browser-root")
+      .click({ button: "right" });
+    await expect(page.getByTestId("file-browser-sort-desc")).toHaveAttribute(
+      "data-checked",
+      "true",
+    );
+  });
+
   test("moves a file to the Trash from the browser without confirmation", async ({
     page,
   }) => {

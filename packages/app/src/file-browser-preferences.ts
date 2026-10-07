@@ -1,6 +1,7 @@
 const FILE_BROWSER_PREFERENCES_KEY = "roughdraft.file-browser.v1";
 const MAX_PINNED_FOLDERS = 50;
 const MAX_PROJECT_PINS = 200;
+const MAX_FOLDER_SORT_ORDERS = 500;
 const MAX_FOLDER_STATES = 500;
 
 type PreferencesStorage = Pick<Storage, "getItem" | "setItem">;
@@ -8,8 +9,12 @@ type PreferencesStorage = Pick<Storage, "getItem" | "setItem">;
 export interface FileBrowserPreferences {
   /** Projects and folders shown as their own trees above the current project. */
   pinnedFolders: string[];
+  /** Files shown as single rows at the top of the Pinned section. */
+  pinnedFiles: string[];
   /** Files and folders pinned to the top of whichever tree contains them. */
   projectPins: string[];
+  /** Folders sorted Z–A; every other folder sorts A–Z. */
+  folderSortOrders: Record<string, "desc">;
   /** Explicit open/closed choices; folders without one use the default. */
   folderOpenStates: Record<string, boolean>;
   openSectionHeight: number | null;
@@ -19,7 +24,9 @@ export interface FileBrowserPreferences {
 
 export const DEFAULT_FILE_BROWSER_PREFERENCES: FileBrowserPreferences = {
   pinnedFolders: [],
+  pinnedFiles: [],
   projectPins: [],
+  folderSortOrders: {},
   folderOpenStates: {},
   openSectionHeight: null,
   openSectionCollapsed: false,
@@ -38,6 +45,27 @@ function parsePreferences(value: string): FileBrowserPreferences {
     preferences.pinnedFolders = [
       ...new Set(parsed.pinnedFolders.filter(isAbsolutePath)),
     ].slice(0, MAX_PINNED_FOLDERS);
+  }
+
+  if (Array.isArray(parsed.pinnedFiles)) {
+    preferences.pinnedFiles = [
+      ...new Set(parsed.pinnedFiles.filter(isAbsolutePath)),
+    ].slice(0, MAX_PINNED_FOLDERS);
+  }
+
+  if (
+    parsed.folderSortOrders &&
+    typeof parsed.folderSortOrders === "object" &&
+    !Array.isArray(parsed.folderSortOrders)
+  ) {
+    preferences.folderSortOrders = Object.fromEntries(
+      Object.entries(parsed.folderSortOrders as Record<string, unknown>)
+        .filter(
+          (entry): entry is [string, "desc"] =>
+            isAbsolutePath(entry[0]) && entry[1] === "desc",
+        )
+        .slice(-MAX_FOLDER_SORT_ORDERS),
+    );
   }
 
   if (Array.isArray(parsed.projectPins)) {
@@ -100,7 +128,13 @@ export function writeFileBrowserPreferences(
       JSON.stringify({
         ...preferences,
         pinnedFolders: preferences.pinnedFolders.slice(0, MAX_PINNED_FOLDERS),
+        pinnedFiles: preferences.pinnedFiles.slice(0, MAX_PINNED_FOLDERS),
         projectPins: preferences.projectPins.slice(0, MAX_PROJECT_PINS),
+        folderSortOrders: Object.fromEntries(
+          Object.entries(preferences.folderSortOrders).slice(
+            -MAX_FOLDER_SORT_ORDERS,
+          ),
+        ),
         folderOpenStates,
       }),
     );
@@ -132,4 +166,15 @@ export function isFolderOpen(
   isRoot: boolean,
 ) {
   return states[folder] ?? isRoot;
+}
+
+export function setFolderSortOrder(
+  orders: Record<string, "desc">,
+  folder: string,
+  order: "asc" | "desc",
+): Record<string, "desc"> {
+  const { [folder]: _previous, ...rest } = orders;
+  if (order === "asc") return rest;
+  const entries = Object.entries({ ...rest, [folder]: "desc" as const });
+  return Object.fromEntries(entries.slice(-MAX_FOLDER_SORT_ORDERS));
 }

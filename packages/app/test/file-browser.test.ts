@@ -4,6 +4,7 @@ import {
   type FileBrowserDirectory,
   findFileBrowserNode,
   getPinnedNodesInTree,
+  orderFileBrowserChildren,
   getRevealFolders,
   type MarkdownTreeListing,
 } from "../src/file-browser";
@@ -11,6 +12,7 @@ import {
   isFolderOpen,
   readFileBrowserPreferences,
   setFolderOpenState,
+  setFolderSortOrder,
   writeFileBrowserPreferences,
 } from "../src/file-browser-preferences";
 import {
@@ -119,6 +121,26 @@ describe("file browser tree", () => {
   });
 });
 
+describe("folder sort order", () => {
+  it("keeps folders above files and reverses each group for Z–A", () => {
+    const tree = buildFileBrowserTree(
+      listing(["a.md", "b.md", "alpha/x.md", "beta/y.md"]),
+    );
+    const names = (order: "asc" | "desc") =>
+      orderFileBrowserChildren(tree.children, order).map((node) => node.name);
+
+    expect(names("asc")).toEqual(["alpha", "beta", "a.md", "b.md"]);
+    expect(names("desc")).toEqual(["beta", "alpha", "b.md", "a.md"]);
+  });
+
+  it("remembers only Z–A choices, so A–Z returns a folder to the default", () => {
+    let orders = setFolderSortOrder({}, "/notes/journal", "desc");
+    expect(orders).toEqual({ "/notes/journal": "desc" });
+    orders = setFolderSortOrder(orders, "/notes/journal", "asc");
+    expect(orders).toEqual({});
+  });
+});
+
 describe("file browser preferences", () => {
   function memoryStorage(initial?: string) {
     const values = new Map<string, string>();
@@ -137,7 +159,9 @@ describe("file browser preferences", () => {
     const storage = memoryStorage();
     writeFileBrowserPreferences(storage, {
       pinnedFolders: ["/Users/me/notes"],
+      pinnedFiles: ["/Users/me/todo.md"],
       projectPins: ["/Users/me/notes/plan.md"],
+      folderSortOrders: { "/Users/me/notes/journal": "desc" },
       folderOpenStates: { "/Users/me/notes/drafts": true },
       openSectionHeight: 240,
       openSectionCollapsed: false,
@@ -146,7 +170,9 @@ describe("file browser preferences", () => {
 
     expect(readFileBrowserPreferences(storage)).toEqual({
       pinnedFolders: ["/Users/me/notes"],
+      pinnedFiles: ["/Users/me/todo.md"],
       projectPins: ["/Users/me/notes/plan.md"],
+      folderSortOrders: { "/Users/me/notes/journal": "desc" },
       folderOpenStates: { "/Users/me/notes/drafts": true },
       openSectionHeight: 240,
       openSectionCollapsed: false,
@@ -157,7 +183,9 @@ describe("file browser preferences", () => {
   it("falls back to defaults for corrupt storage and drops invalid entries", () => {
     expect(readFileBrowserPreferences(memoryStorage("{not json"))).toEqual({
       pinnedFolders: [],
+      pinnedFiles: [],
       projectPins: [],
+      folderSortOrders: {},
       folderOpenStates: {},
       openSectionHeight: null,
       openSectionCollapsed: false,

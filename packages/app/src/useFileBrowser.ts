@@ -5,6 +5,7 @@ import {
   isFolderOpen,
   readFileBrowserPreferences,
   setFolderOpenState,
+  setFolderSortOrder,
   writeFileBrowserPreferences,
 } from "./file-browser-preferences";
 
@@ -181,6 +182,30 @@ export function useFileBrowser({
     projectRootIsPinned:
       projectRoot !== null && pinnedFolders.includes(projectRoot),
     refresh,
+    pinFile: (path: string) =>
+      updatePreferences((current) =>
+        current.pinnedFiles.includes(path)
+          ? current
+          : { ...current, pinnedFiles: [...current.pinnedFiles, path] },
+      ),
+    unpinFile: (path: string) =>
+      updatePreferences((current) => ({
+        ...current,
+        pinnedFiles: current.pinnedFiles.filter((pin) => pin !== path),
+      })),
+    folderSortOrder: (folder: string): "asc" | "desc" =>
+      preferences.folderSortOrders[folder] ?? "asc",
+    setFolderSortOrder: (folder: string, order: "asc" | "desc") =>
+      updatePreferences((current) => {
+        const folderSortOrders = setFolderSortOrder(
+          current.folderSortOrders,
+          folder,
+          order,
+        );
+        return (current.folderSortOrders[folder] ?? "asc") === order
+          ? current
+          : { ...current, folderSortOrders };
+      }),
     pinToProject: (path: string) =>
       updatePreferences((current) =>
         current.projectPins.includes(path)
