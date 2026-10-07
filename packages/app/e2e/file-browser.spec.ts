@@ -218,6 +218,40 @@ test.describe("file browser", () => {
     await expect(pinnedFiles).toHaveCount(0);
   });
 
+  test("pins a folder's newest file and follows newer files", async ({
+    page,
+  }) => {
+    await openMarkdownFile(page, readmePath);
+    const docsPath = path.join(projectDir, "docs");
+    const newestRow = page
+      .getByTestId("file-browser-newest-files")
+      .getByTestId("file-browser-file");
+
+    await browserFolder(page, docsPath).click({ button: "right" });
+    await page.getByTestId("file-browser-pin-newest").click();
+    await expect(newestRow).toHaveAttribute("data-browser-path", guidePath);
+    await expect(newestRow).toContainText("newest in docs");
+
+    const laterPath = writeProjectFile(
+      projectDir,
+      "docs/zz-later.md",
+      "# Later\n",
+    );
+    await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+    await expect(newestRow).toHaveAttribute("data-browser-path", laterPath);
+
+    await page.reload();
+    await newestRow.click();
+    await expect(openListItem(page, laterPath)).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+
+    await newestRow.click({ button: "right" });
+    await page.getByTestId("file-browser-unpin-newest").click();
+    await expect(page.getByTestId("file-browser-newest-files")).toHaveCount(0);
+  });
+
   test("sorts a folder Z–A and remembers the choice for that folder only", async ({
     page,
   }) => {

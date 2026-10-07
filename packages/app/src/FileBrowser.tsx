@@ -27,6 +27,7 @@ import {
   type FileBrowserDirectory,
   type FileBrowserNode,
   type FolderSortOrder,
+  getNewestDirectFile,
   getPinnedNodesInTree,
   orderFileBrowserChildren,
 } from "./file-browser";
@@ -39,6 +40,8 @@ interface ContextTarget {
   path: string;
   kind: "file" | "directory";
   isRoot: boolean;
+  /** Set on a row that stands for the newest file in this folder. */
+  newestFolder: string | null;
 }
 
 interface FileBrowserProps {
@@ -46,6 +49,8 @@ interface FileBrowserProps {
   projectRootIsPinned: boolean;
   pinnedRoots: string[];
   pinnedFiles: string[];
+  newestFilePinFolders: string[];
+  newestFilePins: Record<string, TreeLoadState>;
   pins: Record<string, TreeLoadState>;
   projectPins: string[];
   activePath: string | null;
@@ -58,6 +63,8 @@ interface FileBrowserProps {
   onRemoveFolderFromPinned: (folder: string) => void;
   onAddFileToPinned: (path: string) => void;
   onRemoveFileFromPinned: (path: string) => void;
+  onPinNewestFile: (folder: string) => void;
+  onUnpinNewestFile: (folder: string) => void;
   folderSortOrder: (folder: string) => FolderSortOrder;
   onSetFolderSortOrder: (folder: string, order: FolderSortOrder) => void;
   onPinToProject: (path: string) => void;
@@ -114,6 +121,8 @@ export function FileBrowser({
   projectRootIsPinned,
   pinnedRoots,
   pinnedFiles,
+  newestFilePinFolders,
+  newestFilePins,
   pins,
   projectPins,
   activePath,
@@ -126,6 +135,8 @@ export function FileBrowser({
   onRemoveFolderFromPinned,
   onAddFileToPinned,
   onRemoveFileFromPinned,
+  onPinNewestFile,
+  onUnpinNewestFile,
   folderSortOrder,
   onSetFolderSortOrder,
   onPinToProject,
@@ -156,6 +167,7 @@ export function FileBrowser({
     modifiedAt: number,
     depth: number,
     pinnedHint?: string,
+    newestFolder?: string,
   ) {
     const active = path === activePath;
     const pinned = pinnedHint !== undefined;
@@ -169,6 +181,7 @@ export function FileBrowser({
         data-testid="file-browser-file"
         data-browser-path={path}
         data-browser-kind="file"
+        data-browser-newest-folder={newestFolder}
         className={cn(
           rowClassName,
           "aria-disabled:opacity-50",
@@ -206,6 +219,41 @@ export function FileBrowser({
           </>
         ) : null}
       </Button>
+    );
+  }
+
+  function renderNewestFile(folder: string, state: TreeLoadState | undefined) {
+    const folderName = getPathLeaf(folder) ?? folder;
+    const newest = state?.listing ? getNewestDirectFile(state.listing) : null;
+    if (!newest) {
+      return (
+        <div
+          className="flex h-[1.625rem] items-center gap-1.5 pr-2 pl-1.5 text-[0.72rem] text-stone-400 dark:text-stone-500"
+          data-browser-path={folder}
+          data-browser-kind="directory"
+          data-browser-newest-folder={folder}
+          title={folder}
+        >
+          <span className="w-3.5 shrink-0" aria-hidden="true" />
+          <FileText className="size-3.5" aria-hidden="true" />
+          <span className="min-w-0 truncate">
+            {state?.status === "error"
+              ? `Could not list ${folderName}`
+              : state?.status === "ready"
+                ? `No Markdown files in ${folderName}`
+                : "Loading…"}
+          </span>
+        </div>
+      );
+    }
+    const path = `${state?.listing?.root ?? folder}/${newest.path}`;
+    return renderFile(
+      path,
+      newest.path,
+      newest.modifiedAt,
+      0,
+      `newest in ${folderName}`,
+      folder,
     );
   }
 
@@ -438,12 +486,28 @@ export function FileBrowser({
                     ? "directory"
                     : "file",
                 isRoot: target.dataset.browserRoot === "true",
+                newestFolder: target.dataset.browserNewestFolder ?? null,
               };
             }}
           >
-            {pinnedFiles.length > 0 || pinnedRoots.length > 0 ? (
+            {pinnedFiles.length > 0 ||
+            pinnedRoots.length > 0 ||
+            newestFilePinFolders.length > 0 ? (
               <>
                 <GroupLabel>Pinned</GroupLabel>
+                {newestFilePinFolders.length > 0 ? (
+                  <ul
+                    className="m-0 list-none p-0"
+                    aria-label="Newest files"
+                    data-testid="file-browser-newest-files"
+                  >
+                    {newestFilePinFolders.map((folder) => (
+                      <li key={folder} className="min-w-0">
+                        {renderNewestFile(folder, newestFilePins[folder])}
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
                 {pinnedFiles.length > 0 ? (
                   <ul
                     className="m-0 list-none p-0"
@@ -486,6 +550,9 @@ export function FileBrowser({
           onRemoveFolderFromPinned={onRemoveFolderFromPinned}
           onAddFileToPinned={onAddFileToPinned}
           onRemoveFileFromPinned={onRemoveFileFromPinned}
+          newestFilePinFolders={newestFilePinFolders}
+          onPinNewestFile={onPinNewestFile}
+          onUnpinNewestFile={onUnpinNewestFile}
           folderSortOrder={folderSortOrder}
           onSetFolderSortOrder={onSetFolderSortOrder}
           onPinToProject={onPinToProject}
@@ -509,6 +576,9 @@ function FileBrowserMenuItems({
   onRemoveFolderFromPinned,
   onAddFileToPinned,
   onRemoveFileFromPinned,
+  newestFilePinFolders,
+  onPinNewestFile,
+  onUnpinNewestFile,
   folderSortOrder,
   onSetFolderSortOrder,
   onPinToProject,
@@ -524,6 +594,9 @@ function FileBrowserMenuItems({
   onRemoveFolderFromPinned: (folder: string) => void;
   onAddFileToPinned: (path: string) => void;
   onRemoveFileFromPinned: (path: string) => void;
+  newestFilePinFolders: string[];
+  onPinNewestFile: (folder: string) => void;
+  onUnpinNewestFile: (folder: string) => void;
   folderSortOrder: (folder: string) => FolderSortOrder;
   onSetFolderSortOrder: (folder: string, order: FolderSortOrder) => void;
   onPinToProject: (path: string) => void;
@@ -533,6 +606,38 @@ function FileBrowserMenuItems({
 }) {
   const target = targetRef.current;
   if (!target) return null;
+
+  if (target.newestFolder) {
+    const folder = target.newestFolder;
+    return (
+      <>
+        <ContextMenuItem
+          data-testid="file-browser-unpin-newest"
+          onClick={() => onUnpinNewestFile(folder)}
+        >
+          <PinOff className={menuIconClassName} />
+          Remove from Pinned
+        </ContextMenuItem>
+        <ContextMenuSeparator />
+        <ContextMenuItem
+          data-testid="file-browser-copy-path"
+          onClick={() => void onCopyPath(target.path)}
+        >
+          <Copy className={menuIconClassName} />
+          Copy path
+        </ContextMenuItem>
+        {target.kind === "file" ? (
+          <ContextMenuItem
+            data-testid="file-browser-move-to-trash"
+            onClick={() => onMoveToTrash(target.path)}
+          >
+            <Trash2 className={menuIconClassName} />
+            Move to Trash
+          </ContextMenuItem>
+        ) : null}
+      </>
+    );
+  }
 
   const isFolder = target.kind === "directory";
   const inPinned = isFolder
@@ -586,6 +691,29 @@ function FileBrowserMenuItems({
             : "Pin to top of project"}
         </ContextMenuItem>
       )}
+      {isFolder ? (
+        <ContextMenuItem
+          data-testid={
+            newestFilePinFolders.includes(target.path)
+              ? "file-browser-unpin-newest"
+              : "file-browser-pin-newest"
+          }
+          onClick={() =>
+            newestFilePinFolders.includes(target.path)
+              ? onUnpinNewestFile(target.path)
+              : onPinNewestFile(target.path)
+          }
+        >
+          {newestFilePinFolders.includes(target.path) ? (
+            <PinOff className={menuIconClassName} />
+          ) : (
+            <Pin className={menuIconClassName} />
+          )}
+          {newestFilePinFolders.includes(target.path)
+            ? "Remove newest file from Pinned"
+            : "Add newest file to Pinned"}
+        </ContextMenuItem>
+      ) : null}
       {sortOrder ? (
         <>
           <ContextMenuSeparator />

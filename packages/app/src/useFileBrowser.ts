@@ -47,7 +47,6 @@ export function useFileBrowser({
     readFileBrowserPreferences(window.localStorage),
   );
   const [project, setProject] = useState<TreeLoadState | null>(null);
-  const [pins, setPins] = useState<Record<string, TreeLoadState>>({});
   const [refreshToken, setRefreshToken] = useState(0);
   const projectRequestRef = useRef(0);
   const refresh = useCallback(() => setRefreshToken((token) => token + 1), []);
@@ -107,47 +106,14 @@ export function useFileBrowser({
   }, [enabled, activePath, refreshToken]);
 
   const pinnedFolders = preferences.pinnedFolders;
-  // biome-ignore lint/correctness/useExhaustiveDependencies: refreshToken triggers a refetch
-  useEffect(() => {
-    if (!enabled) return;
-    let cancelled = false;
-    setPins((current) =>
-      Object.fromEntries(
-        pinnedFolders.map((folder) => [
-          folder,
-          {
-            status: "loading",
-            listing: current[folder]?.listing ?? null,
-          } satisfies TreeLoadState,
-        ]),
-      ),
-    );
-    for (const folder of pinnedFolders) {
-      fetchMarkdownTree({ root: folder }).then(
-        (listing) => {
-          if (cancelled) return;
-          setPins((current) => ({
-            ...current,
-            [folder]: { status: "ready", listing },
-          }));
-        },
-        (error: unknown) => {
-          if (cancelled) return;
-          setPins((current) => ({
-            ...current,
-            [folder]: {
-              status: "error",
-              listing: null,
-              error: errorMessage(error),
-            },
-          }));
-        },
-      );
-    }
-    return () => {
-      cancelled = true;
-    };
-  }, [enabled, pinnedFolders, refreshToken]);
+  const pins = useFolderListings(enabled, pinnedFolders, refreshToken);
+  // Newest-file pins also re-check on every document switch, so a plan
+  // created and opened by an agent shows up without a focus change.
+  const newestFilePins = useFolderListings(
+    enabled,
+    preferences.newestFilePins,
+    `${refreshToken}:${activePath ?? ""}`,
+  );
 
   const projectRoot = project?.listing?.root ?? null;
 
@@ -218,6 +184,21 @@ export function useFileBrowser({
         projectPins: current.projectPins.filter((pin) => pin !== path),
       })),
     pins,
+    newestFilePins,
+    pinNewestFile: (folder: string) =>
+      updatePreferences((current) =>
+        current.newestFilePins.includes(folder)
+          ? current
+          : {
+              ...current,
+              newestFilePins: [...current.newestFilePins, folder],
+            },
+      ),
+    unpinNewestFile: (folder: string) =>
+      updatePreferences((current) => ({
+        ...current,
+        newestFilePins: current.newestFilePins.filter((pin) => pin !== folder),
+      })),
     isFolderOpen: (folder: string, isRoot: boolean) =>
       isFolderOpen(preferences.folderOpenStates, folder, isRoot),
     toggleFolder: (folder: string, isRoot: boolean) =>
@@ -256,4 +237,57 @@ export function useFileBrowser({
         browseSectionCollapsed: !current.browseSectionCollapsed,
       })),
   };
+}
+
+/** Fetches each folder's listing, refetching whenever `trigger` changes. */
+function useFolderListings(
+  enabled: boolean,
+  folders: string[],
+  trigger: unknown,
+): Record<string, TreeLoadState> {
+  const [listings, setListings] = useState<Record<string, TreeLoadState>>({});
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: trigger forces a refetch
+  useEffect(() => {
+    if (!enabled) return;
+    let cancelled = false;
+    setListings((current) =>
+      Object.fromEntries(
+        folders.map((folder) => [
+          folder,
+          {
+            status: "loading",
+            listing: current[folder]?.listing ?? null,
+          } satisfies TreeLoadState,
+        ]),
+      ),
+    );
+    for (const folder of folders) {
+      fetchMarkdownTree({ root: folder }).then(
+        (listing) => {
+          if (cancelled) return;
+          setListings((current) => ({
+            ...current,
+            [folder]: { status: "ready", listing },
+          }));
+        },
+        (error: unknown) => {
+          if (cancelled) return;
+          setListings((current) => ({
+            ...current,
+            [folder]: {
+              status: "error",
+              listing: null,
+              error: errorMessage(error),
+            },
+          }));
+        },
+      );
+    }
+    return () => {
+      cancelled = true;
+    };
+  }, [enabled, folders, trigger]);
+
+  return listings;
 }

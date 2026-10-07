@@ -3,6 +3,7 @@ import {
   buildFileBrowserTree,
   type FileBrowserDirectory,
   findFileBrowserNode,
+  getNewestDirectFile,
   getPinnedNodesInTree,
   orderFileBrowserChildren,
   getRevealFolders,
@@ -121,6 +122,25 @@ describe("file browser tree", () => {
   });
 });
 
+describe("newest file in a folder", () => {
+  it("picks the last file by natural name order, ignoring subfolders", () => {
+    expect(
+      getNewestDirectFile(
+        listing([
+          "2026-W9-plan.md",
+          "2026-W40-W41-plan.md",
+          "2026-W39-plan.md",
+          "archive/2027-W01-plan.md",
+        ]),
+      )?.path,
+    ).toBe("2026-W40-W41-plan.md");
+  });
+
+  it("returns null when the folder has no Markdown files of its own", () => {
+    expect(getNewestDirectFile(listing(["archive/old.md"]))).toBeNull();
+  });
+});
+
 describe("folder sort order", () => {
   it("keeps folders above files and reverses each group for Z–A", () => {
     const tree = buildFileBrowserTree(
@@ -160,6 +180,7 @@ describe("file browser preferences", () => {
     writeFileBrowserPreferences(storage, {
       pinnedFolders: ["/Users/me/notes"],
       pinnedFiles: ["/Users/me/todo.md"],
+      newestFilePins: ["/Users/me/week-plans"],
       projectPins: ["/Users/me/notes/plan.md"],
       folderSortOrders: { "/Users/me/notes/journal": "desc" },
       folderOpenStates: { "/Users/me/notes/drafts": true },
@@ -171,6 +192,7 @@ describe("file browser preferences", () => {
     expect(readFileBrowserPreferences(storage)).toEqual({
       pinnedFolders: ["/Users/me/notes"],
       pinnedFiles: ["/Users/me/todo.md"],
+      newestFilePins: ["/Users/me/week-plans"],
       projectPins: ["/Users/me/notes/plan.md"],
       folderSortOrders: { "/Users/me/notes/journal": "desc" },
       folderOpenStates: { "/Users/me/notes/drafts": true },
@@ -184,6 +206,7 @@ describe("file browser preferences", () => {
     expect(readFileBrowserPreferences(memoryStorage("{not json"))).toEqual({
       pinnedFolders: [],
       pinnedFiles: [],
+      newestFilePins: [],
       projectPins: [],
       folderSortOrders: {},
       folderOpenStates: {},

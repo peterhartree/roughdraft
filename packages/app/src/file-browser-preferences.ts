@@ -11,6 +11,8 @@ export interface FileBrowserPreferences {
   pinnedFolders: string[];
   /** Files shown as single rows at the top of the Pinned section. */
   pinnedFiles: string[];
+  /** Folders whose newest file by name is shown as a Pinned row. */
+  newestFilePins: string[];
   /** Files and folders pinned to the top of whichever tree contains them. */
   projectPins: string[];
   /** Folders sorted Z–A; every other folder sorts A–Z. */
@@ -25,6 +27,7 @@ export interface FileBrowserPreferences {
 export const DEFAULT_FILE_BROWSER_PREFERENCES: FileBrowserPreferences = {
   pinnedFolders: [],
   pinnedFiles: [],
+  newestFilePins: [],
   projectPins: [],
   folderSortOrders: {},
   folderOpenStates: {},
@@ -50,6 +53,12 @@ function parsePreferences(value: string): FileBrowserPreferences {
   if (Array.isArray(parsed.pinnedFiles)) {
     preferences.pinnedFiles = [
       ...new Set(parsed.pinnedFiles.filter(isAbsolutePath)),
+    ].slice(0, MAX_PINNED_FOLDERS);
+  }
+
+  if (Array.isArray(parsed.newestFilePins)) {
+    preferences.newestFilePins = [
+      ...new Set(parsed.newestFilePins.filter(isAbsolutePath)),
     ].slice(0, MAX_PINNED_FOLDERS);
   }
 
@@ -129,6 +138,7 @@ export function writeFileBrowserPreferences(
         ...preferences,
         pinnedFolders: preferences.pinnedFolders.slice(0, MAX_PINNED_FOLDERS),
         pinnedFiles: preferences.pinnedFiles.slice(0, MAX_PINNED_FOLDERS),
+        newestFilePins: preferences.newestFilePins.slice(0, MAX_PINNED_FOLDERS),
         projectPins: preferences.projectPins.slice(0, MAX_PROJECT_PINS),
         folderSortOrders: Object.fromEntries(
           Object.entries(preferences.folderSortOrders).slice(

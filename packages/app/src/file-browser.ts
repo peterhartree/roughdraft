@@ -173,3 +173,25 @@ export function orderFileBrowserChildren(
   const files = children.filter((child) => child.kind === "file");
   return [...directories.reverse(), ...files.reverse()];
 }
+
+const fileNameCollator = new Intl.Collator(undefined, {
+  numeric: true,
+  sensitivity: "base",
+});
+
+/**
+ * The last file directly inside the listed folder in natural name order,
+ * which for date-named files such as `2026-W41-plan.md` is the newest.
+ */
+export function getNewestDirectFile(
+  listing: MarkdownTreeListing,
+): MarkdownTreeFile | null {
+  let newest: MarkdownTreeFile | null = null;
+  for (const file of listing.files) {
+    if (file.path.includes("/")) continue;
+    if (!newest || fileNameCollator.compare(file.path, newest.path) > 0) {
+      newest = file;
+    }
+  }
+  return newest;
+}

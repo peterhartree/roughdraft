@@ -2897,6 +2897,8 @@ export function App() {
         projectRootIsPinned={fileBrowser.projectRootIsPinned}
         pinnedRoots={fileBrowser.pinnedRoots}
         pinnedFiles={fileBrowser.preferences.pinnedFiles}
+        newestFilePinFolders={fileBrowser.preferences.newestFilePins}
+        newestFilePins={fileBrowser.newestFilePins}
         pins={fileBrowser.pins}
         projectPins={fileBrowser.preferences.projectPins}
         activePath={activeDocumentAbsolutePath}
@@ -2909,6 +2911,8 @@ export function App() {
         onRemoveFolderFromPinned={fileBrowser.unpinFolder}
         onAddFileToPinned={fileBrowser.pinFile}
         onRemoveFileFromPinned={fileBrowser.unpinFile}
+        onPinNewestFile={fileBrowser.pinNewestFile}
+        onUnpinNewestFile={fileBrowser.unpinNewestFile}
         folderSortOrder={fileBrowser.folderSortOrder}
         onSetFolderSortOrder={fileBrowser.setFolderSortOrder}
         onPinToProject={fileBrowser.pinToProject}
@@ -2962,7 +2966,8 @@ export function App() {
     if (
       backend?.info.kind !== "local-files" ||
       (fileBrowser.preferences.pinnedFolders.length === 0 &&
-        fileBrowser.preferences.pinnedFiles.length === 0)
+        fileBrowser.preferences.pinnedFiles.length === 0 &&
+        fileBrowser.preferences.newestFilePins.length === 0)
     ) {
       return recentDocumentsPage;
     }
