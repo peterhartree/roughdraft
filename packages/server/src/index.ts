@@ -574,7 +574,19 @@ export function createApp(options: CreateAppOptions = {}): CreateAppResult {
       return;
     }
 
-    res.json(markdownPageFromFile(relativePath, absolutePath));
+    try {
+      res.json(markdownPageFromFile(relativePath, absolutePath));
+    } catch (error) {
+      const errorCode = (error as NodeJS.ErrnoException).code;
+      if (errorCode === "EACCES" || errorCode === "EPERM") {
+        res.status(403).json({
+          error: "Markdown file not readable",
+          code: "permission-denied",
+        });
+        return;
+      }
+      throw error;
+    }
   });
 
   app.get("/api/markdown-file/events", (req, res) => {

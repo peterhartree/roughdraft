@@ -70,6 +70,36 @@ describe("createApp", () => {
     expect(response.body.version).toEqual(expect.any(String));
   });
 
+  // Root ignores file mode bits, so chmod 000 cannot make the file unreadable.
+  it.skipIf(process.getuid?.() === 0)(
+    "reports an unreadable markdown file as permission denied",
+    async () => {
+      const filePath = path.join(projectDir, "locked.md");
+      fs.writeFileSync(filePath, "# Locked\n");
+      fs.chmodSync(filePath, 0o000);
+
+      try {
+        const { app } = createApp({
+          homeDir,
+          staticDirPath: projectDir,
+        });
+
+        const response = await request(app).get("/api/markdown-file").query({
+          projectPath: projectDir,
+          path: "locked.md",
+        });
+
+        expect(response.status).toBe(403);
+        expect(response.body).toEqual({
+          error: "Markdown file not readable",
+          code: "permission-denied",
+        });
+      } finally {
+        fs.chmodSync(filePath, 0o644);
+      }
+    },
+  );
+
   it("lists, updates, and deletes page-backed markdown files", async () => {
     fs.writeFileSync(path.join(projectDir, "alpha.md"), "# Alpha\n");
 

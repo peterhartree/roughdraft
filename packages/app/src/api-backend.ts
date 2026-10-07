@@ -3,6 +3,7 @@ import {
   type MarkdownFileChangeEvent,
   MarkdownFileConflictError,
   MarkdownFileNotFoundError,
+  MarkdownFilePermissionError,
   type Page,
   type StorageBackend,
   type StoredAsset,
@@ -47,6 +48,9 @@ export class ApiBackend implements StorageBackend {
     );
     if (res.status === 404) {
       throw new MarkdownFileNotFoundError(relativePath);
+    }
+    if (res.status === 403) {
+      throw new MarkdownFilePermissionError(relativePath);
     }
     if (!res.ok) {
       throw new Error(

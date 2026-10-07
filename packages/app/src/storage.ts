@@ -29,6 +29,16 @@ export class MarkdownFileNotFoundError extends Error {
   }
 }
 
+export class MarkdownFilePermissionError extends Error {
+  readonly path: string;
+
+  constructor(relativePath: string) {
+    super(`Markdown file not readable: ${relativePath}`);
+    this.name = "MarkdownFilePermissionError";
+    this.path = relativePath;
+  }
+}
+
 export interface StoredAsset {
   markdownPath: string;
   previewUrl: string;

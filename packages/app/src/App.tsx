@@ -104,6 +104,7 @@ import {
 import {
   MarkdownFileConflictError,
   MarkdownFileNotFoundError,
+  MarkdownFilePermissionError,
   type Page,
   type StorageBackend,
 } from "./storage";
@@ -1958,7 +1959,11 @@ export function App() {
           setActiveDocumentAbsolutePath(null);
         }
         setActiveDocumentPath(null);
-        setLoadError("Could not open that markdown file.");
+        setLoadError(
+          error instanceof MarkdownFilePermissionError
+            ? "Roughdraft isn't allowed to read that Markdown file. Quit and reopen Roughdraft; if that doesn't help, check the file's permissions."
+            : "Could not open that markdown file.",
+        );
         setLoading(false);
       }
     };
@@ -2355,8 +2360,11 @@ export function App() {
           }
           return "unavailable";
         }
+        const fileName = getPathLeaf(absolutePath) ?? "that file";
         setFileSwitchError(
-          `Could not open ${getPathLeaf(absolutePath) ?? "that file"}. The current file is still open.`,
+          error instanceof MarkdownFilePermissionError
+            ? `Roughdraft isn't allowed to read ${fileName}. Quit and reopen Roughdraft; if that doesn't help, check the file's permissions.`
+            : `Could not open ${fileName}. The current file is still open.`,
         );
         return "blocked";
       } finally {
