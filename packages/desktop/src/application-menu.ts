@@ -2,6 +2,7 @@ import type { MenuItemConstructorOptions } from "electron";
 import { createRecentDocumentMenuEntries } from "./recent-documents.js";
 
 export interface ApplicationMenuActions {
+  newMarkdownFile: () => void;
   openMarkdownFile: () => void;
   openRecentDocument: (filePath: string) => void;
 }
@@ -36,6 +37,11 @@ export function createApplicationMenuTemplate(
     {
       label: "File",
       submenu: [
+        {
+          label: "New…",
+          accelerator: "CommandOrControl+N",
+          click: () => actions.newMarkdownFile(),
+        },
         {
           label: "Open…",
           accelerator: "CommandOrControl+O",

@@ -6,10 +6,12 @@ import {
   ipcMain,
   Menu,
   type OpenDialogOptions,
+  type SaveDialogOptions,
   session,
   shell,
   type WebContents,
 } from "electron";
+import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createApplicationMenuTemplate } from "./application-menu.js";
 import { shouldSuppressNativeDocumentShortcut } from "./document-shortcuts.js";
@@ -21,6 +23,11 @@ import {
   postOpenDocumentIntent,
   resolveMarkdownOpenIntent,
 } from "./native-open.js";
+import {
+  createMarkdownFile,
+  NEW_MARKDOWN_FILE_NAME,
+  newMarkdownFileDirectory,
+} from "./new-markdown-file.js";
 import { shouldAllowRendererPermission } from "./permission-policy.js";
 import { parseRecentDocumentPaths } from "./recent-documents.js";
 import { RECENT_DOCUMENTS_IPC_CHANNEL } from "./recent-documents-channel.js";
@@ -120,6 +127,42 @@ async function chooseMarkdownFile(): Promise<void> {
   await openMarkdownPath(filePath);
 }
 
+// Roughdraft edits files in place, so a new document is created on disk
+// first and then opened like any other file.
+async function createNewMarkdownFile(): Promise<void> {
+  const hasWindow = mainWindow !== null && !mainWindow.isDestroyed();
+  const directory = newMarkdownFileDirectory(
+    hasWindow && mainWindow ? mainWindow.webContents.getURL() : "",
+    recentDocumentPaths,
+    app.getPath("documents"),
+  );
+  const options = {
+    title: "New Markdown file",
+    buttonLabel: "Create",
+    defaultPath: path.join(directory, NEW_MARKDOWN_FILE_NAME),
+    filters: [{ name: "Markdown", extensions: ["md"] }],
+    properties: ["createDirectory", "showOverwriteConfirmation"],
+  } satisfies SaveDialogOptions;
+  const result =
+    hasWindow && mainWindow
+      ? await dialog.showSaveDialog(mainWindow, options)
+      : await dialog.showSaveDialog(options);
+  if (result.canceled || !result.filePath) return;
+
+  let filePath: string;
+  try {
+    filePath = await createMarkdownFile(result.filePath, (target) =>
+      shell.trashItem(target),
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    dialog.showErrorBox("Could not create Markdown file", message);
+    return;
+  }
+
+  await openMarkdownPath(filePath);
+}
+
 async function openMarkdownPath(filePath: string): Promise<void> {
   nativeOpenPaths.request(filePath);
   await ensureNativeOpenDestination();
@@ -130,6 +173,9 @@ function installApplicationMenu(): void {
     Menu.buildFromTemplate(
       createApplicationMenuTemplate(
         {
+          newMarkdownFile: () => {
+            void createNewMarkdownFile();
+          },
           openMarkdownFile: () => {
             void chooseMarkdownFile();
           },

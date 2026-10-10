@@ -29,7 +29,11 @@ describe("desktop application menu", () => {
   it("offers File > Open with the native open shortcut", () => {
     const openMarkdownFile = vi.fn();
     const template = createApplicationMenuTemplate(
-      { openMarkdownFile, openRecentDocument: vi.fn() },
+      {
+        newMarkdownFile: vi.fn(),
+        openMarkdownFile,
+        openRecentDocument: vi.fn(),
+      },
       [],
       "darwin",
     );
@@ -40,10 +44,32 @@ describe("desktop application menu", () => {
     expect(openMarkdownFile).toHaveBeenCalledOnce();
   });
 
+  it("offers File > New with the native new-document shortcut", () => {
+    const newMarkdownFile = vi.fn();
+    const template = createApplicationMenuTemplate(
+      {
+        newMarkdownFile,
+        openMarkdownFile: vi.fn(),
+        openRecentDocument: vi.fn(),
+      },
+      [],
+      "darwin",
+    );
+    const newItem = fileMenuItem(template, "New…");
+
+    expect(newItem).toMatchObject({ accelerator: "CommandOrControl+N" });
+    click(newItem);
+    expect(newMarkdownFile).toHaveBeenCalledOnce();
+  });
+
   it("lists recent documents in File > Open Recent and opens the chosen one", () => {
     const openRecentDocument = vi.fn();
     const template = createApplicationMenuTemplate(
-      { openMarkdownFile: vi.fn(), openRecentDocument },
+      {
+        newMarkdownFile: vi.fn(),
+        openMarkdownFile: vi.fn(),
+        openRecentDocument,
+      },
       ["/Users/me/notes/plan.md", "/Users/me/drafts/essay.md"],
       "darwin",
     );
@@ -58,7 +84,11 @@ describe("desktop application menu", () => {
 
   it("names the parent folder when recent documents share a filename", () => {
     const template = createApplicationMenuTemplate(
-      { openMarkdownFile: vi.fn(), openRecentDocument: vi.fn() },
+      {
+        newMarkdownFile: vi.fn(),
+        openMarkdownFile: vi.fn(),
+        openRecentDocument: vi.fn(),
+      },
       ["/Users/me/alpha/README.md", "/Users/me/beta/README.md"],
       "darwin",
     );
@@ -71,7 +101,11 @@ describe("desktop application menu", () => {
 
   it("shows a disabled placeholder when there are no recent documents", () => {
     const template = createApplicationMenuTemplate(
-      { openMarkdownFile: vi.fn(), openRecentDocument: vi.fn() },
+      {
+        newMarkdownFile: vi.fn(),
+        openMarkdownFile: vi.fn(),
+        openRecentDocument: vi.fn(),
+      },
       [],
       "darwin",
     );
