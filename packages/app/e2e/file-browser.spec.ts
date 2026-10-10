@@ -2,7 +2,9 @@ import fs from "node:fs";
 import path from "node:path";
 import { expect, type Page, test } from "@playwright/test";
 import {
+  appendInCodeEditor,
   createMarkdownProject,
+  documentSaveStatus,
   openMarkdownFile,
   removeMarkdownProject,
   simulateBackgroundWindow,
@@ -305,6 +307,89 @@ test.describe("file browser", () => {
       "data-checked",
       "true",
     );
+  });
+
+  test("renames a file from the browser, selecting the name without its extension", async ({
+    page,
+  }) => {
+    await openMarkdownFile(page, readmePath);
+    await browserFolder(page, path.join(projectDir, "docs")).click();
+    await browserFile(page, guidePath).click({ button: "right" });
+    await page.getByTestId("file-browser-rename").click();
+
+    const input = page.getByTestId("rename-file-input");
+    await expect(input).toBeFocused();
+    await expect(input).toHaveValue("guide.md");
+    expect(
+      await input.evaluate((element: HTMLInputElement) => [
+        element.selectionStart,
+        element.selectionEnd,
+      ]),
+    ).toEqual([0, "guide".length]);
+
+    await page.keyboard.type("handbook");
+    await page.keyboard.press("Enter");
+
+    const renamedPath = path.join(projectDir, "docs", "handbook.md");
+    await expect(page.getByTestId("rename-file-dialog")).toHaveCount(0);
+    expect(fs.existsSync(guidePath)).toBe(false);
+    expect(fs.readFileSync(renamedPath, "utf8")).toBe("# Guide\n");
+    await expect(browserFile(page, renamedPath)).toBeVisible();
+    await expect(browserFile(page, guidePath)).toHaveCount(0);
+  });
+
+  test("renames the active file from the Open list, keeping unsaved edits @smoke", async ({
+    page,
+  }) => {
+    await openMarkdownFile(page, readmePath, "code");
+    await appendInCodeEditor(page, "\nUnsaved line.");
+
+    await openListItem(page, readmePath).click({ button: "right" });
+    await page.getByTestId("open-file-sidebar-rename").click();
+    await page.getByTestId("rename-file-input").fill("Overview");
+    await page.getByTestId("rename-file-submit").click();
+
+    const renamedPath = path.join(projectDir, "Overview.md");
+    await expect(openListItem(page, renamedPath)).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    await expect(openListItem(page, readmePath)).toHaveCount(0);
+    await expect(page).toHaveURL(new RegExp(encodeURIComponent(renamedPath)));
+    expect(fs.existsSync(readmePath)).toBe(false);
+    expect(fs.readFileSync(renamedPath, "utf8")).toContain("Unsaved line.");
+
+    // Later edits save to the new path and never recreate the old one.
+    await appendInCodeEditor(page, "\nAfter rename.");
+    await expect(documentSaveStatus(page)).toHaveAttribute(
+      "aria-label",
+      "Saved",
+    );
+    await expect
+      .poll(() => fs.readFileSync(renamedPath, "utf8"))
+      .toContain("After rename.");
+    expect(fs.existsSync(readmePath)).toBe(false);
+  });
+
+  test("refuses to rename a file over another one", async ({ page }) => {
+    await openMarkdownFile(page, readmePath);
+    await browserFolder(page, path.join(projectDir, "docs")).click();
+    await browserFile(page, guidePath).click({ button: "right" });
+    await page.getByTestId("file-browser-rename").click();
+    await page.getByTestId("rename-file-input").fill("../README");
+    await page.getByTestId("rename-file-submit").click();
+    await expect(page.getByTestId("rename-file-error")).toHaveText(
+      "File names can't contain slashes.",
+    );
+
+    writeProjectFile(projectDir, "docs/taken.md", "# Taken\n");
+    await page.getByTestId("rename-file-input").fill("taken.md");
+    await page.getByTestId("rename-file-submit").click();
+
+    await expect(page.getByTestId("rename-file-error")).toHaveText(
+      "A file named taken.md already exists in this folder.",
+    );
+    expect(fs.readFileSync(guidePath, "utf8")).toBe("# Guide\n");
   });
 
   test("moves a file to the Trash from the browser without confirmation", async ({

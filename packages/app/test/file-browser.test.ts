@@ -12,6 +12,7 @@ import {
 import {
   isFolderOpen,
   readFileBrowserPreferences,
+  renamePinnedFile,
   setFolderOpenState,
   setFolderSortOrder,
   writeFileBrowserPreferences,
@@ -174,6 +175,30 @@ describe("file browser preferences", () => {
       },
     };
   }
+
+  it("carries a renamed file's pins over to its new path", () => {
+    const preferences = {
+      ...readFileBrowserPreferences(memoryStorage()),
+      pinnedFolders: ["/Users/me/notes"],
+      pinnedFiles: ["/Users/me/todo.md", "/Users/me/notes/plan.md"],
+      projectPins: ["/Users/me/notes/plan.md"],
+    };
+
+    expect(
+      renamePinnedFile(
+        preferences,
+        "/Users/me/notes/plan.md",
+        "/Users/me/notes/roadmap.md",
+      ),
+    ).toEqual({
+      ...preferences,
+      pinnedFiles: ["/Users/me/todo.md", "/Users/me/notes/roadmap.md"],
+      projectPins: ["/Users/me/notes/roadmap.md"],
+    });
+    expect(
+      renamePinnedFile(preferences, "/Users/me/other.md", "/Users/me/new.md"),
+    ).toBe(preferences);
+  });
 
   it("round-trips pins, folder states and section layout", () => {
     const storage = memoryStorage();

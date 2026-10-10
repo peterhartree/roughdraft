@@ -8,6 +8,7 @@ import {
   Folder,
   FolderGit2,
   FolderOpen,
+  Pencil,
   Pin,
   PinOff,
   Trash2,
@@ -70,6 +71,7 @@ interface FileBrowserProps {
   onPinToProject: (path: string) => void;
   onUnpinFromProject: (path: string) => void;
   onMoveToTrash: (path: string) => void;
+  onRename: (path: string) => void;
   onCopyPath: (path: string) => void | Promise<void>;
 }
 
@@ -142,6 +144,7 @@ export function FileBrowser({
   onPinToProject,
   onUnpinFromProject,
   onMoveToTrash,
+  onRename,
   onCopyPath,
 }: FileBrowserProps) {
   const contextTargetRef = useRef<ContextTarget | null>(null);
@@ -558,6 +561,7 @@ export function FileBrowser({
           onPinToProject={onPinToProject}
           onUnpinFromProject={onUnpinFromProject}
           onMoveToTrash={onMoveToTrash}
+          onRename={onRename}
           onCopyPath={onCopyPath}
         />
       </ContextMenuContent>
@@ -584,6 +588,7 @@ function FileBrowserMenuItems({
   onPinToProject,
   onUnpinFromProject,
   onMoveToTrash,
+  onRename,
   onCopyPath,
 }: {
   targetRef: React.RefObject<ContextTarget | null>;
@@ -602,6 +607,7 @@ function FileBrowserMenuItems({
   onPinToProject: (path: string) => void;
   onUnpinFromProject: (path: string) => void;
   onMoveToTrash: (path: string) => void;
+  onRename: (path: string) => void;
   onCopyPath: (path: string) => void | Promise<void>;
 }) {
   const target = targetRef.current;
@@ -627,13 +633,22 @@ function FileBrowserMenuItems({
           Copy path
         </ContextMenuItem>
         {target.kind === "file" ? (
-          <ContextMenuItem
-            data-testid="file-browser-move-to-trash"
-            onClick={() => onMoveToTrash(target.path)}
-          >
-            <Trash2 className={menuIconClassName} />
-            Move to Trash
-          </ContextMenuItem>
+          <>
+            <ContextMenuItem
+              data-testid="file-browser-rename"
+              onClick={() => onRename(target.path)}
+            >
+              <Pencil className={menuIconClassName} />
+              Rename…
+            </ContextMenuItem>
+            <ContextMenuItem
+              data-testid="file-browser-move-to-trash"
+              onClick={() => onMoveToTrash(target.path)}
+            >
+              <Trash2 className={menuIconClassName} />
+              Move to Trash
+            </ContextMenuItem>
+          </>
         ) : null}
       </>
     );
@@ -750,13 +765,22 @@ function FileBrowserMenuItems({
         Copy path
       </ContextMenuItem>
       {isFolder ? null : (
-        <ContextMenuItem
-          data-testid="file-browser-move-to-trash"
-          onClick={() => onMoveToTrash(target.path)}
-        >
-          <Trash2 className={menuIconClassName} />
-          Move to Trash
-        </ContextMenuItem>
+        <>
+          <ContextMenuItem
+            data-testid="file-browser-rename"
+            onClick={() => onRename(target.path)}
+          >
+            <Pencil className={menuIconClassName} />
+            Rename…
+          </ContextMenuItem>
+          <ContextMenuItem
+            data-testid="file-browser-move-to-trash"
+            onClick={() => onMoveToTrash(target.path)}
+          >
+            <Trash2 className={menuIconClassName} />
+            Move to Trash
+          </ContextMenuItem>
+        </>
       )}
     </>
   );

@@ -83,6 +83,25 @@ export function markOpenFileRead(files: OpenFileItem[], path: string) {
   return nextFiles;
 }
 
+// A renamed file keeps its place in the list and its open time.
+export function renameOpenFile(
+  files: OpenFileItem[],
+  fromPath: string,
+  toPath: string,
+) {
+  if (fromPath === toPath || !files.some((file) => file.path === fromPath)) {
+    return files;
+  }
+
+  return sortOpenFiles(
+    files
+      .filter((file) => file.path !== toPath)
+      .map((file) =>
+        file.path === fromPath ? { ...file, path: toPath } : file,
+      ),
+  );
+}
+
 export function getOpenFileCloseCandidates(
   files: OpenFileItem[],
   activePath: string,

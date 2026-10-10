@@ -8,6 +8,7 @@ import {
   isOpenFileSwitcherShortcut,
   isToggleOpenFileSidebarShortcut,
   markOpenFileRead,
+  renameOpenFile,
   shouldActivateOpenRequest,
   shouldHandleOpenRequestInSession,
   sortOpenFiles,
@@ -28,6 +29,12 @@ const second = {
 };
 
 describe("open-file ordering and read state", () => {
+  it("keeps a renamed file in its place with its open time and read state", () => {
+    expect(
+      renameOpenFile([second, first], "/tmp/second.md", "/tmp/zebra.md"),
+    ).toEqual([{ ...second, path: "/tmp/zebra.md" }, first]);
+  });
+
   it("sorts most recently opened first with a stable path tie-break", () => {
     expect(
       sortOpenFiles([first, second, { ...first, path: "/tmp/alpha.md" }]).map(

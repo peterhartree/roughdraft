@@ -188,3 +188,22 @@ export function setFolderSortOrder(
   const entries = Object.entries({ ...rest, [folder]: "desc" as const });
   return Object.fromEntries(entries.slice(-MAX_FOLDER_SORT_ORDERS));
 }
+
+/** Carries a renamed file's pins over to its new path. */
+export function renamePinnedFile(
+  preferences: FileBrowserPreferences,
+  fromPath: string,
+  toPath: string,
+): FileBrowserPreferences {
+  const rename = (paths: string[]) =>
+    paths.includes(fromPath)
+      ? [...new Set(paths.map((path) => (path === fromPath ? toPath : path)))]
+      : paths;
+  const pinnedFiles = rename(preferences.pinnedFiles);
+  const projectPins = rename(preferences.projectPins);
+
+  return pinnedFiles === preferences.pinnedFiles &&
+    projectPins === preferences.projectPins
+    ? preferences
+    : { ...preferences, pinnedFiles, projectPins };
+}

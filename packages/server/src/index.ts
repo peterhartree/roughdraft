@@ -15,6 +15,7 @@ import {
 } from "./network.js";
 import { markdownTreeFromQuery } from "./markdown-tree.js";
 import { OpenRequestBroker } from "./open-requests.js";
+import { RenameRejectedError, renameMarkdownFile } from "./rename.js";
 import { moveToTrash } from "./trash.js";
 import { resolveUpdateStatus } from "./update-status.js";
 
@@ -678,6 +679,42 @@ export function createApp(options: CreateAppOptions = {}): CreateAppResult {
     }
 
     res.json({ path: absolutePath });
+  });
+
+  app.post("/api/markdown-file/rename", (req, res) => {
+    const requestedPath: unknown = req.body?.path;
+    const requestedName: unknown = req.body?.name;
+    if (typeof requestedPath !== "string" || requestedPath.length === 0) {
+      res.status(400).json({ error: "path is required" });
+      return;
+    }
+    if (!path.isAbsolute(requestedPath)) {
+      res.status(400).json({ error: "path must be absolute" });
+      return;
+    }
+    if (typeof requestedName !== "string") {
+      res.status(400).json({ error: "name is required" });
+      return;
+    }
+
+    const absolutePath = path.resolve(requestedPath);
+    if (!absolutePath.toLowerCase().endsWith(".md")) {
+      res.status(404).json({ error: "Markdown file not found" });
+      return;
+    }
+
+    try {
+      res.json({ path: renameMarkdownFile(absolutePath, requestedName) });
+    } catch (error) {
+      if (error instanceof RenameRejectedError) {
+        res.status(error.status).json({ error: error.message });
+        return;
+      }
+      const detail = error instanceof Error ? error.message : String(error);
+      res.status(500).json({
+        error: `Couldn't rename ${path.basename(absolutePath)}: ${detail}`,
+      });
+    }
   });
 
   app.get("/api/review-index", (req, res) => {

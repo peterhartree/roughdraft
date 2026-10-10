@@ -81,6 +81,7 @@ import {
   isToggleOpenFileSidebarShortcut,
   markOpenFileRead,
   type OpenFileItem,
+  renameOpenFile,
   shouldActivateOpenRequest,
   shouldHandleOpenRequestInSession,
   upsertOpenFile,
@@ -93,11 +94,13 @@ import {
 import type { DocumentSaveController, DocumentSaveState } from "./PageCard";
 import { PreviewBackend } from "./preview-backend";
 import { RecentDocumentsPage } from "./RecentDocumentsPage";
+import { RenameFileDialog } from "./RenameFileDialog";
 import { RoughdraftFormatDemo } from "./RoughdraftFormatDemo";
 import {
   type RecentDocument,
   readRecentDocuments,
   removeRecentDocument,
+  renameRecentDocument,
   touchRecentDocument,
   writeRecentDocuments,
 } from "./recent-documents";
@@ -1563,6 +1566,7 @@ export function App() {
   const [missingOpenFilePath, setMissingOpenFilePath] = useState<string | null>(
     null,
   );
+  const [renameTargetPath, setRenameTargetPath] = useState<string | null>(null);
   const [documentViewRestoreRequest, setDocumentViewRestoreRequest] =
     useState<DocumentViewRestoreRequest | null>(null);
   const [documentViewStates, setDocumentViewStates] = useState(
@@ -2898,6 +2902,139 @@ export function App() {
     ],
   );
 
+  // Renaming the active file saves it first and reopens it under its new
+  // name, so no pending save can recreate the old path.
+  const renameFile = useCallback(
+    async (path: string, name: string): Promise<string | null> => {
+      const fileName = getPathLeaf(path) ?? "the file";
+      const isActive =
+        path === activeDocumentAbsolutePathRef.current &&
+        path !== missingOpenFilePath;
+      const currentBackend = backendRef.current;
+      if (isActive) {
+        if (
+          fileSwitchPendingRef.current ||
+          diskChangeStateBlocksFileSwitch(documentDiskChangeStateRef.current)
+        ) {
+          return "Resolve the current file changes before renaming it.";
+        }
+        fileSwitchPendingRef.current = true;
+        setFileSwitchPending(true);
+      }
+      setFileSwitchError(null);
+
+      try {
+        if (isActive) {
+          const saveResult =
+            await documentSaveControllerRef.current?.flushSave();
+          if (saveResult && saveResult.status !== "saved") {
+            return saveResult.status === "error"
+              ? `${fileName} could not be saved, so it keeps its name.`
+              : "Resolve the current file changes before renaming it.";
+          }
+          captureCurrentDocumentView();
+        }
+
+        let renamedPath: string;
+        try {
+          const response = await fetch("/api/markdown-file/rename", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ path, name }),
+          });
+          const body = (await response.json().catch(() => null)) as {
+            path?: unknown;
+            error?: string;
+          } | null;
+          if (!response.ok || typeof body?.path !== "string") {
+            return body?.error ?? `Couldn't rename ${fileName}.`;
+          }
+          renamedPath = body.path;
+        } catch (error) {
+          console.error("Failed to rename a Markdown file:", error);
+          return `Couldn't rename ${fileName}.`;
+        }
+        if (renamedPath === path) return null;
+
+        openFilesRef.current = renameOpenFile(
+          openFilesRef.current,
+          path,
+          renamedPath,
+        );
+        setOpenFiles((current) => renameOpenFile(current, path, renamedPath));
+        const viewState = documentViewStatesRef.current.get(path);
+        if (viewState) {
+          const nextStates = new Map(documentViewStatesRef.current);
+          nextStates.delete(path);
+          nextStates.set(renamedPath, viewState);
+          documentViewStatesRef.current = nextStates;
+          setDocumentViewStates(nextStates);
+        }
+        updateRecentDocuments((current) =>
+          renameRecentDocument(current, path, renamedPath),
+        );
+        setPendingOpenRequestPath((current) =>
+          current === path ? renamedPath : current,
+        );
+        fileBrowser.renamePinnedFile(path, renamedPath);
+        fileBrowser.refresh();
+
+        if (!isActive || !currentBackend) return null;
+
+        // Moving the active path first stops the old path's watcher from
+        // reporting the file as missing.
+        activeDocumentAbsolutePathRef.current = renamedPath;
+        const target = getRequestedPathStateForPath(renamedPath);
+        try {
+          if (!target.projectPath || !target.documentPath) {
+            throw new Error(`Unusable path: ${renamedPath}`);
+          }
+          await currentBackend.openProject(target.projectPath);
+          const nextDocument = await loadDocument(
+            currentBackend,
+            target.documentPath,
+            renamedPath,
+          );
+          activeDocumentPathRef.current = target.documentPath;
+          documentSaveStateRef.current = "saved";
+          setDocumentSaveState("saved");
+          setDocumentForceResetKey(
+            `${renamedPath}:${nextDocument.version ?? Date.now()}:rename`,
+          );
+          syncRequestedPathInUrl(renamedPath);
+          requestDocumentViewRestore(
+            renamedPath,
+            getViewStateForPath(renamedPath),
+          );
+        } catch (error) {
+          console.error("Failed to reopen a renamed Markdown file:", error);
+          setActiveDocumentAbsolutePath(renamedPath);
+          setDocumentDiskChangeState("missing");
+          setFileSwitchError(
+            `Renamed ${fileName} to ${getPathLeaf(renamedPath)}, but couldn't reopen it.`,
+          );
+        }
+        return null;
+      } finally {
+        if (isActive) {
+          fileSwitchPendingRef.current = false;
+          setFileSwitchPending(false);
+        }
+      }
+    },
+    [
+      captureCurrentDocumentView,
+      fileBrowser.refresh,
+      fileBrowser.renamePinnedFile,
+      getViewStateForPath,
+      loadDocument,
+      missingOpenFilePath,
+      requestDocumentViewRestore,
+      setDocumentDiskChangeState,
+      updateRecentDocuments,
+    ],
+  );
+
   const fileSwitchBlocked =
     fileSwitchPending ||
     diskChangeStateBlocksFileSwitch(documentDiskChangeState);
@@ -2929,6 +3066,7 @@ export function App() {
         onPinToProject={fileBrowser.pinToProject}
         onUnpinFromProject={fileBrowser.unpinFromProject}
         onMoveToTrash={(path) => void moveFileToTrash(path)}
+        onRename={setRenameTargetPath}
         onCopyPath={copyPathToClipboard}
       />
     ),
@@ -2939,6 +3077,14 @@ export function App() {
     onToggleOpenSection: fileBrowser.toggleOpenSection,
     onToggleBrowseSection: fileBrowser.toggleBrowseSection,
   };
+
+  const renameFileDialog = (
+    <RenameFileDialog
+      path={renameTargetPath}
+      onRename={renameFile}
+      onClose={() => setRenameTargetPath(null)}
+    />
+  );
 
   if (loading) {
     return (
@@ -2996,6 +3142,7 @@ export function App() {
           onCopyPath={copyPathToClipboard}
           browse={sidebarBrowseSection}
         />
+        {renameFileDialog}
         <div className="min-w-0 flex-1 overflow-y-auto">
           {recentDocumentsPage}
         </div>
@@ -3036,9 +3183,11 @@ export function App() {
           onSelect={(path) => void switchToOpenFile(path)}
           onCopyPath={copyPathToClipboard}
           onMoveToTrash={(path) => void moveFileToTrash(path)}
+          onRename={setRenameTargetPath}
           browse={sidebarBrowseSection}
         />
       ) : null}
+      {renameFileDialog}
       {hasOpenFileSidebar ? (
         <OpenFileSwitcher
           files={openFiles}

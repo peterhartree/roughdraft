@@ -4,6 +4,7 @@ import {
   type FileBrowserPreferences,
   isFolderOpen,
   readFileBrowserPreferences,
+  renamePinnedFile,
   setFolderOpenState,
   setFolderSortOrder,
   writeFileBrowserPreferences,
@@ -140,6 +141,14 @@ export function useFileBrowser({
     });
   }, [activePath, projectRoot, updatePreferences]);
 
+  const renamePinnedPath = useCallback(
+    (fromPath: string, toPath: string) =>
+      updatePreferences((current) =>
+        renamePinnedFile(current, fromPath, toPath),
+      ),
+    [updatePreferences],
+  );
+
   return {
     preferences,
     project,
@@ -148,6 +157,7 @@ export function useFileBrowser({
     projectRootIsPinned:
       projectRoot !== null && pinnedFolders.includes(projectRoot),
     refresh,
+    renamePinnedFile: renamePinnedPath,
     pinFile: (path: string) =>
       updatePreferences((current) =>
         current.pinnedFiles.includes(path)

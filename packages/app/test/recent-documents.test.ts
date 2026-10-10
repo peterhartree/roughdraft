@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   readRecentDocuments,
   removeRecentDocument,
+  renameRecentDocument,
   touchRecentDocument,
   writeRecentDocuments,
 } from "../src/recent-documents";
@@ -28,6 +29,20 @@ describe("recent document persistence", () => {
     expect(revisited).toEqual([
       { path: "/tmp/first.md", modifiedAt: 300, lastViewedAt: 1_002 },
       { path: "/tmp/second.md", modifiedAt: 100, lastViewedAt: 1_001 },
+    ]);
+  });
+
+  it("keeps a renamed document's place in the history", () => {
+    const documents = [
+      { path: "/tmp/second.md", modifiedAt: 100, lastViewedAt: 2_000 },
+      { path: "/tmp/first.md", modifiedAt: 200, lastViewedAt: 1_000 },
+    ];
+
+    expect(
+      renameRecentDocument(documents, "/tmp/second.md", "/tmp/renamed.md"),
+    ).toEqual([
+      { path: "/tmp/renamed.md", modifiedAt: 100, lastViewedAt: 2_000 },
+      { path: "/tmp/first.md", modifiedAt: 200, lastViewedAt: 1_000 },
     ]);
   });
 

@@ -125,3 +125,24 @@ export function removeRecentDocument(
   if (!documents.some((document) => document.path === path)) return documents;
   return documents.filter((document) => document.path !== path);
 }
+
+export function renameRecentDocument(
+  documents: RecentDocument[],
+  fromPath: string,
+  toPath: string,
+): RecentDocument[] {
+  if (
+    fromPath === toPath ||
+    !documents.some((document) => document.path === fromPath)
+  ) {
+    return documents;
+  }
+
+  return sortRecentDocuments(
+    documents
+      .filter((document) => document.path !== toPath)
+      .map((document) =>
+        document.path === fromPath ? { ...document, path: toPath } : document,
+      ),
+  );
+}
