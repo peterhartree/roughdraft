@@ -35,4 +35,4 @@ Roughdraft can reach neighbouring files without becoming a vault: there is still
 
 Like the other local-file endpoints, the listing endpoint accepts any absolute path and is not covered by the remote-document token, so it is reachable wherever the server is. It reveals Markdown file names and modification times, never contents.
 
-Creating, renaming or moving files, deleting folders, permanent deletion, searching the trees, and folder watching would require separate decisions.
+Creating and renaming files are covered by ADR 0008. Moving files, deleting folders, permanent deletion, searching the trees, and folder watching would require separate decisions.
