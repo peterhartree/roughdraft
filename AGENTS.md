@@ -21,6 +21,8 @@ Before finalizing test work, check that the tests are:
 
 Prefer the fastest test that remains predictive. Escalate to integration or e2e coverage when the boundary itself is the behavior under test, and make any meaningful tradeoff explicit in the final summary.
 
+Playwright starts its own servers on ports 4317 (API) and 4318 (app) and fails if either port is busy. When another agent may be running browser tests in this checkout, use free ports, for example `PLAYWRIGHT_APP_PORT=4428 API_PORT=4427 pnpm test:smoke`. Set `PLAYWRIGHT_REUSE_SERVER=1` only to reuse servers you started yourself from current code.
+
 `docs/solutions/` contains documented solutions to past problems, organized by category with YAML frontmatter (`module`, `tags`, `problem_type`). It is relevant context when implementing, debugging, or choosing tests in documented areas.
 
 ## Bug Fix Workflow

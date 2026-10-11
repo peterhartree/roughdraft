@@ -3,6 +3,10 @@ import { defineConfig, devices } from "@playwright/test";
 const appPort = Number(process.env.PLAYWRIGHT_APP_PORT ?? 4318);
 const apiPort = Number(process.env.API_PORT ?? 4317);
 const appUrl = `http://127.0.0.1:${appPort}`;
+// Reusing a server already on these ports can silently test another
+// checkout's or agent's code, so a busy port fails the run unless reuse is
+// asked for. Parallel runs should set PLAYWRIGHT_APP_PORT and API_PORT.
+const reuseExistingServer = process.env.PLAYWRIGHT_REUSE_SERVER === "1";
 
 export default defineConfig({
   testDir: "./e2e",
@@ -29,14 +33,14 @@ export default defineConfig({
     {
       command: `API_PORT=${apiPort} pnpm exec tsx e2e/start-api.ts`,
       port: apiPort,
-      reuseExistingServer: !process.env.CI,
+      reuseExistingServer,
       stdout: "pipe",
       stderr: "pipe",
     },
     {
       command: `API_PORT=${apiPort} pnpm dev --host 127.0.0.1 --port ${appPort}`,
       url: appUrl,
-      reuseExistingServer: !process.env.CI,
+      reuseExistingServer,
       stdout: "pipe",
       stderr: "pipe",
     },
