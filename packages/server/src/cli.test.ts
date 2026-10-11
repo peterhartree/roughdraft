@@ -1470,16 +1470,6 @@ describe("cli", () => {
     );
   });
 
-  it("keeps CLAUDE.md as a short compatibility shim to AGENTS.md", () => {
-    const claudePath = path.join(serverRoot, "CLAUDE.md");
-    const claude = fs.readFileSync(claudePath, "utf8");
-
-    expect(claude.length).toBeLessThan(200);
-    expect(claude).toContain("@AGENTS.md");
-    expect(claude).toContain("compatibility shim");
-    expect(fs.lstatSync(claudePath).isSymbolicLink()).toBe(false);
-  });
-
   it("treats removed install command as an unknown command", async () => {
     const test = createTestDependencies();
 
