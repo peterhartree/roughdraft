@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { expect, type Page, test } from "@playwright/test";
+import { expect, type Locator, type Page, test } from "@playwright/test";
 import {
   appendInCodeEditor,
   createMarkdownProject,
@@ -11,8 +11,8 @@ import {
   writeProjectFile,
 } from "./helpers";
 
-function browserFile(page: Page, filePath: string) {
-  return page.locator(
+function browserFile(scope: Page | Locator, filePath: string) {
+  return scope.locator(
     `[data-testid="file-browser-file"][data-browser-path="${filePath}"]`,
   );
 }
@@ -21,6 +21,23 @@ function browserFolder(page: Page, folderPath: string) {
   return page.locator(
     `[data-browser-kind="directory"][data-browser-path="${folderPath}"]`,
   );
+}
+
+// Paths of the file and folder rows inside `scope`, in display order.
+function browserRowPaths(scope: Locator) {
+  return scope
+    .getByTestId(/^file-browser-(?:file|folder)$/)
+    .evaluateAll((elements) =>
+      elements.map(
+        (element) => (element as HTMLElement).dataset.browserPath ?? "",
+      ),
+    );
+}
+
+async function browserChildNames(scope: Locator, folderPath: string) {
+  return (await browserRowPaths(scope))
+    .filter((rowPath) => path.dirname(rowPath) === folderPath)
+    .map((rowPath) => path.basename(rowPath));
 }
 
 function openListItem(page: Page, filePath: string) {
@@ -163,23 +180,14 @@ test.describe("file browser", () => {
     await page.getByTestId("file-browser-pin-to-top").click();
 
     const pins = projectRoot.getByTestId("file-browser-project-pins");
-    const pinnedPaths = () =>
-      pins
-        .locator(":scope > li > [data-browser-path]")
-        .evaluateAll((elements) =>
-          elements.map(
-            (element) => (element as HTMLElement).dataset.browserPath,
-          ),
-        );
+    const pinnedPaths = () => browserRowPaths(pins);
     await expect.poll(pinnedPaths).toEqual([adrPath, guidePath]);
     await expect(pins).toContainText("docs");
 
     await page.reload();
     await expect.poll(pinnedPaths).toEqual([adrPath, guidePath]);
 
-    await pins
-      .locator(`[data-browser-path="${guidePath}"]`)
-      .click({ button: "right" });
+    await browserFile(pins, guidePath).click({ button: "right" });
     await page.getByTestId("file-browser-unpin-from-top").click();
     await expect.poll(pinnedPaths).toEqual([adrPath]);
   });
@@ -197,9 +205,7 @@ test.describe("file browser", () => {
     await page.getByTestId("file-browser-pin").click();
 
     const pinnedFiles = page.getByTestId("file-browser-pinned-files");
-    await expect(
-      pinnedFiles.locator(`[data-browser-path="${guidePath}"]`),
-    ).toBeVisible();
+    await expect(browserFile(pinnedFiles, guidePath)).toBeVisible();
     await expect(
       page
         .getByTestId("file-browser-pin-root")
@@ -207,15 +213,13 @@ test.describe("file browser", () => {
     ).toContainText("docs");
 
     await page.reload();
-    await pinnedFiles.locator(`[data-browser-path="${guidePath}"]`).click();
+    await browserFile(pinnedFiles, guidePath).click();
     await expect(openListItem(page, guidePath)).toHaveAttribute(
       "aria-current",
       "page",
     );
 
-    await pinnedFiles
-      .locator(`[data-browser-path="${guidePath}"]`)
-      .click({ button: "right" });
+    await browserFile(pinnedFiles, guidePath).click({ button: "right" });
     await page.getByTestId("file-browser-unpin").click();
     await expect(pinnedFiles).toHaveCount(0);
   });
@@ -262,24 +266,8 @@ test.describe("file browser", () => {
     await openMarkdownFile(page, readmePath);
     const projectRoot = page.getByTestId("file-browser-project-root");
     const docsPath = path.join(projectDir, "docs");
-    const rootChildren = () =>
-      projectRoot
-        .locator(":scope > ul > li > [data-browser-path]")
-        .evaluateAll((elements) =>
-          elements.map((element) =>
-            (element as HTMLElement).dataset.browserPath?.split("/").pop(),
-          ),
-        );
-    const docsChildren = () =>
-      projectRoot
-        .locator(
-          `[data-browser-path="${docsPath}"] + ul > li > [data-browser-path]`,
-        )
-        .evaluateAll((elements) =>
-          elements.map((element) =>
-            (element as HTMLElement).dataset.browserPath?.split("/").pop(),
-          ),
-        );
+    const rootChildren = () => browserChildNames(projectRoot, projectDir);
+    const docsChildren = () => browserChildNames(projectRoot, docsPath);
 
     await expect
       .poll(rootChildren)
