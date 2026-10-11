@@ -92,9 +92,6 @@ function readHeadings(scroller: HTMLElement): HeadingSnapshot {
   };
 }
 
-function prefersReducedMotion() {
-  return window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
-}
 
 /** Moves focus between the outline's buttons with the arrow keys. */
 function handleListKeyDown(event: ReactKeyboardEvent<HTMLElement>) {
@@ -535,7 +532,7 @@ export function DocumentOutline({
         OUTLINE_TOP_OFFSET;
       scroller.scrollTo({
         top: Math.max(0, top),
-        behavior: prefersReducedMotion() ? "auto" : "smooth",
+        behavior: "instant",
       });
       if (anchor) {
         const anchorRect = anchor.getBoundingClientRect();

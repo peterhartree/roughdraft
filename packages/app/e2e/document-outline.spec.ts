@@ -98,9 +98,10 @@ test.describe("document outline", () => {
       .getByTestId("document-outline-item")
       .filter({ hasText: "Delivery in detail" });
     await delivery.click();
-    await expect
-      .poll(() => headingOffsetFromTop(page, "Delivery in detail"))
-      .toBeLessThan(120);
+    // The jump is instant, so the heading is in place straight after the click.
+    expect(await headingOffsetFromTop(page, "Delivery in detail")).toBeLessThan(
+      120,
+    );
     await expect(delivery).toHaveAttribute("aria-current", "location");
   });
 
