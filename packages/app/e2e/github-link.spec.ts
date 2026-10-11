@@ -65,6 +65,21 @@ function createPushedRepo(projectDir: string) {
   return { repoDir, remoteDir, filePath, remoteFile };
 }
 
+/** Opens a file the way the CLI does, switching in place without a reload. */
+async function requestOpen(filePath: string) {
+  const apiPort = Number(process.env.API_PORT ?? 4317);
+  const response = await fetch(`http://127.0.0.1:${apiPort}/api/open-request`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      path: filePath,
+      modifiedAt: fs.statSync(filePath).mtimeMs,
+      activate: true,
+    }),
+  });
+  expect(response.ok).toBe(true);
+}
+
 const README_URL =
   "https://github.com/HartreeWorks/example/blob/main/context/strategy/README.md";
 
@@ -184,6 +199,30 @@ test.describe("GitHub link", () => {
     await expect(pushButton).toHaveAttribute(
       "aria-label",
       "Push 1 commit to GitHub",
+    );
+  });
+
+  test("shows only the active file's link after switching files in place", async ({
+    page,
+  }) => {
+    const repo = createPushedRepo(projectDir);
+    const newPath = writeProjectFile(repo.repoDir, "plans/new.md", "# New\n");
+
+    await openMarkdownFile(page, repo.filePath);
+    await expect(page.getByTestId("document-github-link")).toHaveAttribute(
+      "data-sync",
+      "synced",
+    );
+    await requestOpen(newPath);
+
+    await expect(page.getByTestId("document-github-link")).toHaveAttribute(
+      "data-sync",
+      "not-pushed",
+    );
+    await requestOpen(repo.filePath);
+    await expect(page.getByTestId("document-github-link")).toHaveAttribute(
+      "href",
+      README_URL,
     );
   });
 

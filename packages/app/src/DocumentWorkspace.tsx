@@ -966,7 +966,7 @@ export function DocumentWorkspace({
                 </Tooltip>
                 {documentGitHubStatus && onCommitAndPushDocument ? (
                   <GitHubFileButtons
-                    key={documentCopyPath ?? ""}
+                    key={`github:${documentCopyPath ?? ""}`}
                     status={documentGitHubStatus}
                     onCommitAndPush={onCommitAndPushDocument}
                   />
