@@ -13,6 +13,7 @@ import {
   ROUGHDRAFT_PUBLIC_HOST,
   resolveBindHosts,
 } from "./network.js";
+import { createGitHubLinkResolver } from "./github-link.js";
 import { markdownTreeFromQuery } from "./markdown-tree.js";
 import { OpenRequestBroker } from "./open-requests.js";
 import { RenameRejectedError, renameMarkdownFile } from "./rename.js";
@@ -417,6 +418,7 @@ export function createApp(options: CreateAppOptions = {}): CreateAppResult {
   const app = express();
   const openRequests = new OpenRequestBroker();
   const remoteSessions = new Map<string, RemoteSession>();
+  const resolveGitHubLink = createGitHubLinkResolver();
 
   function isAuthorizedRemoteDocumentRequest(req: Request): boolean {
     if (!remoteDocumentToken) return true;
@@ -715,6 +717,21 @@ export function createApp(options: CreateAppOptions = {}): CreateAppResult {
         error: `Couldn't rename ${path.basename(absolutePath)}: ${detail}`,
       });
     }
+  });
+
+  app.get("/api/github-link", async (req, res) => {
+    const requestedPath =
+      typeof req.query.path === "string" ? req.query.path : "";
+    if (!path.isAbsolute(requestedPath)) {
+      res.status(400).json({ error: "path must be absolute" });
+      return;
+    }
+    const absolutePath = path.resolve(requestedPath);
+    if (!absolutePath.toLowerCase().endsWith(".md")) {
+      res.status(404).json({ error: "Markdown file not found" });
+      return;
+    }
+    res.json({ url: await resolveGitHubLink(absolutePath) });
   });
 
   app.get("/api/review-index", (req, res) => {

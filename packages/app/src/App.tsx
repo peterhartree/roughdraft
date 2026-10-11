@@ -114,6 +114,7 @@ import {
 import { UpdateNotice } from "./UpdateNotice";
 import { fetchUpdateStatus, type UpdateStatus } from "./update-status";
 import { useFileBrowser } from "./useFileBrowser";
+import { useGitHubLink } from "./useGitHubLink";
 
 export type { DocumentDiskChangeState } from "./disk-change-state";
 
@@ -2804,6 +2805,10 @@ export function App() {
     enabled: backend?.info.kind === "local-files",
     activePath: activeDocumentAbsolutePath,
   });
+  const documentGitHubUrl = useGitHubLink({
+    enabled: backend?.info.kind === "local-files",
+    path: activeDocumentAbsolutePath,
+  });
 
   // A file chosen in the browser behaves like an explicit open request:
   // it joins the open list and becomes active unless the switch is blocked,
@@ -3271,6 +3276,7 @@ export function App() {
           documentPage={documentPage}
           activeDocumentPath={activeDocumentPath}
           documentCopyPath={documentAbsolutePath}
+          documentGitHubUrl={documentGitHubUrl}
           documentFilenameLabel={documentFilenameLabel}
           documentEditorViewMode={documentEditorViewMode}
           onDocumentEditorViewModeChange={handleDocumentEditorViewModeChange}
