@@ -41,7 +41,7 @@ function git(cwd: string, ...args: string[]) {
   });
 }
 
-test("opens View on GitHub in the default browser, not the app window", async () => {
+test("opens the GitHub link in the default browser, not the app window", async () => {
   test.skip(
     process.platform !== "darwin",
     "Roughdraft Desktop is packaged and handed off on macOS.",
@@ -69,8 +69,23 @@ test("opens View on GitHub in the default browser, not the app window", async ()
   const documentPath = path.join(repoDirectory, "docs", "plan.md");
   fs.mkdirSync(path.dirname(documentPath), { recursive: true });
   fs.writeFileSync(documentPath, "# Plan\n");
+  // A GitHub origin URL with a local push URL, so the file can be pushed
+  // without leaving this machine.
+  const remoteDirectory = path.join(temporaryDirectory, "remote.git");
+  git(
+    temporaryDirectory,
+    "init",
+    "--quiet",
+    "--bare",
+    "--initial-branch=main",
+    remoteDirectory,
+  );
   git(repoDirectory, "init", "--quiet", "--initial-branch=main");
   git(repoDirectory, "remote", "add", "origin", "git@github.com:o/r.git");
+  git(repoDirectory, "config", "remote.origin.pushurl", remoteDirectory);
+  git(repoDirectory, "add", "docs/plan.md");
+  git(repoDirectory, "commit", "--quiet", "--no-verify", "-m", "init");
+  git(repoDirectory, "push", "--quiet", "--set-upstream", "origin", "main");
 
   const electronApp = await electron.launch({
     args: [

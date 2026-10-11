@@ -13,7 +13,7 @@ import {
   ROUGHDRAFT_PUBLIC_HOST,
   resolveBindHosts,
 } from "./network.js";
-import { createGitHubLinkResolver } from "./github-link.js";
+import { createGitHubFiles, GitHubPushError } from "./github-link.js";
 import { markdownTreeFromQuery } from "./markdown-tree.js";
 import { OpenRequestBroker } from "./open-requests.js";
 import { RenameRejectedError, renameMarkdownFile } from "./rename.js";
@@ -418,7 +418,7 @@ export function createApp(options: CreateAppOptions = {}): CreateAppResult {
   const app = express();
   const openRequests = new OpenRequestBroker();
   const remoteSessions = new Map<string, RemoteSession>();
-  const resolveGitHubLink = createGitHubLinkResolver();
+  const gitHubFiles = createGitHubFiles();
 
   function isAuthorizedRemoteDocumentRequest(req: Request): boolean {
     if (!remoteDocumentToken) return true;
@@ -719,19 +719,42 @@ export function createApp(options: CreateAppOptions = {}): CreateAppResult {
     }
   });
 
-  app.get("/api/github-link", async (req, res) => {
-    const requestedPath =
-      typeof req.query.path === "string" ? req.query.path : "";
+  /** Resolves an absolute Markdown path, or answers the request with an error. */
+  const markdownPathFromInput = (input: unknown, res: Response) => {
+    const requestedPath = typeof input === "string" ? input : "";
     if (!path.isAbsolute(requestedPath)) {
       res.status(400).json({ error: "path must be absolute" });
-      return;
+      return null;
     }
     const absolutePath = path.resolve(requestedPath);
     if (!absolutePath.toLowerCase().endsWith(".md")) {
       res.status(404).json({ error: "Markdown file not found" });
-      return;
+      return null;
     }
-    res.json({ url: await resolveGitHubLink(absolutePath) });
+    return absolutePath;
+  };
+
+  app.get("/api/github-link", async (req, res) => {
+    const absolutePath = markdownPathFromInput(req.query.path, res);
+    if (!absolutePath) return;
+    const status = await gitHubFiles.status(absolutePath);
+    res.json(status ?? { url: null });
+  });
+
+  app.post("/api/github-link/commit-and-push", async (req, res) => {
+    const absolutePath = markdownPathFromInput(req.body?.path, res);
+    if (!absolutePath) return;
+    try {
+      res.json(await gitHubFiles.commitAndPush(absolutePath));
+    } catch (error) {
+      if (error instanceof GitHubPushError) {
+        res
+          .status(error.status)
+          .json({ error: error.message, status: error.fileStatus });
+        return;
+      }
+      throw error;
+    }
   });
 
   app.get("/api/review-index", (req, res) => {

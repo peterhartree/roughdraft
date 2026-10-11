@@ -113,8 +113,9 @@ import {
 } from "./storage";
 import { UpdateNotice } from "./UpdateNotice";
 import { fetchUpdateStatus, type UpdateStatus } from "./update-status";
+import { type CommitAndPushResult, commitAndPushFile } from "./github-file";
 import { useFileBrowser } from "./useFileBrowser";
-import { useGitHubLink } from "./useGitHubLink";
+import { useGitHubFile } from "./useGitHubFile";
 
 export type { DocumentDiskChangeState } from "./disk-change-state";
 
@@ -2805,10 +2806,41 @@ export function App() {
     enabled: backend?.info.kind === "local-files",
     activePath: activeDocumentAbsolutePath,
   });
-  const documentGitHubUrl = useGitHubLink({
-    enabled: backend?.info.kind === "local-files",
-    path: activeDocumentAbsolutePath,
-  });
+  const { status: documentGitHubStatus, replace: replaceGitHubStatus } =
+    useGitHubFile({
+      enabled: backend?.info.kind === "local-files",
+      path: activeDocumentAbsolutePath,
+      saved: documentSaveState === "saved",
+    });
+
+  const commitAndPushActiveDocument =
+    useCallback(async (): Promise<CommitAndPushResult> => {
+      const path = activeDocumentAbsolutePathRef.current;
+      if (!path) {
+        return { ok: false, error: "No file is open.", status: null };
+      }
+      const blocked = {
+        ok: false as const,
+        error: "Resolve the changes on disk before pushing.",
+        status: null,
+      };
+      if (diskChangeStateBlocksFileSwitch(documentDiskChangeStateRef.current)) {
+        return blocked;
+      }
+      const saveResult = await documentSaveControllerRef.current?.flushSave();
+      if (saveResult?.status === "error") {
+        return {
+          ok: false,
+          error: "The file couldn't be saved, so nothing was pushed.",
+          status: null,
+        };
+      }
+      if (saveResult?.status === "blocked") return blocked;
+
+      const result = await commitAndPushFile(path);
+      if (result.status) replaceGitHubStatus(path, result.status);
+      return result;
+    }, [replaceGitHubStatus]);
 
   // A file chosen in the browser behaves like an explicit open request:
   // it joins the open list and becomes active unless the switch is blocked,
@@ -3276,7 +3308,8 @@ export function App() {
           documentPage={documentPage}
           activeDocumentPath={activeDocumentPath}
           documentCopyPath={documentAbsolutePath}
-          documentGitHubUrl={documentGitHubUrl}
+          documentGitHubStatus={documentGitHubStatus}
+          onCommitAndPushDocument={commitAndPushActiveDocument}
           documentFilenameLabel={documentFilenameLabel}
           documentEditorViewMode={documentEditorViewMode}
           onDocumentEditorViewModeChange={handleDocumentEditorViewModeChange}

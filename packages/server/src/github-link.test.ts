@@ -6,7 +6,8 @@ import request from "supertest";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   buildGitHubBlobUrl,
-  createGitHubLinkResolver,
+  createGitHubFiles,
+  defaultGitRunner,
   type GitRunner,
   parseGitHubRemoteUrl,
 } from "./github-link";
@@ -90,272 +91,458 @@ describe("buildGitHubBlobUrl", () => {
   });
 });
 
-/** A fake git that answers from a table and records each call. */
-function scriptedGit(answers: Record<string, string | Error>) {
-  const calls: string[] = [];
-  const run: GitRunner = async (args) => {
-    const key = args.join(" ");
-    calls.push(key);
-    const answer = answers[key];
-    if (answer === undefined || answer instanceof Error) {
-      throw answer ?? new Error(`unexpected git ${key}`);
+// Repositories below use a GitHub-shaped origin URL, so they count as GitHub
+// repositories, with a push URL pointing at a local bare repository so that
+// pushing never leaves this machine.
+let tempDir: string;
+
+beforeEach(() => {
+  tempDir = fs.realpathSync(
+    fs.mkdtempSync(path.join(os.tmpdir(), "roughdraft-github-link-")),
+  );
+});
+
+afterEach(() => {
+  fs.rmSync(tempDir, { recursive: true, force: true });
+});
+
+function git(cwd: string, ...args: string[]) {
+  return execFileSync("git", args, {
+    cwd,
+    encoding: "utf8",
+    env: { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null" },
+  }).trim();
+}
+
+interface TestRepo {
+  repoDir: string;
+  remoteDir: string;
+  write: (relativePath: string, content?: string) => string;
+  commitAll: (message?: string) => void;
+  /** Files on origin's main branch, as the bare repository holds them. */
+  remoteFile: (relativePath: string, branch?: string) => string | null;
+}
+
+function createRepo({
+  origin = "git@github.com:HartreeWorks/example-notes.git",
+}: {
+  origin?: string | null;
+} = {}): TestRepo {
+  const repoDir = path.join(tempDir, "repo");
+  const remoteDir = path.join(tempDir, "remote.git");
+  fs.mkdirSync(repoDir);
+  git(tempDir, "init", "--quiet", "--bare", "--initial-branch=main", remoteDir);
+  git(repoDir, "init", "--quiet", "--initial-branch=main");
+  // Repository-local settings outrank the developer's global git config, so
+  // the server's own git runs commit predictably here too.
+  git(repoDir, "config", "user.name", "Test");
+  git(repoDir, "config", "user.email", "test@example.com");
+  git(repoDir, "config", "commit.gpgsign", "false");
+  const hooksDir = path.join(tempDir, "no-hooks");
+  fs.mkdirSync(hooksDir);
+  git(repoDir, "config", "core.hooksPath", hooksDir);
+  if (origin) {
+    git(repoDir, "remote", "add", "origin", origin);
+    git(repoDir, "config", "remote.origin.pushurl", remoteDir);
+  }
+
+  const write = (relativePath: string, content = "# Note\n") => {
+    const filePath = path.join(repoDir, relativePath);
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    fs.writeFileSync(filePath, content);
+    return filePath;
+  };
+  const commitAll = (message = "change") => {
+    git(repoDir, "add", "--all");
+    git(repoDir, "commit", "--quiet", "-m", message);
+  };
+  const remoteFile = (relativePath: string, branch = "main") => {
+    try {
+      return git(remoteDir, "show", `${branch}:${relativePath}`);
+    } catch {
+      return null;
     }
-    return answer;
+  };
+  return { repoDir, remoteDir, write, commitAll, remoteFile };
+}
+
+/** A repository whose README is committed and pushed to origin's main. */
+function createPushedRepo() {
+  const repo = createRepo();
+  const filePath = repo.write("context/strategy notes/README.md", "# One\n");
+  repo.commitAll("init");
+  git(repo.repoDir, "push", "--quiet", "--set-upstream", "origin", "main");
+  return { ...repo, filePath };
+}
+
+function countingGit() {
+  const calls: string[] = [];
+  const run: GitRunner = (args, cwd, options) => {
+    calls.push(args.join(" "));
+    return defaultGitRunner(args, cwd, options);
   };
   return { run, calls };
 }
 
-describe("createGitHubLinkResolver", () => {
-  let tempDir: string;
-  let repoDir: string;
-  let filePath: string;
+const README_URL =
+  "https://github.com/HartreeWorks/example-notes/blob/main/context/strategy%20notes/README.md";
 
-  beforeEach(() => {
-    tempDir = fs.realpathSync(
-      fs.mkdtempSync(path.join(os.tmpdir(), "roughdraft-github-link-")),
+describe("GitHub file status", () => {
+  it("links a pushed file to its blob on the checked-out branch", async () => {
+    const { filePath } = createPushedRepo();
+
+    expect(await createGitHubFiles().status(filePath)).toEqual({
+      url: README_URL,
+      sync: "synced",
+      reason: null,
+      branch: "main",
+      ahead: 0,
+      uncommitted: false,
+    });
+  });
+
+  it("reports uncommitted edits as an older version on GitHub", async () => {
+    const { filePath } = createPushedRepo();
+    fs.appendFileSync(filePath, "More\n");
+
+    expect(await createGitHubFiles().status(filePath)).toMatchObject({
+      sync: "changed",
+      reason: "uncommitted",
+      uncommitted: true,
+    });
+  });
+
+  it("reports a committed but unpushed edit as an older version on GitHub", async () => {
+    const repo = createPushedRepo();
+    fs.appendFileSync(repo.filePath, "More\n");
+    repo.commitAll();
+
+    expect(await createGitHubFiles().status(repo.filePath)).toMatchObject({
+      sync: "changed",
+      reason: "unpushed",
+      ahead: 1,
+      uncommitted: false,
+    });
+  });
+
+  it("stays synced when unpushed commits leave this file alone", async () => {
+    const repo = createPushedRepo();
+    repo.write("other.md");
+    repo.commitAll();
+
+    expect(await createGitHubFiles().status(repo.filePath)).toMatchObject({
+      sync: "synced",
+      ahead: 1,
+    });
+  });
+
+  it("reports a new file as not on GitHub yet", async () => {
+    const repo = createPushedRepo();
+    const newPath = repo.write("plans/new.md");
+
+    expect(await createGitHubFiles().status(newPath)).toMatchObject({
+      sync: "not-pushed",
+      reason: "untracked",
+      uncommitted: true,
+    });
+
+    repo.commitAll();
+    expect(await createGitHubFiles().status(newPath)).toMatchObject({
+      sync: "not-pushed",
+      reason: "unpushed",
+      uncommitted: false,
+    });
+  });
+
+  it("reports a branch that origin lacks as not on GitHub yet", async () => {
+    const repo = createPushedRepo();
+    git(repo.repoDir, "switch", "--quiet", "-c", "review/draft");
+
+    expect(await createGitHubFiles().status(repo.filePath)).toMatchObject({
+      url: README_URL.replace("/blob/main/", "/blob/review/draft/"),
+      sync: "not-pushed",
+      reason: "branch-not-pushed",
+      branch: "review/draft",
+    });
+  });
+
+  it("links under the upstream's name when the local branch is named differently", async () => {
+    const repo = createPushedRepo();
+    git(repo.repoDir, "switch", "--quiet", "-c", "local-name");
+    git(repo.repoDir, "push", "--quiet", "origin", "local-name:remote-name");
+    git(
+      repo.repoDir,
+      "branch",
+      "--quiet",
+      "--set-upstream-to=origin/remote-name",
     );
-    repoDir = path.join(tempDir, "repo");
-    filePath = path.join(repoDir, "docs", "plan.md");
-    fs.mkdirSync(path.dirname(filePath), { recursive: true });
-    fs.writeFileSync(filePath, "# Plan\n");
+
+    expect(await createGitHubFiles().status(repo.filePath)).toMatchObject({
+      url: README_URL.replace("/blob/main/", "/blob/remote-name/"),
+      sync: "synced",
+      branch: "local-name",
+    });
   });
 
-  afterEach(() => {
-    fs.rmSync(tempDir, { recursive: true, force: true });
+  it("reports a gitignored file as never reaching GitHub", async () => {
+    const repo = createPushedRepo();
+    repo.write(".gitignore", ".context/\n");
+    repo.commitAll();
+    const planPath = repo.write(".context/plan.md");
+
+    expect(await createGitHubFiles().status(planPath)).toMatchObject({
+      sync: "ignored",
+      reason: null,
+    });
   });
 
-  const branchAnswers = () => ({
-    "rev-parse --show-toplevel": repoDir,
-    "remote get-url origin": "git@github.com:o/r.git",
-    "symbolic-ref --quiet --short HEAD": "main",
-    "rev-parse --abbrev-ref --symbolic-full-name @{upstream}": new Error(
-      "no upstream",
-    ),
+  it("falls back to the commit when HEAD is detached", async () => {
+    const repo = createPushedRepo();
+    const sha = git(repo.repoDir, "rev-parse", "HEAD");
+    git(repo.repoDir, "switch", "--quiet", "--detach");
+
+    expect(await createGitHubFiles().status(repo.filePath)).toMatchObject({
+      url: README_URL.replace("/blob/main/", `/blob/${sha}/`),
+      sync: "unknown",
+      branch: null,
+    });
   });
 
-  it("caches the repository lookup so switching files spawns no git", async () => {
-    const otherPath = path.join(repoDir, "docs", "other.md");
-    fs.writeFileSync(otherPath, "# Other\n");
-    const git = scriptedGit(branchAnswers());
-    const resolve = createGitHubLinkResolver({ runGit: git.run });
+  it("resolves a file reached through a symlinked folder", async () => {
+    const repo = createPushedRepo();
+    const linkDir = path.join(tempDir, "linked-repo");
+    fs.symlinkSync(repo.repoDir, linkDir);
 
-    expect(await resolve(filePath)).toBe(
-      "https://github.com/o/r/blob/main/docs/plan.md",
+    const status = await createGitHubFiles().status(
+      path.join(linkDir, path.relative(repo.repoDir, repo.filePath)),
     );
-    const callsAfterFirst = git.calls.length;
-    expect(await resolve(otherPath)).toBe(
-      "https://github.com/o/r/blob/main/docs/other.md",
-    );
-    expect(git.calls.length).toBe(callsAfterFirst);
+    expect(status?.url).toBe(README_URL);
   });
 
-  it("reuses the repository lookup for a file in another folder", async () => {
-    const otherPath = path.join(repoDir, "notes", "other.md");
-    fs.mkdirSync(path.dirname(otherPath));
-    fs.writeFileSync(otherPath, "# Other\n");
-    const git = scriptedGit(branchAnswers());
-    const resolve = createGitHubLinkResolver({ runGit: git.run });
+  it("has no GitHub home without a GitHub origin, outside git, or for missing files", async () => {
+    const gitlab = createRepo({ origin: "git@gitlab.com:o/r.git" });
+    const gitlabFile = gitlab.write("a.md");
+    gitlab.commitAll();
+    const files = createGitHubFiles();
 
-    await resolve(filePath);
-    const callsAfterFirst = git.calls.length;
-    expect(await resolve(otherPath)).toBe(
-      "https://github.com/o/r/blob/main/notes/other.md",
-    );
-    expect(git.calls.slice(callsAfterFirst)).toEqual([
-      "rev-parse --show-toplevel",
-    ]);
+    expect(await files.status(gitlabFile)).toBeNull();
+    const loosePath = path.join(tempDir, "loose.md");
+    fs.writeFileSync(loosePath, "# Loose\n");
+    expect(await files.status(loosePath)).toBeNull();
+    expect(await files.status(path.join(tempDir, "missing.md"))).toBeNull();
   });
 
-  it("looks again once the cache entry expires", async () => {
+  it("has no GitHub home without an origin remote", async () => {
+    const repo = createRepo({ origin: null });
+    const filePath = repo.write("a.md");
+    repo.commitAll();
+
+    expect(await createGitHubFiles().status(filePath)).toBeNull();
+  });
+
+  it("reuses the repository root and remote but rereads the branch", async () => {
+    const repo = createPushedRepo();
+    const otherPath = repo.write("context/strategy notes/other.md");
+    const gitCalls = countingGit();
+    const files = createGitHubFiles({ runGit: gitCalls.run });
+
+    await files.status(repo.filePath);
+    gitCalls.calls.length = 0;
+    await files.status(otherPath);
+
+    expect(gitCalls.calls).not.toContainEqual(
+      expect.stringMatching(/^rev-parse --show-toplevel|^remote get-url/),
+    );
+    expect(gitCalls.calls).toContainEqual(expect.stringContaining("status"));
+  });
+
+  it("looks the repository up again once the cache entry expires", async () => {
+    const repo = createPushedRepo();
     let now = 0;
-    const git = scriptedGit(branchAnswers());
-    const resolve = createGitHubLinkResolver({
-      runGit: git.run,
+    const gitCalls = countingGit();
+    const files = createGitHubFiles({
+      runGit: gitCalls.run,
       now: () => now,
       ttlMs: 1000,
     });
 
-    await resolve(filePath);
-    const callsAfterFirst = git.calls.length;
+    await files.status(repo.filePath);
     now = 1001;
-    await resolve(filePath);
-    expect(git.calls.length).toBe(callsAfterFirst * 2);
-  });
+    gitCalls.calls.length = 0;
+    await files.status(repo.filePath);
 
-  it("uses the upstream branch name when it lives on origin", async () => {
-    const git = scriptedGit({
-      ...branchAnswers(),
-      "symbolic-ref --quiet --short HEAD": "local-name",
-      "rev-parse --abbrev-ref --symbolic-full-name @{upstream}":
-        "origin/feature/remote-name",
-    });
-    const resolve = createGitHubLinkResolver({ runGit: git.run });
-
-    expect(await resolve(filePath)).toBe(
-      "https://github.com/o/r/blob/feature/remote-name/docs/plan.md",
-    );
-  });
-
-  it("falls back to origin's default branch when HEAD is detached", async () => {
-    const git = scriptedGit({
-      ...branchAnswers(),
-      "symbolic-ref --quiet --short HEAD": new Error("detached"),
-      "symbolic-ref --quiet --short refs/remotes/origin/HEAD": "origin/trunk",
-    });
-    const resolve = createGitHubLinkResolver({ runGit: git.run });
-
-    expect(await resolve(filePath)).toBe(
-      "https://github.com/o/r/blob/trunk/docs/plan.md",
-    );
-  });
-
-  it("falls back to the commit when HEAD is detached and origin has no default", async () => {
-    const sha = "0123456789abcdef0123456789abcdef01234567";
-    const git = scriptedGit({
-      ...branchAnswers(),
-      "symbolic-ref --quiet --short HEAD": new Error("detached"),
-      "symbolic-ref --quiet --short refs/remotes/origin/HEAD": new Error(
-        "missing",
-      ),
-      "rev-parse --verify --quiet HEAD": sha,
-    });
-    const resolve = createGitHubLinkResolver({ runGit: git.run });
-
-    expect(await resolve(filePath)).toBe(
-      `https://github.com/o/r/blob/${sha}/docs/plan.md`,
-    );
-  });
-
-  it("returns null without asking for a branch when origin is not GitHub", async () => {
-    const git = scriptedGit({
-      ...branchAnswers(),
-      "remote get-url origin": "git@gitlab.com:o/r.git",
-    });
-    const resolve = createGitHubLinkResolver({ runGit: git.run });
-
-    expect(await resolve(filePath)).toBeNull();
-    expect(git.calls).not.toContain("symbolic-ref --quiet --short HEAD");
-  });
-
-  it("returns null when git fails or the file is missing", async () => {
-    const git = scriptedGit({});
-    const resolve = createGitHubLinkResolver({ runGit: git.run });
-
-    expect(await resolve(filePath)).toBeNull();
-    expect(await resolve(path.join(repoDir, "missing.md"))).toBeNull();
+    expect(gitCalls.calls).toContain("remote get-url origin");
   });
 });
 
-describe("GET /api/github-link with a real git repository", () => {
-  let tempDir: string;
+describe("commit and push", () => {
+  it("commits only this file's changes and pushes them to origin", async () => {
+    const repo = createPushedRepo();
+    fs.writeFileSync(repo.filePath, "# Two\n");
+    const stagedPath = repo.write("staged.md", "# Staged elsewhere\n");
+    git(repo.repoDir, "add", "staged.md");
 
-  beforeEach(() => {
-    tempDir = fs.realpathSync(
-      fs.mkdtempSync(path.join(os.tmpdir(), "roughdraft-github-link-api-")),
+    const status = await createGitHubFiles().commitAndPush(repo.filePath);
+
+    expect(status).toMatchObject({ sync: "synced", ahead: 0 });
+    expect(repo.remoteFile("context/strategy notes/README.md")).toBe("# Two");
+    expect(git(repo.repoDir, "log", "-1", "--format=%s")).toBe(
+      "docs: update context/strategy notes/README.md",
+    );
+    // Other staged work stays staged and uncommitted.
+    expect(repo.remoteFile("staged.md")).toBeNull();
+    expect(git(repo.repoDir, "diff", "--cached", "--name-only")).toBe(
+      path.basename(stagedPath),
     );
   });
 
-  afterEach(() => {
-    fs.rmSync(tempDir, { recursive: true, force: true });
+  it("adds and pushes a file git does not track yet", async () => {
+    const repo = createPushedRepo();
+    const newPath = repo.write("plans/new plan.md", "# New\n");
+
+    const status = await createGitHubFiles().commitAndPush(newPath);
+
+    expect(status).toMatchObject({ sync: "synced" });
+    expect(repo.remoteFile("plans/new plan.md")).toBe("# New");
   });
 
-  function git(cwd: string, ...args: string[]) {
-    return execFileSync("git", args, {
-      cwd,
-      encoding: "utf8",
-      env: {
-        ...process.env,
-        GIT_CONFIG_GLOBAL: "/dev/null",
-        GIT_CONFIG_NOSYSTEM: "1",
-        GIT_AUTHOR_NAME: "Test",
-        GIT_AUTHOR_EMAIL: "test@example.com",
-        GIT_COMMITTER_NAME: "Test",
-        GIT_COMMITTER_EMAIL: "test@example.com",
-      },
-    }).trim();
-  }
+  it("pushes a new branch and sets its upstream", async () => {
+    const repo = createPushedRepo();
+    git(repo.repoDir, "switch", "--quiet", "-c", "review/draft");
+    fs.writeFileSync(repo.filePath, "# Draft\n");
 
-  function createRepo(remote?: string) {
-    const repoDir = path.join(tempDir, "repo");
-    const filePath = path.join(
-      repoDir,
-      "context",
-      "strategy notes",
-      "README.md",
+    const status = await createGitHubFiles().commitAndPush(repo.filePath);
+
+    expect(status).toMatchObject({ sync: "synced", branch: "review/draft" });
+    expect(
+      repo.remoteFile("context/strategy notes/README.md", "review/draft"),
+    ).toBe("# Draft");
+    expect(git(repo.repoDir, "rev-parse", "--abbrev-ref", "@{upstream}")).toBe(
+      "origin/review/draft",
     );
-    fs.mkdirSync(path.dirname(filePath), { recursive: true });
-    fs.writeFileSync(filePath, "# Strategy\n");
-    git(repoDir, "init", "--quiet", "--initial-branch=main");
-    if (remote) git(repoDir, "remote", "add", "origin", remote);
-    git(repoDir, "add", ".");
-    git(repoDir, "commit", "--quiet", "-m", "init");
-    return { repoDir, filePath };
-  }
+  });
 
-  function lookup(filePath: string) {
-    const { app } = createApp({ homeDir: tempDir, staticDirPath: tempDir });
-    return request(app).get("/api/github-link").query({ path: filePath });
-  }
+  it("pushes an earlier commit without making a new one", async () => {
+    const repo = createPushedRepo();
+    fs.writeFileSync(repo.filePath, "# Committed\n");
+    repo.commitAll("by hand");
 
-  it("links a committed file to its blob on the checked-out branch", async () => {
-    const { filePath } = createRepo(
-      "https://github.com/HartreeWorks/example-notes.git",
+    await createGitHubFiles().commitAndPush(repo.filePath);
+
+    expect(repo.remoteFile("context/strategy notes/README.md")).toBe(
+      "# Committed",
     );
+    expect(git(repo.repoDir, "log", "-1", "--format=%s")).toBe("by hand");
+  });
 
-    const response = await lookup(filePath);
+  it("keeps the commit and explains when GitHub has newer commits", async () => {
+    const repo = createPushedRepo();
+    const otherClone = path.join(tempDir, "other-clone");
+    git(tempDir, "clone", "--quiet", repo.remoteDir, otherClone);
+    git(otherClone, "config", "user.name", "Other");
+    git(otherClone, "config", "user.email", "other@example.com");
+    fs.writeFileSync(path.join(otherClone, "elsewhere.md"), "# Elsewhere\n");
+    git(otherClone, "add", "elsewhere.md");
+    git(otherClone, "commit", "--quiet", "-m", "elsewhere");
+    git(otherClone, "push", "--quiet");
+    fs.writeFileSync(repo.filePath, "# Local\n");
 
-    expect(response.status).toBe(200);
-    expect(response.body).toEqual({
-      url: "https://github.com/HartreeWorks/example-notes/blob/main/context/strategy%20notes/README.md",
+    const push = createGitHubFiles().commitAndPush(repo.filePath);
+
+    await expect(push).rejects.toMatchObject({
+      status: 502,
+      message:
+        "Committed, but the push failed. GitHub has commits that this copy doesn't. Pull them, then push again.",
+      fileStatus: { sync: "changed", reason: "unpushed", ahead: 1 },
     });
   });
 
-  it("follows the current branch and a detached HEAD", async () => {
-    const { repoDir, filePath } = createRepo("git@github.com:o/r.git");
-    git(repoDir, "switch", "--quiet", "-c", "review/draft");
-    expect((await lookup(filePath)).body.url).toBe(
-      "https://github.com/o/r/blob/review/draft/context/strategy%20notes/README.md",
-    );
+  it("refuses gitignored files and detached HEADs", async () => {
+    const repo = createPushedRepo();
+    repo.write(".gitignore", ".context/\n");
+    repo.commitAll();
+    git(repo.repoDir, "push", "--quiet");
+    const planPath = repo.write(".context/plan.md");
+    const files = createGitHubFiles();
 
-    const sha = git(repoDir, "rev-parse", "HEAD");
-    git(repoDir, "switch", "--quiet", "--detach");
-    expect((await lookup(filePath)).body.url).toBe(
-      `https://github.com/o/r/blob/${sha}/context/strategy%20notes/README.md`,
+    await expect(files.commitAndPush(planPath)).rejects.toMatchObject({
+      status: 409,
+      message: "Git ignores this file, so it can't be pushed.",
+    });
+
+    git(repo.repoDir, "switch", "--quiet", "--detach");
+    fs.appendFileSync(repo.filePath, "More\n");
+    await expect(files.commitAndPush(repo.filePath)).rejects.toMatchObject({
+      status: 409,
+      message: "Check out a branch before pushing.",
+    });
+  });
+});
+
+describe("GitHub link endpoints", () => {
+  function app() {
+    return createApp({ homeDir: tempDir, staticDirPath: tempDir }).app;
+  }
+
+  it("returns the link and sync state, or a null link", async () => {
+    const { filePath } = createPushedRepo();
+    const loosePath = path.join(tempDir, "loose.md");
+    fs.writeFileSync(loosePath, "# Loose\n");
+
+    const linked = await request(app())
+      .get("/api/github-link")
+      .query({ path: filePath });
+    expect(linked.status).toBe(200);
+    expect(linked.body).toMatchObject({ url: README_URL, sync: "synced" });
+
+    const loose = await request(app())
+      .get("/api/github-link")
+      .query({ path: loosePath });
+    expect(loose.body).toEqual({ url: null });
+  });
+
+  it("commits and pushes through the API", async () => {
+    const repo = createPushedRepo();
+    fs.writeFileSync(repo.filePath, "# Via API\n");
+
+    const response = await request(app())
+      .post("/api/github-link/commit-and-push")
+      .send({ path: repo.filePath });
+
+    expect(response.status).toBe(200);
+    expect(response.body).toMatchObject({ url: README_URL, sync: "synced" });
+    expect(repo.remoteFile("context/strategy notes/README.md")).toBe(
+      "# Via API",
     );
   });
 
-  it("resolves a file reached through a symlinked folder to its repository path", async () => {
-    const { repoDir, filePath } = createRepo("git@github.com:o/r.git");
-    const linkDir = path.join(tempDir, "linked-repo");
-    fs.symlinkSync(repoDir, linkDir);
+  it("explains a refused push with the file's current status", async () => {
+    const repo = createPushedRepo();
+    git(repo.repoDir, "switch", "--quiet", "--detach");
+    fs.appendFileSync(repo.filePath, "More\n");
 
-    const response = await lookup(
-      path.join(linkDir, path.relative(repoDir, filePath)),
-    );
+    const response = await request(app())
+      .post("/api/github-link/commit-and-push")
+      .send({ path: repo.filePath });
 
-    expect(response.body.url).toBe(
-      "https://github.com/o/r/blob/main/context/strategy%20notes/README.md",
-    );
-  });
-
-  it("returns no link without an origin remote", async () => {
-    const { filePath } = createRepo();
-    expect((await lookup(filePath)).body).toEqual({ url: null });
-  });
-
-  it("returns no link for a non-GitHub origin", async () => {
-    const { filePath } = createRepo("git@gitlab.com:o/r.git");
-    expect((await lookup(filePath)).body).toEqual({ url: null });
-  });
-
-  it("returns no link outside a git repository", async () => {
-    const filePath = path.join(tempDir, "loose.md");
-    fs.writeFileSync(filePath, "# Loose\n");
-    expect((await lookup(filePath)).body).toEqual({ url: null });
+    expect(response.status).toBe(409);
+    expect(response.body).toMatchObject({
+      error: "Check out a branch before pushing.",
+      status: { sync: "unknown" },
+    });
   });
 
   it("rejects relative and non-Markdown paths", async () => {
-    expect((await lookup("notes/plan.md")).status).toBe(400);
-    expect((await lookup(path.join(tempDir, "image.png"))).status).toBe(404);
+    expect(
+      (await request(app()).get("/api/github-link").query({ path: "a.md" }))
+        .status,
+    ).toBe(400);
+    expect(
+      (
+        await request(app())
+          .post("/api/github-link/commit-and-push")
+          .send({ path: path.join(tempDir, "image.png") })
+      ).status,
+    ).toBe(404);
   });
 });

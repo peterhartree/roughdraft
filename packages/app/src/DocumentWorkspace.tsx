@@ -5,7 +5,6 @@ import {
   ChevronUp,
   CodeXml,
   Copy,
-  ExternalLink,
   Eye,
   Loader2,
   MessageSquarePlus,
@@ -55,6 +54,8 @@ import {
   getRestorableDocumentViewStateForMode,
 } from "./document-view-state";
 import { cn } from "./lib/utils";
+import { GitHubFileButtons } from "./GitHubFileButtons";
+import type { CommitAndPushResult, GitHubFileStatus } from "./github-file";
 import { MoveToTrashButton } from "./MoveToTrashButton";
 import {
   type DocumentInteractionMode,
@@ -305,8 +306,9 @@ interface DocumentWorkspaceProps {
   documentPage: Page | null;
   activeDocumentPath: string | null;
   documentCopyPath: string | null;
-  /** The file on GitHub, when its repository's origin is there. */
-  documentGitHubUrl?: string | null;
+  /** The file's GitHub link and sync state, when its origin is on GitHub. */
+  documentGitHubStatus?: GitHubFileStatus | null;
+  onCommitAndPushDocument?: () => Promise<CommitAndPushResult>;
   documentFilenameLabel: string;
   documentEditorViewMode: DocumentEditorViewMode;
   onDocumentEditorViewModeChange: (mode: DocumentEditorViewMode) => void;
@@ -334,7 +336,8 @@ export function DocumentWorkspace({
   documentPage,
   activeDocumentPath,
   documentCopyPath,
-  documentGitHubUrl = null,
+  documentGitHubStatus = null,
+  onCommitAndPushDocument,
   documentFilenameLabel,
   documentEditorViewMode,
   onDocumentEditorViewModeChange,
@@ -961,27 +964,12 @@ export function DocumentWorkspace({
                       : "Copy path (⌥⌘C)"}
                   </TooltipContent>
                 </Tooltip>
-                {documentGitHubUrl ? (
-                  <Tooltip>
-                    <TooltipTrigger
-                      render={
-                        <a
-                          href={documentGitHubUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          data-testid="document-github-link"
-                          className="inline-flex size-6 shrink-0 items-center justify-center rounded-full text-stone-400 outline-none transition hover:bg-[#EEE9E1] hover:text-stone-600 focus-visible:ring-2 focus-visible:ring-stone-300/70 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-200 dark:focus-visible:ring-slate-600/70"
-                          aria-label="View on GitHub"
-                        >
-                          <ExternalLink
-                            className="size-3.5"
-                            aria-hidden="true"
-                          />
-                        </a>
-                      }
-                    />
-                    <TooltipContent>View on GitHub</TooltipContent>
-                  </Tooltip>
+                {documentGitHubStatus && onCommitAndPushDocument ? (
+                  <GitHubFileButtons
+                    key={documentCopyPath ?? ""}
+                    status={documentGitHubStatus}
+                    onCommitAndPush={onCommitAndPushDocument}
+                  />
                 ) : null}
                 {onMoveDocumentToTrash ? (
                   <MoveToTrashButton

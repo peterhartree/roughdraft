@@ -16,6 +16,8 @@ The CLI and app should optimize for quick open, review, edit, save, and close fl
 
 This does not make Roughdraft a vault manager, note database, git client, desktop shell, or multi-document workspace.
 
+ADR 0009 makes one narrow exception to "not a git client": linking a file to GitHub and, on request, committing and pushing that file.
+
 ## Clarification (2026-04-30): Remote Document Mode
 
 The "single markdown file" unit of work is preserved when the file lives on a different machine than the Roughdraft server. Remote document mode (see `docs/plans/2026-04-30-001-feat-remote-document-mode-plan.md`) lets a CLI on a remote host register one markdown file with a hosted Roughdraft over HTTP/SSE; the server holds the bytes in memory for the duration of the session and never browses or indexes a remote filesystem. The user-facing invariant is the same: open one file, edit it, save it, close it.
