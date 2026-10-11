@@ -1,5 +1,6 @@
-import { Check, CloudUpload, Link, Loader2, Unlink } from "lucide-react";
+import { Check, CloudUpload, Loader2 } from "lucide-react";
 import { useEffect, useState } from "react";
+import { GitHubMark } from "./components/GitHubMark";
 import {
   Popover,
   PopoverContent,
@@ -26,7 +27,7 @@ const ICON_BUTTON_CLASS =
 const PUSHED_CONFIRMATION_MS = 2000;
 
 /**
- * The GitHub link, which shows a broken link when GitHub lacks the file, and,
+ * The GitHub link, crossed out when GitHub lacks the file, and,
  * when GitHub lacks the latest version, a button that commits the file and
  * pushes it.
  */
@@ -53,7 +54,7 @@ export function GitHubFileButtons({
                 className={ICON_BUTTON_CLASS}
                 aria-label={label}
               >
-                <Link className="size-3.5" aria-hidden="true" />
+                <GitHubMark className="size-3.5" />
               </a>
             ) : (
               <button
@@ -63,11 +64,11 @@ export function GitHubFileButtons({
                 aria-disabled="true"
                 className={cn(
                   ICON_BUTTON_CLASS,
-                  "cursor-default text-stone-300 hover:bg-transparent hover:text-stone-400 dark:text-slate-600 dark:hover:bg-transparent dark:hover:text-slate-500",
+                  "cursor-default hover:bg-transparent hover:text-stone-400 dark:hover:bg-transparent dark:hover:text-slate-400",
                 )}
                 aria-label={label}
               >
-                <Unlink className="size-3.5" aria-hidden="true" />
+                <GitHubMark className="size-3.5" crossed />
               </button>
             )
           }
