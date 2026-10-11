@@ -53,6 +53,7 @@ import {
   type DocumentViewRestoreRequest,
   getRestorableDocumentViewStateForMode,
 } from "./document-view-state";
+import { DocumentOutline } from "./DocumentOutline";
 import { cn } from "./lib/utils";
 import { GitHubFileButtons } from "./GitHubFileButtons";
 import type { CommitAndPushResult, GitHubFileStatus } from "./github-file";
@@ -1112,6 +1113,13 @@ export function DocumentWorkspace({
                 : null}
             </div>
           </div>
+        ) : null}
+        {documentPage && backend ? (
+          <DocumentOutline
+            key={documentCopyPath ?? activeDocumentPath ?? documentPage.id}
+            scrollContainerRef={workspaceScrollRef}
+            enabled={documentEditorViewMode === "rich-text"}
+          />
         ) : null}
         {documentPage ? (
           backend ? (

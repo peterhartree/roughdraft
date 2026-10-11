@@ -888,3 +888,33 @@
     transition: none;
   }
 }
+
+/* Marks the heading a document-outline jump landed on, then fades. */
+@keyframes document-outline-flash-fade {
+  0%,
+  35% {
+    opacity: 1;
+  }
+
+  100% {
+    opacity: 0;
+  }
+}
+
+.document-outline-flash {
+  background-color: rgb(254 240 138 / 0.6);
+  mix-blend-mode: multiply;
+  animation: document-outline-flash-fade 1.2s ease-out forwards;
+}
+
+.dark .document-outline-flash {
+  background-color: rgb(250 204 21 / 0.18);
+  mix-blend-mode: screen;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .document-outline-flash {
+    animation-duration: 0.01s;
+    animation-delay: 0.8s;
+  }
+}
