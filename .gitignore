@@ -20,6 +20,8 @@ sandbox
 .compound-engineering/*.local.yaml
 packages/desktop/out/
 
-# Impeccable design hook cache (config.json is shared and tracked)
-.impeccable/hook.cache.json
-.impeccable/config.local.json
+# Impeccable design hook state, written beside whichever package it runs in
+# (config.json is shared and tracked)
+**/.impeccable/hook.cache.json
+**/.impeccable/hook.pending.json
+**/.impeccable/config.local.json

@@ -4,7 +4,7 @@
     "includes": [
       "**",
       "!.context",
-      "!.impeccable",
+      "!**/.impeccable",
       "!.roughdraft-state",
       "!**/coverage",
       "!**/out",
