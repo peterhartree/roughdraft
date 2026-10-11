@@ -6,6 +6,7 @@ import { EditorContent, useEditor, useEditorState } from "@tiptap/react";
 import {
   memo,
   useCallback,
+  useContext,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -40,6 +41,12 @@ import type {
 } from "./document-view-state";
 import { getDocumentEditorSelectionForMode } from "./document-view-state";
 import { EditorContextMenu } from "./EditorContextMenu";
+import {
+  GITHUB_CHANGE_MARK_WINDOW_MS,
+  GitHubChangeMarkRequestContext,
+  GitHubChangeMarks,
+  markGitHubChanges,
+} from "./github-change-marks";
 import {
   clearRichTextDocumentFind,
   commentHighlightPluginKey,
@@ -900,9 +907,18 @@ const RichTextEditorSurface = memo(function RichTextEditorSurface({
     };
   }, []);
 
+  // Read through a ref so a new request alone never re-applies the content.
+  const gitHubChangeMarkRequest = useContext(GitHubChangeMarkRequestContext);
+  const gitHubChangeMarkRequestRef = useRef(gitHubChangeMarkRequest);
+  gitHubChangeMarkRequestRef.current = gitHubChangeMarkRequest;
+  const consumedChangeMarkRequestRef = useRef<number | null>(null);
+
   const editor = useEditor(
     {
-      extensions: createEditorExtensions("Start writing..."),
+      extensions: [
+        ...createEditorExtensions("Start writing..."),
+        GitHubChangeMarks,
+      ],
       content: parsedContent.doc,
       immediatelyRender: false,
       shouldRerenderOnTransaction: false,
@@ -1494,6 +1510,17 @@ const RichTextEditorSurface = memo(function RichTextEditorSurface({
       nextDocument,
     );
     if (transaction) {
+      const changeMarkRequest = gitHubChangeMarkRequestRef.current;
+      if (
+        changeMarkRequest &&
+        changeMarkRequest.requestedAt !==
+          consumedChangeMarkRequestRef.current &&
+        Date.now() - changeMarkRequest.requestedAt <
+          GITHUB_CHANGE_MARK_WINDOW_MS
+      ) {
+        consumedChangeMarkRequestRef.current = changeMarkRequest.requestedAt;
+        markGitHubChanges(transaction);
+      }
       const viewportAnchor = captureRichTextViewportAnchor(editor);
       const mappedViewportPosition = transaction.mapping.map(
         viewportAnchor?.position ?? editor.state.selection.head,

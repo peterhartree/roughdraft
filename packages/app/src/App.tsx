@@ -113,7 +113,19 @@ import {
 } from "./storage";
 import { UpdateNotice } from "./UpdateNotice";
 import { fetchUpdateStatus, type UpdateStatus } from "./update-status";
-import { type CommitAndPushResult, commitAndPushFile } from "./github-file";
+import { GitHubFileButtons } from "./GitHubFileButtons";
+import { GitHubUpdateBanner } from "./GitHubUpdateBanner";
+import { GitHubChangeMarkRequestContext } from "./github-change-marks";
+import {
+  type CommitAndPushResult,
+  canUpdateAutomatically,
+  commitAndPushFile,
+  type GitHubRemoteChanges,
+  type GitHubUpdateMode,
+  gitHubUpdateBannerCopy,
+  updatedFromGitHubCopy,
+  updateFileFromGitHub,
+} from "./github-file";
 import { useFileBrowser } from "./useFileBrowser";
 import { useGitHubFile } from "./useGitHubFile";
 
@@ -144,6 +156,8 @@ const AGENT_SETUP_PROMPT =
   "Install Roughdraft for me using `npm i -g roughdraft`, then read https://roughdraft.md/setup.md and set yourself up to use it.";
 const PREVIEW_DOCUMENT_PATH = "preview.md";
 const SIDEBAR_WIDTH = "15.5rem";
+/** How long "Updated from GitHub" stays before dismissing itself. */
+const GITHUB_UPDATED_NOTICE_MS = 12_000;
 const PREVIEW_INITIAL_MARKDOWN = [
   "# Live Preview",
   "",
@@ -2806,12 +2820,15 @@ export function App() {
     enabled: backend?.info.kind === "local-files",
     activePath: activeDocumentAbsolutePath,
   });
-  const { status: documentGitHubStatus, replace: replaceGitHubStatus } =
-    useGitHubFile({
-      enabled: backend?.info.kind === "local-files",
-      path: activeDocumentAbsolutePath,
-      saved: documentSaveState === "saved",
-    });
+  const {
+    status: documentGitHubStatus,
+    checkedGitHub: documentGitHubChecked,
+    replace: replaceGitHubStatus,
+  } = useGitHubFile({
+    enabled: backend?.info.kind === "local-files",
+    path: activeDocumentAbsolutePath,
+    saved: documentSaveState === "saved",
+  });
 
   const commitAndPushActiveDocument =
     useCallback(async (): Promise<CommitAndPushResult> => {
@@ -2841,6 +2858,122 @@ export function App() {
       if (result.status) replaceGitHubStatus(path, result.status);
       return result;
     }, [replaceGitHubStatus]);
+
+  const [gitHubUpdate, setGitHubUpdate] = useState<{
+    path: string;
+    mode: GitHubUpdateMode;
+    pending: boolean;
+    error: string | null;
+  } | null>(null);
+  const [gitHubUpdatedNotice, setGitHubUpdatedNotice] = useState<{
+    path: string;
+    changes: GitHubRemoteChanges | null;
+  } | null>(null);
+  // "Not now" hides the banner until GitHub's branch moves again.
+  const [dismissedGitHubUpdate, setDismissedGitHubUpdate] = useState<{
+    path: string;
+    head: string;
+  } | null>(null);
+  const [gitHubChangeMarkRequest, setGitHubChangeMarkRequest] = useState<{
+    path: string;
+    requestedAt: number;
+  } | null>(null);
+  const gitHubUpdatePendingRef = useRef(false);
+  // Each GitHub version is updated to automatically at most once per file,
+  // so a refused update is not retried on every focus.
+  const autoUpdateAttemptsRef = useRef(new Set<string>());
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: clears per-file notices when the file changes
+  useEffect(() => {
+    setGitHubUpdatedNotice(null);
+    setGitHubChangeMarkRequest(null);
+  }, [activeDocumentAbsolutePath]);
+
+  useEffect(() => {
+    if (!gitHubUpdatedNotice) return;
+    const timer = window.setTimeout(
+      () => setGitHubUpdatedNotice(null),
+      GITHUB_UPDATED_NOTICE_MS,
+    );
+    return () => window.clearTimeout(timer);
+  }, [gitHubUpdatedNotice]);
+
+  const updateActiveDocumentFromGitHub = useCallback(
+    async (mode: GitHubUpdateMode) => {
+      const path = activeDocumentAbsolutePathRef.current;
+      if (!path || gitHubUpdatePendingRef.current) return;
+      const refuse = (error: string) =>
+        setGitHubUpdate({ path, mode, pending: false, error });
+      if (diskChangeStateBlocksFileSwitch(documentDiskChangeStateRef.current)) {
+        if (mode === "manual") {
+          refuse("Resolve the changes on disk before updating.");
+        }
+        return;
+      }
+      if (mode === "manual") {
+        const saveResult = await documentSaveControllerRef.current?.flushSave();
+        if (saveResult?.status === "error") {
+          refuse("The file couldn't be saved, so it wasn't updated.");
+          return;
+        }
+        if (saveResult?.status === "blocked") {
+          refuse("Resolve the changes on disk before updating.");
+          return;
+        }
+      }
+
+      gitHubUpdatePendingRef.current = true;
+      setGitHubUpdate({ path, mode, pending: true, error: null });
+      setGitHubChangeMarkRequest({ path, requestedAt: Date.now() });
+      const result = await updateFileFromGitHub(path, mode);
+      gitHubUpdatePendingRef.current = false;
+      if (result.status) replaceGitHubStatus(path, result.status);
+      if (result.ok && result.updated) {
+        setGitHubUpdate(null);
+        setGitHubUpdatedNotice({ path, changes: result.changes });
+        return;
+      }
+      setGitHubChangeMarkRequest(null);
+      // An automatic update that can't go ahead leaves the banner to ask.
+      setGitHubUpdate(
+        result.ok || mode === "auto"
+          ? null
+          : { path, mode, pending: false, error: result.error },
+      );
+    },
+    [replaceGitHubStatus],
+  );
+
+  // GitHub's newer version replaces an unchanged copy without asking, but
+  // only right after opening the file or refocusing the window.
+  useEffect(() => {
+    const path = activeDocumentAbsolutePath;
+    const status = documentGitHubStatus;
+    if (!path || !documentGitHubChecked || !status?.remote) return;
+    if (!canUpdateAutomatically(status)) return;
+    if (documentSaveState !== "saved" || documentDirtyRef.current) return;
+    if (diskChangeStateBlocksFileSwitch(documentDiskChangeState)) return;
+    const attempt = `${path}\0${status.remote.head}`;
+    if (autoUpdateAttemptsRef.current.has(attempt)) return;
+    autoUpdateAttemptsRef.current.add(attempt);
+    void updateActiveDocumentFromGitHub("auto");
+  }, [
+    activeDocumentAbsolutePath,
+    documentGitHubStatus,
+    documentGitHubChecked,
+    documentSaveState,
+    documentDiskChangeState,
+    updateActiveDocumentFromGitHub,
+  ]);
+
+  const gitHubChangeMarkContext = useMemo(
+    () =>
+      gitHubChangeMarkRequest &&
+      gitHubChangeMarkRequest.path === activeDocumentAbsolutePath
+        ? { requestedAt: gitHubChangeMarkRequest.requestedAt }
+        : null,
+    [gitHubChangeMarkRequest, activeDocumentAbsolutePath],
+  );
 
   // A file chosen in the browser behaves like an explicit open request:
   // it joins the open list and becomes active unless the switch is blocked,
@@ -3199,6 +3332,69 @@ export function App() {
     backend?.info.kind === "local-files" && openFiles.length > 0;
   const showOpenFileSidebar = hasOpenFileSidebar && openFileSidebarVisible;
 
+  const gitHubPath = activeDocumentAbsolutePath;
+  const gitHubUpdateForFile =
+    gitHubUpdate && gitHubUpdate.path === gitHubPath ? gitHubUpdate : null;
+  const documentGitHubControls =
+    documentGitHubStatus && gitHubPath ? (
+      <GitHubFileButtons
+        key={`github:${gitHubPath}`}
+        status={documentGitHubStatus}
+        onCommitAndPush={commitAndPushActiveDocument}
+        onUpdate={() => void updateActiveDocumentFromGitHub("manual")}
+        updatePending={gitHubUpdateForFile?.pending ?? false}
+      />
+    ) : null;
+  let documentGitHubBanner: ReactNode = null;
+  if (gitHubUpdatedNotice && gitHubUpdatedNotice.path === gitHubPath) {
+    const { title, detail } = updatedFromGitHubCopy(
+      gitHubUpdatedNotice.changes,
+      documentFilenameLabel,
+      Date.now(),
+    );
+    documentGitHubBanner = (
+      <GitHubUpdateBanner
+        kind="updated"
+        title={title}
+        detail={detail}
+        compareUrl={gitHubUpdatedNotice.changes?.compareUrl ?? null}
+        onDismiss={() => setGitHubUpdatedNotice(null)}
+      />
+    );
+  } else if (documentGitHubStatus?.remote && gitHubPath) {
+    const copy = gitHubUpdateBannerCopy(
+      documentGitHubStatus,
+      documentFilenameLabel,
+      Date.now(),
+    );
+    const head = documentGitHubStatus.remote.head;
+    const dismissed =
+      dismissedGitHubUpdate?.path === gitHubPath &&
+      dismissedGitHubUpdate.head === head;
+    const updatingAutomatically =
+      gitHubUpdateForFile?.mode === "auto" && gitHubUpdateForFile.pending;
+    if (
+      copy &&
+      !updatingAutomatically &&
+      (!dismissed || gitHubUpdateForFile?.mode === "manual")
+    ) {
+      documentGitHubBanner = (
+        <GitHubUpdateBanner
+          kind="newer"
+          copy={copy}
+          compareUrl={documentGitHubStatus.remote.compareUrl}
+          pending={gitHubUpdateForFile?.pending ?? false}
+          error={gitHubUpdateForFile?.error ?? null}
+          onUpdate={() => void updateActiveDocumentFromGitHub("manual")}
+          onDismiss={() => {
+            setDismissedGitHubUpdate({ path: gitHubPath, head });
+            setGitHubUpdate(null);
+          }}
+        />
+      );
+    }
+  }
+
   return (
     <main
       className="relative flex h-screen min-w-0 overflow-hidden bg-[#FCFCFC] text-slate-950 dark:bg-background dark:text-slate-50"
@@ -3304,40 +3500,44 @@ export function App() {
             </div>
           </div>
         ) : null}
-        <DocumentWorkspace
-          documentPage={documentPage}
-          activeDocumentPath={activeDocumentPath}
-          documentCopyPath={documentAbsolutePath}
-          documentGitHubStatus={documentGitHubStatus}
-          onCommitAndPushDocument={commitAndPushActiveDocument}
-          documentFilenameLabel={documentFilenameLabel}
-          documentEditorViewMode={documentEditorViewMode}
-          onDocumentEditorViewModeChange={handleDocumentEditorViewModeChange}
-          onSaveDocument={handleSaveDocument}
-          onDocumentSaveStateChange={handleDocumentSaveStateChange}
-          onDocumentDirtyStateChange={handleDocumentDirtyStateChange}
-          onDocumentLocalContentChange={handleDocumentLocalContentChange}
-          onSaveControllerChange={handleDocumentSaveControllerChange}
-          onViewControllerChange={handleDocumentViewControllerChange}
-          documentDiskChangeState={documentDiskChangeState}
-          documentForceResetKey={documentForceResetKey}
-          documentResolutionPending={documentResolutionPending}
-          documentViewRestoreRequest={documentViewRestoreRequest}
-          onReloadDocumentFromDisk={handleReloadDocumentFromDisk}
-          onKeepEditingWithoutAutosave={handleKeepEditingWithoutAutosave}
-          onOverwriteDocumentOnDisk={handleOverwriteDocumentOnDisk}
-          backend={backend}
-          documentSidebarAvailable={hasOpenFileSidebar}
-          documentSidebarVisible={showOpenFileSidebar}
-          onToggleDocumentSidebar={() =>
-            setOpenFileSidebarVisible((visible) => !visible)
-          }
-          onMoveDocumentToTrash={
-            backend?.info.kind === "local-files" && activeDocumentAbsolutePath
-              ? () => moveFileToTrash(activeDocumentAbsolutePath)
-              : undefined
-          }
-        />
+        <GitHubChangeMarkRequestContext.Provider
+          value={gitHubChangeMarkContext}
+        >
+          <DocumentWorkspace
+            documentPage={documentPage}
+            activeDocumentPath={activeDocumentPath}
+            documentCopyPath={documentAbsolutePath}
+            documentGitHubControls={documentGitHubControls}
+            documentGitHubBanner={documentGitHubBanner}
+            documentFilenameLabel={documentFilenameLabel}
+            documentEditorViewMode={documentEditorViewMode}
+            onDocumentEditorViewModeChange={handleDocumentEditorViewModeChange}
+            onSaveDocument={handleSaveDocument}
+            onDocumentSaveStateChange={handleDocumentSaveStateChange}
+            onDocumentDirtyStateChange={handleDocumentDirtyStateChange}
+            onDocumentLocalContentChange={handleDocumentLocalContentChange}
+            onSaveControllerChange={handleDocumentSaveControllerChange}
+            onViewControllerChange={handleDocumentViewControllerChange}
+            documentDiskChangeState={documentDiskChangeState}
+            documentForceResetKey={documentForceResetKey}
+            documentResolutionPending={documentResolutionPending}
+            documentViewRestoreRequest={documentViewRestoreRequest}
+            onReloadDocumentFromDisk={handleReloadDocumentFromDisk}
+            onKeepEditingWithoutAutosave={handleKeepEditingWithoutAutosave}
+            onOverwriteDocumentOnDisk={handleOverwriteDocumentOnDisk}
+            backend={backend}
+            documentSidebarAvailable={hasOpenFileSidebar}
+            documentSidebarVisible={showOpenFileSidebar}
+            onToggleDocumentSidebar={() =>
+              setOpenFileSidebarVisible((visible) => !visible)
+            }
+            onMoveDocumentToTrash={
+              backend?.info.kind === "local-files" && activeDocumentAbsolutePath
+                ? () => moveFileToTrash(activeDocumentAbsolutePath)
+                : undefined
+            }
+          />
+        </GitHubChangeMarkRequestContext.Provider>
         {missingOpenFilePath ? (
           <MissingFilePanel
             path={missingOpenFilePath}

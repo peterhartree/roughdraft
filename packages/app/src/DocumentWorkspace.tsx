@@ -15,7 +15,13 @@ import {
   Upload,
   X,
 } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import { createPortal } from "react-dom";
 import type { DocumentEditorViewMode } from "./app-navigation";
 import { RemoteSessionBanner } from "./components/RemoteSessionBanner";
@@ -55,8 +61,6 @@ import {
 } from "./document-view-state";
 import { DocumentOutline } from "./DocumentOutline";
 import { cn } from "./lib/utils";
-import { GitHubFileButtons } from "./GitHubFileButtons";
-import type { CommitAndPushResult, GitHubFileStatus } from "./github-file";
 import { MoveToTrashButton } from "./MoveToTrashButton";
 import {
   type DocumentInteractionMode,
@@ -307,9 +311,10 @@ interface DocumentWorkspaceProps {
   documentPage: Page | null;
   activeDocumentPath: string | null;
   documentCopyPath: string | null;
-  /** The file's GitHub link and sync state, when its origin is on GitHub. */
-  documentGitHubStatus?: GitHubFileStatus | null;
-  onCommitAndPushDocument?: () => Promise<CommitAndPushResult>;
+  /** GitHub buttons for the toolbar, between Copy path and Move to Trash. */
+  documentGitHubControls?: ReactNode;
+  /** A GitHub notice shown under the toolbar. */
+  documentGitHubBanner?: ReactNode;
   documentFilenameLabel: string;
   documentEditorViewMode: DocumentEditorViewMode;
   onDocumentEditorViewModeChange: (mode: DocumentEditorViewMode) => void;
@@ -337,8 +342,8 @@ export function DocumentWorkspace({
   documentPage,
   activeDocumentPath,
   documentCopyPath,
-  documentGitHubStatus = null,
-  onCommitAndPushDocument,
+  documentGitHubControls = null,
+  documentGitHubBanner = null,
   documentFilenameLabel,
   documentEditorViewMode,
   onDocumentEditorViewModeChange,
@@ -965,13 +970,7 @@ export function DocumentWorkspace({
                       : "Copy path (⌥⌘C)"}
                   </TooltipContent>
                 </Tooltip>
-                {documentGitHubStatus && onCommitAndPushDocument ? (
-                  <GitHubFileButtons
-                    key={`github:${documentCopyPath ?? ""}`}
-                    status={documentGitHubStatus}
-                    onCommitAndPush={onCommitAndPushDocument}
-                  />
-                ) : null}
+                {documentGitHubControls}
                 {onMoveDocumentToTrash ? (
                   <MoveToTrashButton
                     key={documentCopyPath ?? ""}
@@ -1023,6 +1022,7 @@ export function DocumentWorkspace({
                   </Select>
                 </div>
               </div>
+              {documentGitHubBanner}
               {documentFindOpen
                 ? createPortal(
                     <div

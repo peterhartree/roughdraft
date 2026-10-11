@@ -1,4 +1,4 @@
-import { Check, CloudUpload, Loader2 } from "lucide-react";
+import { Check, CloudDownload, CloudUpload, Loader2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { GitHubMark } from "./components/GitHubMark";
 import {
@@ -14,10 +14,12 @@ import {
 import {
   type CommitAndPushResult,
   canCommitAndPush,
+  canUpdateFromGitHub,
   commitAndPushLabel,
   type GitHubFileStatus,
   gitHubLinkLabel,
   gitHubLinkWorks,
+  updateFromGitHubLabel,
 } from "./github-file";
 import { cn } from "./lib/utils";
 
@@ -27,16 +29,20 @@ const ICON_BUTTON_CLASS =
 const PUSHED_CONFIRMATION_MS = 2000;
 
 /**
- * The GitHub link, crossed out when GitHub lacks the file, and,
- * when GitHub lacks the latest version, a button that commits the file and
- * pushes it.
+ * The GitHub link, crossed out when GitHub lacks the file; beside it, a
+ * button that pulls GitHub's newer version when there is one, or else one
+ * that commits and pushes this copy when GitHub lacks its latest version.
  */
 export function GitHubFileButtons({
   status,
   onCommitAndPush,
+  onUpdate,
+  updatePending,
 }: {
   status: GitHubFileStatus;
   onCommitAndPush: () => Promise<CommitAndPushResult>;
+  onUpdate: () => void;
+  updatePending: boolean;
 }) {
   const label = gitHubLinkLabel(status);
   return (
@@ -75,8 +81,72 @@ export function GitHubFileButtons({
         />
         <TooltipContent>{label}</TooltipContent>
       </Tooltip>
-      <CommitAndPushButton status={status} onCommitAndPush={onCommitAndPush} />
+      {canUpdateFromGitHub(status) || updatePending ? (
+        <UpdateFromGitHubButton
+          status={status}
+          onUpdate={onUpdate}
+          pending={updatePending}
+        />
+      ) : (
+        <CommitAndPushButton
+          status={status}
+          onCommitAndPush={onCommitAndPush}
+        />
+      )}
     </>
+  );
+}
+
+function UpdateFromGitHubButton({
+  status,
+  onUpdate,
+  pending,
+}: {
+  status: GitHubFileStatus;
+  onUpdate: () => void;
+  pending: boolean;
+}) {
+  const label = pending
+    ? "Updating from GitHub…"
+    : updateFromGitHubLabel(status);
+  const commits = status.remote?.commits ?? 0;
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <button
+            type="button"
+            data-testid="document-github-update-button"
+            data-state={pending ? "pending" : "idle"}
+            disabled={pending}
+            className={cn(
+              ICON_BUTTON_CLASS,
+              "relative bg-blue-100 text-blue-700 hover:bg-blue-200 hover:text-blue-800 dark:bg-blue-950 dark:text-blue-300 dark:hover:bg-blue-900 dark:hover:text-blue-200",
+            )}
+            aria-label={label}
+            onClick={onUpdate}
+          >
+            {pending ? (
+              <Loader2
+                className="size-3.5 animate-spin motion-reduce:animate-none"
+                aria-hidden="true"
+              />
+            ) : (
+              <CloudDownload className="size-3.5" aria-hidden="true" />
+            )}
+            {!pending && commits > 0 ? (
+              <span
+                aria-hidden="true"
+                className="absolute -top-1 -right-1.5 grid h-3.5 min-w-3.5 place-items-center rounded-full border-2 border-[#FCFCFC] bg-blue-600 px-0.5 text-[0.55rem] leading-none font-bold text-white dark:border-background dark:bg-blue-500"
+              >
+                {commits}
+              </span>
+            ) : null}
+          </button>
+        }
+      />
+      <TooltipContent>{label}</TooltipContent>
+    </Tooltip>
   );
 }
 

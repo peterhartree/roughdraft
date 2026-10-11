@@ -16,7 +16,7 @@ The CLI and app should optimize for quick open, review, edit, save, and close fl
 
 This does not make Roughdraft a vault manager, note database, git client, desktop shell, or multi-document workspace.
 
-ADR 0009 makes one narrow exception to "not a git client": linking a file to GitHub and, on request, committing and pushing that file.
+ADR 0009 makes one narrow exception to "not a git client": linking a file to GitHub, committing and pushing that file on request, and updating it from GitHub.
 
 ## Clarification (2026-04-30): Remote Document Mode
 

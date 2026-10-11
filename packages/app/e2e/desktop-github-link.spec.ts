@@ -69,8 +69,8 @@ test("opens the GitHub link in the default browser, not the app window", async (
   const documentPath = path.join(repoDirectory, "docs", "plan.md");
   fs.mkdirSync(path.dirname(documentPath), { recursive: true });
   fs.writeFileSync(documentPath, "# Plan\n");
-  // A GitHub origin URL with a local push URL, so the file can be pushed
-  // without leaving this machine.
+  // A GitHub origin URL rewritten to a local bare repository, so fetching
+  // and pushing never leave this machine.
   const remoteDirectory = path.join(temporaryDirectory, "remote.git");
   git(
     temporaryDirectory,
@@ -82,7 +82,12 @@ test("opens the GitHub link in the default browser, not the app window", async (
   );
   git(repoDirectory, "init", "--quiet", "--initial-branch=main");
   git(repoDirectory, "remote", "add", "origin", "git@github.com:o/r.git");
-  git(repoDirectory, "config", "remote.origin.pushurl", remoteDirectory);
+  git(
+    repoDirectory,
+    "config",
+    `url.${remoteDirectory}.insteadOf`,
+    "git@github.com:o/r.git",
+  );
   git(repoDirectory, "add", "docs/plan.md");
   git(repoDirectory, "commit", "--quiet", "--no-verify", "-m", "init");
   git(repoDirectory, "push", "--quiet", "--set-upstream", "origin", "main");

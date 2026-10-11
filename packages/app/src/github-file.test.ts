@@ -1,10 +1,18 @@
 import { describe, expect, it } from "vitest";
 import {
   canCommitAndPush,
+  canUpdateAutomatically,
+  canUpdateFromGitHub,
   commitAndPushLabel,
+  describeRemoteChanges,
   type GitHubFileStatus,
+  type GitHubRemoteChanges,
   gitHubLinkLabel,
   gitHubLinkWorks,
+  gitHubUpdateBannerCopy,
+  relativeTime,
+  updatedFromGitHubCopy,
+  updateFromGitHubLabel,
 } from "./github-file";
 
 function status(overrides: Partial<GitHubFileStatus>): GitHubFileStatus {
@@ -14,7 +22,10 @@ function status(overrides: Partial<GitHubFileStatus>): GitHubFileStatus {
     reason: null,
     branch: "main",
     ahead: 0,
+    behind: 0,
     uncommitted: false,
+    remote: null,
+    checkedAt: null,
     ...overrides,
   };
 }
@@ -87,5 +98,117 @@ describe("commit and push", () => {
     expect(commitAndPushLabel(status({ sync: "changed", ...overrides }))).toBe(
       label,
     );
+  });
+});
+
+const NOW = Date.UTC(2026, 9, 11, 12, 0, 0);
+const MINUTE = 60_000;
+
+function changes(overrides: Partial<GitHubRemoteChanges> = {}) {
+  return {
+    commits: 2,
+    authors: ["Max"],
+    latestAt: NOW - 14 * MINUTE,
+    compareUrl: "https://github.com/o/r/compare/a...b",
+    head: "b",
+    ...overrides,
+  };
+}
+
+describe("newer on GitHub", () => {
+  it("describes who changed the file and when", () => {
+    expect(describeRemoteChanges(changes(), NOW)).toBe(
+      "2 new commits from Max, the latest 14 minutes ago",
+    );
+    expect(
+      describeRemoteChanges(
+        changes({ commits: 1, latestAt: NOW - 10_000 }),
+        NOW,
+      ),
+    ).toBe("1 new commit from Max, just now");
+    expect(
+      describeRemoteChanges(
+        changes({ commits: 3, authors: ["Max", "Fin", "Rose"] }),
+        NOW,
+      ),
+    ).toBe("3 new commits from Max and 2 others, the latest 14 minutes ago");
+    expect(relativeTime(NOW - 26 * 60 * MINUTE, NOW)).toBe("yesterday");
+  });
+
+  it("asks to update when only GitHub changed the file", () => {
+    expect(
+      gitHubUpdateBannerCopy(
+        status({ sync: "behind", remote: changes() }),
+        "README.md",
+        NOW,
+      ),
+    ).toEqual({
+      tone: "info",
+      title: "GitHub has a newer version of README.md",
+      detail: "2 new commits from Max, the latest 14 minutes ago.",
+      action: "Update to latest",
+    });
+  });
+
+  it("warns, and offers to keep your edits, when both sides changed it", () => {
+    expect(
+      gitHubUpdateBannerCopy(
+        status({ sync: "diverged", reason: "uncommitted", remote: changes() }),
+        "README.md",
+        NOW,
+      ),
+    ).toEqual({
+      tone: "warning",
+      title: "GitHub and this copy both changed README.md",
+      detail:
+        "2 new commits from Max, the latest 14 minutes ago. Your edits here aren't pushed yet.",
+      action: "Update and keep my edits",
+    });
+  });
+
+  it("has no banner when GitHub has nothing newer", () => {
+    expect(gitHubUpdateBannerCopy(status({}), "README.md", NOW)).toBeNull();
+  });
+
+  it("updates without asking only when this copy has no changes of its own", () => {
+    expect(
+      canUpdateAutomatically(status({ sync: "behind", remote: changes() })),
+    ).toBe(true);
+    expect(
+      canUpdateAutomatically(
+        status({ sync: "behind", ahead: 1, remote: changes() }),
+      ),
+    ).toBe(false);
+    expect(
+      canUpdateAutomatically(status({ sync: "diverged", remote: changes() })),
+    ).toBe(false);
+    expect(
+      canUpdateAutomatically(
+        status({ sync: "behind", branch: null, remote: changes() }),
+      ),
+    ).toBe(false);
+  });
+
+  it("swaps the push button for an update button while GitHub is newer", () => {
+    const behind = status({ sync: "behind", remote: changes() });
+    expect(canUpdateFromGitHub(behind)).toBe(true);
+    expect(canCommitAndPush(behind)).toBe(false);
+    expect(updateFromGitHubLabel(behind)).toBe(
+      "Update from GitHub (2 new commits)",
+    );
+    expect(
+      updateFromGitHubLabel(status({ sync: "diverged", remote: changes() })),
+    ).toBe("Update from GitHub, keeping your edits");
+    expect(gitHubLinkLabel(behind)).toBe(
+      "View on GitHub (newer than this copy)",
+    );
+  });
+
+  it("says what an update brought in", () => {
+    expect(updatedFromGitHubCopy(changes(), "README.md", NOW)).toEqual({
+      title: "Updated README.md from GitHub",
+      detail:
+        "2 new commits from Max, the latest 14 minutes ago. Changed passages are marked.",
+    });
   });
 });
