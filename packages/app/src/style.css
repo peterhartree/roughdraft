@@ -37,6 +37,15 @@
 
 @custom-variant dark (&:is(.dark *));
 
+/* Registered as a length so the image node view can read the resolved width
+   in pixels when deciding whether an image is wide enough to break out. The
+   initial value must be computationally independent, so it cannot use rem. */
+@property --rich-text-measure {
+  syntax: "<length>";
+  inherits: true;
+  initial-value: 0px;
+}
+
 @layer base {
   *,
   *::before,
@@ -455,10 +464,13 @@
   }
 
   .document-rich-text-layout .tiptap {
+    --rich-text-measure: 46.5rem;
+    /* How far a wide image may extend past each side of the text column. */
+    --rich-text-image-outset: 6.25rem;
     display: grid;
     grid-template-columns:
       minmax(0, 1fr)
-      minmax(0, min(46.5rem, 100%))
+      minmax(0, min(var(--rich-text-measure), 100%))
       minmax(0, 1fr);
     /* The editor has a min-height; without this, short documents stretch
        every grid row and inflate each block's box. */
@@ -473,6 +485,17 @@
   .document-rich-text-layout .tiptap > .tableWrapper {
     grid-column: 1 / -1;
     width: 100%;
+  }
+
+  /* Images wider than the text column break out symmetrically into the
+     gutters, up to the outset on each side and never past the editor. */
+  .document-rich-text-layout .tiptap > img[data-breakout] {
+    grid-column: 1 / -1;
+    justify-self: center;
+    max-width: min(
+      100%,
+      calc(var(--rich-text-measure) + 2 * var(--rich-text-image-outset))
+    );
   }
 
   .tiptap .raw-markdown-block {

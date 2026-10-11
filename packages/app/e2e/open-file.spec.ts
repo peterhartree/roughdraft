@@ -271,6 +271,121 @@ test.describe("opening local markdown files", () => {
     ).toBeLessThanOrEqual(1);
   });
 
+  test("lets wide images break out of the text column without overflowing @smoke", async ({
+    page,
+  }) => {
+    const svgOfWidth = (width: number) =>
+      `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="200"><rect width="100%" height="100%" fill="#94a3b8"/></svg>`;
+    writeProjectFile(projectDir, "images/wide.svg", svgOfWidth(1800));
+    writeProjectFile(projectDir, "images/small.svg", svgOfWidth(240));
+    const body = [
+      "This paragraph sets the readable text column that images break out from on a wide window.",
+      "",
+      "![Wide screenshot](./images/wide.svg)",
+      "",
+      "![Small icon](./images/small.svg)",
+      "",
+    ];
+    const plainPath = writeProjectFile(
+      projectDir,
+      "breakout-images.md",
+      ["# Breakout images", "", ...body].join("\n"),
+    );
+    const commentedPath = writeProjectFile(
+      projectDir,
+      "breakout-images-commented.md",
+      [
+        "# Breakout images",
+        "",
+        '{==This paragraph==}{>>Check the screenshot.<<}{id="c1" by="user" at="2026-04-23T18:00:00.000Z"} sets the readable text column.',
+        "",
+        ...body.slice(2),
+      ].join("\n"),
+    );
+
+    const editor = page.getByTestId("rich-text-editor");
+    const prose = editor.locator("p").first(); // selector-check-ignore -- rendered paragraph geometry is the contract
+    const wideImage = editor.locator(
+      'img[data-markdown-src="./images/wide.svg"]',
+    );
+    const smallImage = editor.locator(
+      'img[data-markdown-src="./images/small.svg"]',
+    );
+    const workspace = page.getByTestId("document-workspace-scroll");
+
+    const measure = async (label: string, breaksOut: boolean) => {
+      await expect(wideImage).toBeVisible();
+      await expect(smallImage).toBeVisible();
+      await expect
+        .poll(() =>
+          wideImage.evaluate((image: HTMLImageElement) => image.naturalWidth),
+        )
+        .toBe(1800);
+      if (breaksOut) {
+        // The breakout applies once the image has loaded and its natural
+        // width is known.
+        await expect
+          .poll(async () => {
+            const [imageBox, textBox] = await Promise.all([
+              wideImage.boundingBox(),
+              prose.boundingBox(),
+            ]);
+            return (imageBox?.width ?? 0) - (textBox?.width ?? 0);
+          })
+          .toBeGreaterThan(0);
+      }
+      const proseBox = await prose.boundingBox();
+      const wideBox = await wideImage.boundingBox();
+      const smallBox = await smallImage.boundingBox();
+      const overflow = await workspace.evaluate(
+        (element) => element.scrollWidth - element.clientWidth,
+      );
+      if (!proseBox || !wideBox || !smallBox) {
+        throw new Error(`missing layout boxes for ${label}`);
+      }
+      logE2eEvent("open-file.breakout-image-layout", {
+        label,
+        proseWidth: proseBox.width,
+        wideImageWidth: wideBox.width,
+        smallImageWidth: smallBox.width,
+        overflow,
+      });
+      return { proseBox, wideBox, smallBox, overflow };
+    };
+    const centre = (box: { x: number; width: number }) => box.x + box.width / 2;
+
+    await page.setViewportSize({ width: 1600, height: 900 });
+    await openMarkdownFile(page, plainPath);
+    const wide = await measure("wide", true);
+    expect(wide.wideBox.width).toBeCloseTo(wide.proseBox.width + 200, 0);
+    expect(
+      Math.abs(centre(wide.wideBox) - centre(wide.proseBox)),
+    ).toBeLessThanOrEqual(1);
+    expect(wide.smallBox.width).toBe(240);
+    expect(wide.smallBox.x).toBeCloseTo(wide.proseBox.x, 0);
+    expect(wide.overflow).toBe(0);
+
+    await page.setViewportSize({ width: 1600, height: 900 });
+    await openMarkdownFile(page, commentedPath);
+    const rail = page.getByTestId("document-review-rail");
+    await expect(rail).toContainText("Check the screenshot.");
+    const withRail = await measure("wide-with-comments", true);
+    const railBox = await rail.boundingBox();
+    expect(withRail.wideBox.width).toBeGreaterThan(withRail.proseBox.width);
+    expect(withRail.wideBox.x + withRail.wideBox.width).toBeLessThan(
+      railBox?.x ?? 0,
+    );
+    expect(withRail.overflow).toBe(0);
+
+    // Narrow enough that the text column fills the editor: no gutters remain.
+    await page.setViewportSize({ width: 900, height: 900 });
+    await openMarkdownFile(page, plainPath);
+    const narrow = await measure("narrow", false);
+    expect(narrow.wideBox.width).toBeCloseTo(narrow.proseBox.width, 0);
+    expect(narrow.wideBox.x).toBeCloseTo(narrow.proseBox.x, 0);
+    expect(narrow.overflow).toBe(0);
+  });
+
   test("focuses an existing window for a repeated open request", async ({
     page,
   }) => {

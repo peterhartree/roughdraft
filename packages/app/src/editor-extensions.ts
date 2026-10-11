@@ -917,6 +917,38 @@ const MarkdownImage = Image.extend({
       },
     };
   },
+
+  // The node view only marks images that are naturally wider than the text
+  // column, so the stylesheet can let them break out into the gutters while
+  // smaller images keep their natural size and alignment. Serialisation still
+  // goes through renderHTML, so the marker never reaches Markdown.
+  addNodeView() {
+    return ({ HTMLAttributes }) => {
+      const dom = document.createElement("img");
+      for (const [name, value] of Object.entries(
+        mergeAttributes(this.options.HTMLAttributes, HTMLAttributes),
+      )) {
+        if (value !== null && value !== undefined) {
+          dom.setAttribute(name, String(value));
+        }
+      }
+
+      const markBreakout = () => {
+        const measure = Number.parseFloat(
+          getComputedStyle(dom).getPropertyValue("--rich-text-measure"),
+        );
+        dom.toggleAttribute(
+          "data-breakout",
+          Number.isFinite(measure) && dom.naturalWidth > measure,
+        );
+      };
+      // Browsers fire load even for cached images, by which time the node
+      // view is attached and the measure resolves.
+      dom.addEventListener("load", markBreakout);
+
+      return { dom };
+    };
+  },
 });
 
 const RawMarkdownBlock = Node.create({
