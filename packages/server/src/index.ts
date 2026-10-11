@@ -13,7 +13,7 @@ import {
   ROUGHDRAFT_PUBLIC_HOST,
   resolveBindHosts,
 } from "./network.js";
-import { createGitHubFiles, GitHubPushError } from "./github-link.js";
+import { createGitHubFiles, GitHubActionError } from "./github-link.js";
 import { markdownTreeFromQuery } from "./markdown-tree.js";
 import { OpenRequestBroker } from "./open-requests.js";
 import { RenameRejectedError, renameMarkdownFile } from "./rename.js";
@@ -79,6 +79,8 @@ interface CreateAppOptions {
   appOnly?: boolean;
   /** Launches or activates Roughdraft.app; returns false when it cannot. */
   launchDesktopApp?: () => boolean;
+  /** Minimum time between fetches of one branch from GitHub; tests use 0. */
+  gitHubFetchIntervalMs?: number;
 }
 
 export const DESKTOP_APP_BUNDLE_ID = "is.pjh.roughdraft";
@@ -418,7 +420,9 @@ export function createApp(options: CreateAppOptions = {}): CreateAppResult {
   const app = express();
   const openRequests = new OpenRequestBroker();
   const remoteSessions = new Map<string, RemoteSession>();
-  const gitHubFiles = createGitHubFiles();
+  const gitHubFiles = createGitHubFiles({
+    fetchIntervalMs: options.gitHubFetchIntervalMs,
+  });
 
   function isAuthorizedRemoteDocumentRequest(req: Request): boolean {
     if (!remoteDocumentToken) return true;
@@ -737,7 +741,9 @@ export function createApp(options: CreateAppOptions = {}): CreateAppResult {
   app.get("/api/github-link", async (req, res) => {
     const absolutePath = markdownPathFromInput(req.query.path, res);
     if (!absolutePath) return;
-    const status = await gitHubFiles.status(absolutePath);
+    const status = await gitHubFiles.status(absolutePath, {
+      fetch: req.query.fetch === "1",
+    });
     res.json(status ?? { url: null });
   });
 
@@ -747,7 +753,24 @@ export function createApp(options: CreateAppOptions = {}): CreateAppResult {
     try {
       res.json(await gitHubFiles.commitAndPush(absolutePath));
     } catch (error) {
-      if (error instanceof GitHubPushError) {
+      if (error instanceof GitHubActionError) {
+        res
+          .status(error.status)
+          .json({ error: error.message, status: error.fileStatus });
+        return;
+      }
+      throw error;
+    }
+  });
+
+  app.post("/api/github-link/update", async (req, res) => {
+    const absolutePath = markdownPathFromInput(req.body?.path, res);
+    if (!absolutePath) return;
+    const mode = req.body?.mode === "auto" ? "auto" : "manual";
+    try {
+      res.json(await gitHubFiles.updateFromGitHub(absolutePath, mode));
+    } catch (error) {
+      if (error instanceof GitHubActionError) {
         res
           .status(error.status)
           .json({ error: error.message, status: error.fileStatus });
@@ -1334,6 +1357,7 @@ export interface CreateServerOptions {
   trashFile?: CreateAppOptions["trashFile"];
   /** Defaults to true: a real server keeps documents in Roughdraft.app. */
   appOnly?: boolean;
+  gitHubFetchIntervalMs?: CreateAppOptions["gitHubFetchIntervalMs"];
 }
 
 export async function createServer(
@@ -1363,6 +1387,7 @@ export async function createServer(
       remoteDocumentToken.length > 0 ? remoteDocumentToken : undefined,
     trashFile: serverOptions.trashFile,
     appOnly: serverOptions.appOnly ?? true,
+    gitHubFetchIntervalMs: serverOptions.gitHubFetchIntervalMs,
   });
   const listeningHosts: string[] = [];
 

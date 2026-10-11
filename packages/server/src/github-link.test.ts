@@ -92,8 +92,8 @@ describe("buildGitHubBlobUrl", () => {
 });
 
 // Repositories below use a GitHub-shaped origin URL, so they count as GitHub
-// repositories, with a push URL pointing at a local bare repository so that
-// pushing never leaves this machine.
+// repositories, and an `insteadOf` rewrite to a local bare repository, so
+// fetching and pushing never leave this machine.
 let tempDir: string;
 
 beforeEach(() => {
@@ -121,6 +121,12 @@ interface TestRepo {
   commitAll: (message?: string) => void;
   /** Files on origin's main branch, as the bare repository holds them. */
   remoteFile: (relativePath: string, branch?: string) => string | null;
+  /** Commits a change to origin from another clone, as a colleague would. */
+  pushFromElsewhere: (
+    relativePath: string,
+    content: string,
+    author?: string,
+  ) => void;
 }
 
 function createRepo({
@@ -143,7 +149,7 @@ function createRepo({
   git(repoDir, "config", "core.hooksPath", hooksDir);
   if (origin) {
     git(repoDir, "remote", "add", "origin", origin);
-    git(repoDir, "config", "remote.origin.pushurl", remoteDir);
+    git(repoDir, "config", `url.${remoteDir}.insteadOf`, origin);
   }
 
   const write = (relativePath: string, content = "# Note\n") => {
@@ -163,7 +169,33 @@ function createRepo({
       return null;
     }
   };
-  return { repoDir, remoteDir, write, commitAll, remoteFile };
+  let clones = 0;
+  const pushFromElsewhere = (
+    relativePath: string,
+    content: string,
+    author = "Max",
+  ) => {
+    clones += 1;
+    const cloneDir = path.join(tempDir, `elsewhere-${clones}`);
+    git(tempDir, "clone", "--quiet", remoteDir, cloneDir);
+    git(cloneDir, "config", "user.name", author);
+    git(cloneDir, "config", "user.email", "elsewhere@example.com");
+    git(cloneDir, "config", "commit.gpgsign", "false");
+    const filePath = path.join(cloneDir, relativePath);
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    fs.writeFileSync(filePath, content);
+    git(cloneDir, "add", "--all");
+    git(cloneDir, "commit", "--quiet", "-m", `edit ${relativePath}`);
+    git(cloneDir, "push", "--quiet");
+  };
+  return {
+    repoDir,
+    remoteDir,
+    write,
+    commitAll,
+    remoteFile,
+    pushFromElsewhere,
+  };
 }
 
 /** A repository whose README is committed and pushed to origin's main. */
@@ -187,7 +219,7 @@ function countingGit() {
 const README_URL =
   "https://github.com/HartreeWorks/example-notes/blob/main/context/strategy%20notes/README.md";
 
-describe("GitHub file status", () => {
+describe("GitHub file status", { timeout: 30_000 }, () => {
   it("links a pushed file to its blob on the checked-out branch", async () => {
     const { filePath } = createPushedRepo();
 
@@ -197,7 +229,10 @@ describe("GitHub file status", () => {
       reason: null,
       branch: "main",
       ahead: 0,
+      behind: 0,
       uncommitted: false,
+      remote: null,
+      checkedAt: null,
     });
   });
 
@@ -375,7 +410,7 @@ describe("GitHub file status", () => {
   });
 });
 
-describe("commit and push", () => {
+describe("commit and push", { timeout: 30_000 }, () => {
   it("commits only this file's changes and pushes them to origin", async () => {
     const repo = createPushedRepo();
     fs.writeFileSync(repo.filePath, "# Two\n");
@@ -435,24 +470,53 @@ describe("commit and push", () => {
     expect(git(repo.repoDir, "log", "-1", "--format=%s")).toBe("by hand");
   });
 
-  it("keeps the commit and explains when GitHub has newer commits", async () => {
+  it("brings in GitHub's newer commits to other files before pushing", async () => {
     const repo = createPushedRepo();
-    const otherClone = path.join(tempDir, "other-clone");
-    git(tempDir, "clone", "--quiet", repo.remoteDir, otherClone);
-    git(otherClone, "config", "user.name", "Other");
-    git(otherClone, "config", "user.email", "other@example.com");
-    fs.writeFileSync(path.join(otherClone, "elsewhere.md"), "# Elsewhere\n");
-    git(otherClone, "add", "elsewhere.md");
-    git(otherClone, "commit", "--quiet", "-m", "elsewhere");
-    git(otherClone, "push", "--quiet");
+    repo.pushFromElsewhere("elsewhere.md", "# Elsewhere\n");
     fs.writeFileSync(repo.filePath, "# Local\n");
 
-    const push = createGitHubFiles().commitAndPush(repo.filePath);
+    const status = await createGitHubFiles().commitAndPush(repo.filePath);
 
-    await expect(push).rejects.toMatchObject({
-      status: 502,
+    expect(status).toMatchObject({ sync: "synced", ahead: 0, behind: 0 });
+    expect(repo.remoteFile("context/strategy notes/README.md")).toBe("# Local");
+    expect(repo.remoteFile("elsewhere.md")).toBe("# Elsewhere");
+    expect(fs.existsSync(path.join(repo.repoDir, "elsewhere.md"))).toBe(true);
+  });
+
+  it("keeps the commit and explains when GitHub's commits clash with it", async () => {
+    const repo = createPushedRepo();
+    repo.pushFromElsewhere("context/strategy notes/README.md", "# Theirs\n");
+    fs.writeFileSync(repo.filePath, "# Mine\n");
+
+    await expect(
+      createGitHubFiles().commitAndPush(repo.filePath),
+    ).rejects.toMatchObject({
+      status: 409,
       message:
-        "Committed, but the push failed. GitHub has commits that this copy doesn't. Pull them, then push again.",
+        "Committed, but not pushed. Commits here and on GitHub change the same lines of context/strategy notes/README.md, so Roughdraft can't combine them. See the changes on GitHub, then merge in a terminal.",
+      fileStatus: { sync: "diverged", reason: "unpushed", ahead: 1 },
+    });
+    expect(fs.readFileSync(repo.filePath, "utf8")).toBe("# Mine\n");
+    expect(git(repo.repoDir, "status", "--porcelain")).toBe("");
+  });
+
+  it("keeps the commit and reports a push that GitHub refuses", async () => {
+    const repo = createPushedRepo();
+    const hook = path.join(repo.remoteDir, "hooks", "pre-receive");
+    fs.writeFileSync(
+      hook,
+      "#!/bin/sh\necho 'Branch is protected' >&2\nexit 1\n",
+      {
+        mode: 0o755,
+      },
+    );
+    fs.writeFileSync(repo.filePath, "# Local\n");
+
+    await expect(
+      createGitHubFiles().commitAndPush(repo.filePath),
+    ).rejects.toMatchObject({
+      status: 502,
+      message: expect.stringMatching(/^Committed, but the push failed\. /),
       fileStatus: { sync: "changed", reason: "unpushed", ahead: 1 },
     });
   });
@@ -479,7 +543,259 @@ describe("commit and push", () => {
   });
 });
 
-describe("GitHub link endpoints", () => {
+const README_PATH = "context/strategy notes/README.md";
+const PARAGRAPHS =
+  "# One\n\nFirst paragraph.\n\nSecond paragraph.\n\nThird paragraph.\n";
+
+/** A pushed repository whose README has three paragraphs. */
+function createParagraphRepo() {
+  const repo = createRepo();
+  const filePath = repo.write(README_PATH, PARAGRAPHS);
+  repo.commitAll("init");
+  git(repo.repoDir, "push", "--quiet", "--set-upstream", "origin", "main");
+  return { ...repo, filePath };
+}
+
+describe("changes on GitHub", { timeout: 30_000 }, () => {
+  it("notices GitHub's newer version only once origin is fetched", async () => {
+    const repo = createParagraphRepo();
+    repo.pushFromElsewhere(
+      README_PATH,
+      PARAGRAPHS.replace("Second", "Second, revised,"),
+    );
+    const files = createGitHubFiles();
+
+    expect(await files.status(repo.filePath)).toMatchObject({
+      sync: "synced",
+      checkedAt: null,
+    });
+    const status = await files.status(repo.filePath, { fetch: true });
+
+    expect(status).toMatchObject({
+      sync: "behind",
+      reason: null,
+      behind: 1,
+      remote: { commits: 1, authors: ["Max"] },
+    });
+    expect(status?.checkedAt).toEqual(expect.any(Number));
+    const base = git(repo.repoDir, "rev-parse", "HEAD");
+    const head = git(repo.repoDir, "rev-parse", "origin/main");
+    expect(status?.remote?.compareUrl).toMatch(
+      new RegExp(
+        `^https://github.com/HartreeWorks/example-notes/compare/${base}\\.\\.\\.${head}#diff-[0-9a-f]{64}$`,
+      ),
+    );
+    expect(status?.remote?.head).toBe(head);
+  });
+
+  it("stays synced when GitHub's new commits leave this file alone", async () => {
+    const repo = createParagraphRepo();
+    repo.pushFromElsewhere("other.md", "# Other\n");
+
+    expect(
+      await createGitHubFiles().status(repo.filePath, { fetch: true }),
+    ).toMatchObject({ sync: "synced", behind: 1, remote: null });
+  });
+
+  it("reports both sides changing the file as diverged", async () => {
+    const repo = createParagraphRepo();
+    repo.pushFromElsewhere(
+      README_PATH,
+      PARAGRAPHS.replace("Third", "Third, revised,"),
+    );
+    fs.writeFileSync(
+      repo.filePath,
+      PARAGRAPHS.replace("First", "First, edited here,"),
+    );
+    const files = createGitHubFiles();
+
+    expect(await files.status(repo.filePath, { fetch: true })).toMatchObject({
+      sync: "diverged",
+      reason: "uncommitted",
+    });
+    repo.commitAll("local edit");
+    expect(await files.status(repo.filePath)).toMatchObject({
+      sync: "diverged",
+      reason: "unpushed",
+      ahead: 1,
+      behind: 1,
+    });
+  });
+
+  it("fetches a branch at most once per interval", async () => {
+    const repo = createParagraphRepo();
+    let now = 0;
+    const gitCalls = countingGit();
+    const files = createGitHubFiles({
+      runGit: gitCalls.run,
+      now: () => now,
+      fetchIntervalMs: 1000,
+    });
+    const fetches = () =>
+      gitCalls.calls.filter((call) => call.startsWith("fetch")).length;
+
+    await files.status(repo.filePath, { fetch: true });
+    await files.status(repo.filePath, { fetch: true });
+    expect(fetches()).toBe(1);
+    now = 1001;
+    await files.status(repo.filePath, { fetch: true });
+    expect(fetches()).toBe(2);
+  });
+
+  it("updates automatically by fast-forwarding when this copy has no changes", async () => {
+    const repo = createParagraphRepo();
+    const revised = PARAGRAPHS.replace("Second", "Second, revised,");
+    repo.pushFromElsewhere(README_PATH, revised);
+
+    const result = await createGitHubFiles().updateFromGitHub(
+      repo.filePath,
+      "auto",
+    );
+
+    expect(result).toMatchObject({
+      updated: true,
+      status: { sync: "synced", behind: 0 },
+      changes: { commits: 1, authors: ["Max"] },
+    });
+    expect(fs.readFileSync(repo.filePath, "utf8")).toBe(revised);
+    expect(git(repo.repoDir, "rev-parse", "HEAD")).toBe(
+      git(repo.repoDir, "rev-parse", "origin/main"),
+    );
+  });
+
+  it("does nothing when there is nothing to update", async () => {
+    const repo = createParagraphRepo();
+
+    expect(
+      await createGitHubFiles().updateFromGitHub(repo.filePath, "auto"),
+    ).toMatchObject({ updated: false, status: { sync: "synced" } });
+  });
+
+  it("won't update automatically when the branch has its own commits, but will on request", async () => {
+    const repo = createParagraphRepo();
+    const revised = PARAGRAPHS.replace("Second", "Second, revised,");
+    repo.pushFromElsewhere(README_PATH, revised);
+    repo.write("local.md", "# Local\n");
+    repo.commitAll("local commit");
+    const files = createGitHubFiles();
+
+    await expect(
+      files.updateFromGitHub(repo.filePath, "auto"),
+    ).rejects.toMatchObject({
+      status: 409,
+      message:
+        "This copy has changes of its own, so it wasn't updated automatically.",
+    });
+    expect(fs.readFileSync(repo.filePath, "utf8")).toBe(PARAGRAPHS);
+
+    const result = await files.updateFromGitHub(repo.filePath, "manual");
+    expect(result).toMatchObject({ updated: true, status: { sync: "synced" } });
+    expect(fs.readFileSync(repo.filePath, "utf8")).toBe(revised);
+    expect(
+      git(repo.repoDir, "log", "-1", "--format=%p").split(" "),
+    ).toHaveLength(2);
+  });
+
+  it("won't update automatically over uncommitted changes GitHub also made", async () => {
+    const repo = createParagraphRepo();
+    repo.write("shared.md", "# Shared\n");
+    repo.commitAll("shared");
+    git(repo.repoDir, "push", "--quiet");
+    repo.pushFromElsewhere(README_PATH, PARAGRAPHS.replace("Second", "Two"));
+    repo.pushFromElsewhere("shared.md", "# Shared, theirs\n");
+    repo.write("shared.md", "# Shared, mine\n");
+
+    await expect(
+      createGitHubFiles().updateFromGitHub(repo.filePath, "auto"),
+    ).rejects.toMatchObject({
+      status: 409,
+      message:
+        "Uncommitted changes here would be overwritten in shared.md. Commit or discard them, then update.",
+    });
+    expect(fs.readFileSync(repo.filePath, "utf8")).toBe(PARAGRAPHS);
+    expect(fs.readFileSync(path.join(repo.repoDir, "shared.md"), "utf8")).toBe(
+      "# Shared, mine\n",
+    );
+  });
+
+  it("keeps uncommitted edits to other lines when updating on request", async () => {
+    const repo = createParagraphRepo();
+    repo.pushFromElsewhere(
+      README_PATH,
+      PARAGRAPHS.replace("Third", "Third, revised,"),
+    );
+    fs.writeFileSync(
+      repo.filePath,
+      PARAGRAPHS.replace("First", "First, edited here,"),
+    );
+
+    const result = await createGitHubFiles().updateFromGitHub(
+      repo.filePath,
+      "manual",
+    );
+
+    expect(fs.readFileSync(repo.filePath, "utf8")).toBe(
+      PARAGRAPHS.replace("First", "First, edited here,").replace(
+        "Third",
+        "Third, revised,",
+      ),
+    );
+    expect(result).toMatchObject({
+      updated: true,
+      status: { sync: "changed", reason: "uncommitted", behind: 0 },
+    });
+    expect(git(repo.repoDir, "stash", "list")).toBe("");
+  });
+
+  it("refuses to update when edits here and on GitHub change the same lines", async () => {
+    const repo = createParagraphRepo();
+    repo.pushFromElsewhere(
+      README_PATH,
+      PARAGRAPHS.replace("Second", "Second, theirs,"),
+    );
+    const mine = PARAGRAPHS.replace("Second", "Second, mine,");
+    fs.writeFileSync(repo.filePath, mine);
+    const headBefore = git(repo.repoDir, "rev-parse", "HEAD");
+
+    await expect(
+      createGitHubFiles().updateFromGitHub(repo.filePath, "manual"),
+    ).rejects.toMatchObject({
+      status: 409,
+      message:
+        "Your edits and GitHub's change the same lines of context/strategy notes/README.md, so Roughdraft can't combine them. See the changes on GitHub, then edit to match.",
+      fileStatus: { sync: "diverged" },
+    });
+    expect(fs.readFileSync(repo.filePath, "utf8")).toBe(mine);
+    expect(git(repo.repoDir, "rev-parse", "HEAD")).toBe(headBefore);
+    expect(git(repo.repoDir, "stash", "list")).toBe("");
+  });
+
+  it("refuses to update when commits here and on GitHub change the same lines", async () => {
+    const repo = createParagraphRepo();
+    repo.pushFromElsewhere(
+      README_PATH,
+      PARAGRAPHS.replace("Second", "Second, theirs,"),
+    );
+    fs.writeFileSync(
+      repo.filePath,
+      PARAGRAPHS.replace("Second", "Second, mine,"),
+    );
+    repo.commitAll("mine");
+    const headBefore = git(repo.repoDir, "rev-parse", "HEAD");
+
+    await expect(
+      createGitHubFiles().updateFromGitHub(repo.filePath, "manual"),
+    ).rejects.toMatchObject({
+      status: 409,
+      message:
+        "Commits here and on GitHub change the same lines of context/strategy notes/README.md, so Roughdraft can't combine them. See the changes on GitHub, then merge in a terminal.",
+    });
+    expect(git(repo.repoDir, "rev-parse", "HEAD")).toBe(headBefore);
+    expect(git(repo.repoDir, "status", "--porcelain")).toBe("");
+  });
+});
+
+describe("GitHub link endpoints", { timeout: 30_000 }, () => {
   function app() {
     return createApp({ homeDir: tempDir, staticDirPath: tempDir }).app;
   }
@@ -530,6 +846,26 @@ describe("GitHub link endpoints", () => {
       error: "Check out a branch before pushing.",
       status: { sync: "unknown" },
     });
+  });
+
+  it("updates from GitHub through the API", async () => {
+    const repo = createParagraphRepo();
+    repo.pushFromElsewhere(README_PATH, PARAGRAPHS.replace("First", "1st"));
+
+    const checked = await request(app())
+      .get("/api/github-link")
+      .query({ path: repo.filePath, fetch: "1" });
+    expect(checked.body).toMatchObject({ sync: "behind" });
+
+    const response = await request(app())
+      .post("/api/github-link/update")
+      .send({ path: repo.filePath, mode: "auto" });
+    expect(response.status).toBe(200);
+    expect(response.body).toMatchObject({
+      updated: true,
+      status: { sync: "synced" },
+    });
+    expect(fs.readFileSync(repo.filePath, "utf8")).toContain("1st");
   });
 
   it("rejects relative and non-Markdown paths", async () => {

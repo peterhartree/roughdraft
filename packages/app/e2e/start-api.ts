@@ -24,4 +24,6 @@ await createServer(Number(process.env.API_PORT ?? 4317), undefined, {
   trashFile: moveToFakeTrash,
   // Playwright drives the app in a browser, so documents must open there.
   appOnly: false,
+  // Each test expects its GitHub checks to see that moment's origin.
+  gitHubFetchIntervalMs: 0,
 });
