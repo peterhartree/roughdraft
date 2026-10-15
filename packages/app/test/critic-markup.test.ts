@@ -1467,12 +1467,42 @@ describe("Markdown rich-text round-trip regressions", () => {
     const input = [
       "- Item before",
       "",
-      "    code block",
-      "    second line",
+      "      code block",
+      "      second line",
       "",
       "After",
       "",
     ].join("\n");
+
+    expect(richTextRoundTrip(input)).toBe(input);
+  });
+
+  it("keeps a continuation paragraph in a loose list item numbered 10 or higher editable", () => {
+    const input = [
+      "10. Ask Alex about his links · 12 Oct · Inbox",
+      "",
+      "    The call happened on 12 Oct.",
+      "",
+      "11. Next item",
+      "",
+    ].join("\n");
+
+    type Node = { type?: string; text?: string; content?: Node[] };
+    const { doc } = criticMarkdownToEditorState(input);
+    const firstItem = (doc as Node).content?.[0]?.content?.[0];
+
+    expect(JSON.stringify(doc)).not.toContain("rawMarkdownBlock");
+    expect(firstItem?.type).toBe("listItem");
+    expect(firstItem?.content?.[1]).toMatchObject({
+      type: "paragraph",
+      content: [{ text: "The call happened on 12 Oct." }],
+    });
+  });
+
+  it("preserves genuine indented code inside a list item", () => {
+    const input = ["10. Item", "", "        real code", "", "After", ""].join(
+      "\n",
+    );
 
     expect(richTextRoundTrip(input)).toBe(input);
   });

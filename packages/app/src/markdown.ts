@@ -1,6 +1,6 @@
-import DOMPurify from "dompurify";
-import { detectRoughdraftEndmatter } from "@roughdraft/rfm";
 import { tables, taskListItems } from "@joplin/turndown-plugin-gfm";
+import { detectRoughdraftEndmatter } from "@roughdraft/rfm";
+import DOMPurify from "dompurify";
 import { Marked, marked, type TokenizerObject } from "marked";
 import TurndownService from "turndown";
 
@@ -67,10 +67,27 @@ function protectRawHtmlBlocks(markdown: string): string {
     );
 }
 
+function indentWidth(whitespace: string): number {
+  let width = 0;
+  for (const char of whitespace) {
+    width = char === "\t" ? width + 4 - (width % 4) : width + 1;
+  }
+  return width;
+}
+
+// An indented block after a list item is code only when it sits four columns
+// past the item's content column ("- " is 2, "10. " is 4). Shallower lines are
+// continuation paragraphs, which stay editable.
 function protectIndentedCodeAfterLists(markdown: string): string {
   return markdown.replace(
-    /^(?:[-*+]|\d+[.)]) [^\r\n]*(?:\r?\n)[ \t]*(?:\r?\n)(?:(?: {4}|\t)[^\r\n]*(?:\r?\n|$))+/gm,
-    (raw) => createRawMarkdownBlock(raw),
+    /^((?:[-*+]|\d+[.)])( +))[^\r\n]*(?:\r?\n)[ \t]*(?:\r?\n)(?=([ \t]*))(?:(?: {4}|\t)[^\r\n]*(?:\r?\n|$))+/gm,
+    (raw, prefix: string, spacing: string, indent: string) => {
+      const contentColumn =
+        spacing.length > 4 ? prefix.length - spacing.length + 1 : prefix.length;
+      return indentWidth(indent) >= contentColumn + 4
+        ? createRawMarkdownBlock(raw)
+        : raw;
+    },
   );
 }
 
