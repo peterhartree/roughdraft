@@ -489,11 +489,12 @@ export function createTurndownService(): TurndownService {
         .replace(/\n{2,}(?=(?:[-*+]|1[.)]) )/g, "\n")
         .replace(/\n(?=[^\n])/g, `\n${indent}`);
 
-      return (
-        prefix +
-        trimmed +
-        (node.nextSibling && !/\n$/.test(trimmed) ? "\n" : "")
-      );
+      if (!node.nextSibling) return prefix + trimmed;
+
+      // A loose list keeps a blank line between items.
+      const loose =
+        (parent as HTMLElement | null)?.getAttribute("data-loose") === "true";
+      return `${prefix}${trimmed.replace(/\n$/, "")}${loose ? "\n\n" : "\n"}`;
     },
   });
 

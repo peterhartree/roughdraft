@@ -1404,6 +1404,43 @@ function richTextRoundTrip(markdown: string): string {
   return editorStateToCriticMarkdown(doc, comments, { frontmatter });
 }
 
+describe("Markdown rich-text round-trip of loose lists", () => {
+  it("preserves blank lines between multi-paragraph ordered items across 9 to 10", () => {
+    const input = [
+      "9. First item · 12 Oct · Inbox",
+      "",
+      "   The call happened on 12 Oct.",
+      "",
+      "10. Second item · 12 Oct · Inbox",
+      "",
+      "    **Likely done:** confirmed on 9 Oct.",
+      "",
+      "11. Single-line item · 11 Oct · Inbox",
+      "",
+    ].join("\n");
+
+    expect(richTextRoundTrip(input)).toBe(input);
+  });
+
+  it("preserves blank lines between single-paragraph bullet items", () => {
+    const input = "- a\n\n- b\n\n- c\n";
+
+    expect(richTextRoundTrip(input)).toBe(input);
+  });
+
+  it("keeps a tight bullet list tight", () => {
+    const input = "- a\n- b\n- c\n";
+
+    expect(richTextRoundTrip(input)).toBe(input);
+  });
+
+  it("keeps a tight ordered list with a nested tight list unchanged", () => {
+    const input = "1. a\n   - x\n   - y\n2. b\n";
+
+    expect(richTextRoundTrip(input)).toBe(input);
+  });
+});
+
 describe("Markdown rich-text round-trip regressions", () => {
   it("preserves GFM strikethrough markup", () => {
     const input = "Keep ~~removed~~ and **bold** text.\n";

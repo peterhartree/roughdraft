@@ -2,10 +2,9 @@ import {
   type Editor,
   Extension,
   Mark,
-  Node,
   mergeAttributes,
+  Node,
 } from "@tiptap/core";
-import { reviewAuthorFromBy, reviewAuthorToBy } from "./review-author";
 import Code from "@tiptap/extension-code";
 import CodeBlock from "@tiptap/extension-code-block";
 import Image from "@tiptap/extension-image";
@@ -35,6 +34,7 @@ import {
   rawMarkdownBlockAttribute,
   renderRawMarkdownBlockPreview,
 } from "./markdown";
+import { reviewAuthorFromBy, reviewAuthorToBy } from "./review-author";
 
 declare module "@tiptap/core" {
   interface Commands<ReturnType> {
@@ -1007,6 +1007,38 @@ const RawMarkdownBlock = Node.create({
   },
 });
 
+// Markdown renders a loose list's items as <li><p>; the editor wraps every
+// item in a paragraph, so record looseness explicitly to keep the blank lines
+// between items on save.
+const LooseLists = Extension.create({
+  name: "looseLists",
+
+  addGlobalAttributes() {
+    return [
+      {
+        types: ["bulletList", "orderedList"],
+        attributes: {
+          loose: {
+            default: false,
+            parseHTML: (element) => {
+              const explicit = element.getAttribute("data-loose");
+              if (explicit !== null) return explicit === "true";
+              return Array.from(element.children).some(
+                (item) =>
+                  item.tagName === "LI" &&
+                  item.firstElementChild?.tagName === "P",
+              );
+            },
+            renderHTML: (attributes) => ({
+              "data-loose": attributes.loose ? "true" : "false",
+            }),
+          },
+        },
+      },
+    ];
+  },
+});
+
 export function createEditorExtensions(placeholder: string) {
   return [
     StarterKit.configure({
@@ -1017,6 +1049,7 @@ export function createEditorExtensions(placeholder: string) {
       codeBlock: false,
       link: false,
     }),
+    LooseLists,
     Placeholder.configure({
       placeholder,
     }),
