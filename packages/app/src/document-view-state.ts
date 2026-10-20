@@ -22,6 +22,7 @@ export interface DocumentEditorViewController {
   capture: () => DocumentEditorViewState;
   restore: (state: DocumentEditorViewState | null) => void;
   find: (query: string, direction: DocumentFindDirection) => DocumentFindResult;
+  replace: (replacement: string, all: boolean) => DocumentFindResult;
   clearFind: () => void;
   getFindResult: () => DocumentFindResult;
 }

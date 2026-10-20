@@ -39,6 +39,9 @@ importers:
       '@base-ui/react':
         specifier: ^1.4.1
         version: 1.4.1(@types/react@19.2.14)(react-dom@19.2.5(react@19.2.5))(react@19.2.5)
+      '@codemirror/commands':
+        specifier: ^6.10.3
+        version: 6.10.3
       '@codemirror/lang-markdown':
         specifier: ^6.5.0
         version: 6.5.0

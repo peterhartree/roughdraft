@@ -53,6 +53,7 @@ import {
   createEditorExtensions,
   criticChangeHighlightPluginKey,
   getRichTextDocumentFindResult,
+  replaceRichTextDocumentFind,
   SUGGESTED_PARAGRAPH_SENTINEL,
   updateRichTextDocumentFind,
 } from "./editor-extensions";
@@ -1468,6 +1469,10 @@ const RichTextEditorSurface = memo(function RichTextEditorSurface({
       },
       find: (query, direction) =>
         updateRichTextDocumentFind(editor, query, direction),
+      replace: (replacement, all) =>
+        interactionModeRef.current === "editing"
+          ? replaceRichTextDocumentFind(editor, replacement, all)
+          : getRichTextDocumentFindResult(editor),
       clearFind: () => clearRichTextDocumentFind(editor),
       getFindResult: () => getRichTextDocumentFindResult(editor),
     };

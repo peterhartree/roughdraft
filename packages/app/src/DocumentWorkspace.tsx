@@ -2,6 +2,7 @@ import {
   AlertTriangle,
   Check,
   ChevronDown,
+  ChevronRight,
   ChevronUp,
   CodeXml,
   Copy,
@@ -372,6 +373,8 @@ export function DocumentWorkspace({
   const [fileCopyMenuOpen, setFileCopyMenuOpen] = useState(false);
   const [documentFindOpen, setDocumentFindOpen] = useState(false);
   const [documentFindQuery, setDocumentFindQuery] = useState("");
+  const [documentReplaceOpen, setDocumentReplaceOpen] = useState(false);
+  const [documentReplacement, setDocumentReplacement] = useState("");
   const [documentFindResult, setDocumentFindResult] = useState(
     EMPTY_DOCUMENT_FIND_RESULT,
   );
@@ -458,6 +461,19 @@ export function DocumentWorkspace({
       setDocumentFindResult(result);
     },
     [documentFindQuery, editorViewControllerEntry],
+  );
+
+  const runDocumentReplace = useCallback(
+    (all: boolean) => {
+      if (documentInteractionMode !== "editing") return;
+      setDocumentFindResult(
+        editorViewControllerEntry?.controller.replace(
+          documentReplacement,
+          all,
+        ) ?? EMPTY_DOCUMENT_FIND_RESULT,
+      );
+    },
+    [documentInteractionMode, documentReplacement, editorViewControllerEntry],
   );
 
   const closeDocumentFind = useCallback(() => {
@@ -621,12 +637,17 @@ export function DocumentWorkspace({
     if (!documentPage) return;
 
     const handleKeyDown = (event: KeyboardEvent) => {
-      const findAction = getDocumentFindShortcutAction(event);
+      const findAction = getDocumentFindShortcutAction(
+        event,
+        navigator.platform,
+      );
       if (findAction) {
         event.preventDefault();
         event.stopPropagation();
         openDocumentFind();
-        if (findAction !== "open") {
+        if (findAction === "replace") {
+          setDocumentReplaceOpen(true);
+        } else if (findAction !== "open") {
           runDocumentFind(findAction);
         }
         return;
@@ -1029,84 +1050,183 @@ export function DocumentWorkspace({
                       data-testid="document-find-bar"
                       role="search"
                       aria-label="Find in document"
-                      className="fixed top-3 right-3 z-[60] flex w-[min(calc(100vw-1.5rem),25rem)] items-center gap-1 rounded-lg border border-stone-200 bg-white p-1 shadow-sm dark:border-slate-700 dark:bg-slate-900"
+                      className="fixed top-3 right-3 z-[60] w-[min(calc(100vw-1.5rem),28rem)] rounded-lg border border-stone-200 bg-white p-1 shadow-sm dark:border-slate-700 dark:bg-slate-900"
+                      onKeyDown={(event) => {
+                        if (event.key !== "Escape") return;
+                        event.preventDefault();
+                        event.stopPropagation();
+                        closeDocumentFind();
+                      }}
                     >
-                      <Search
-                        className="ml-1 size-3.5 shrink-0 text-stone-400 dark:text-slate-500"
-                        aria-hidden="true"
-                      />
-                      <Input
-                        ref={documentFindInputRef}
-                        data-testid="document-find-input"
-                        type="text"
-                        value={documentFindQuery}
-                        placeholder="Find in document"
-                        aria-label="Find in document"
-                        className="h-11 flex-1 border-0 px-1.5 py-0 text-xs shadow-none focus-visible:border-0 focus-visible:ring-0 sm:h-7"
-                        onChange={(event) =>
-                          setDocumentFindQuery(event.currentTarget.value)
-                        }
-                        onKeyDown={(event) => {
-                          if (event.key === "Escape") {
+                      <div className="flex items-center gap-1">
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon-sm"
+                          className="h-11 w-11 shrink-0 sm:size-6"
+                          aria-label={
+                            documentReplaceOpen
+                              ? "Hide replace"
+                              : "Show replace"
+                          }
+                          aria-expanded={documentReplaceOpen}
+                          data-testid="document-replace-toggle"
+                          title={
+                            documentReplaceOpen
+                              ? "Hide replace"
+                              : "Show replace"
+                          }
+                          onClick={() =>
+                            setDocumentReplaceOpen((open) => !open)
+                          }
+                        >
+                          {documentReplaceOpen ? (
+                            <ChevronDown aria-hidden="true" />
+                          ) : (
+                            <ChevronRight aria-hidden="true" />
+                          )}
+                        </Button>
+                        <Search
+                          className="hidden size-3.5 shrink-0 text-stone-400 sm:block dark:text-slate-500"
+                          aria-hidden="true"
+                        />
+                        <Input
+                          ref={documentFindInputRef}
+                          data-testid="document-find-input"
+                          type="text"
+                          value={documentFindQuery}
+                          placeholder="Find in document"
+                          aria-label="Find in document"
+                          className="h-11 min-w-0 flex-1 border-0 px-1.5 py-0 text-xs shadow-none focus-visible:border-0 focus-visible:ring-0 sm:h-7"
+                          onChange={(event) =>
+                            setDocumentFindQuery(event.currentTarget.value)
+                          }
+                          onKeyDown={(event) => {
+                            if (event.key === "Escape") {
+                              event.preventDefault();
+                              event.stopPropagation();
+                              closeDocumentFind();
+                              return;
+                            }
+                            if (event.key !== "Enter") return;
                             event.preventDefault();
                             event.stopPropagation();
-                            closeDocumentFind();
-                            return;
-                          }
-                          if (event.key !== "Enter") return;
-                          event.preventDefault();
-                          event.stopPropagation();
-                          runDocumentFind(event.shiftKey ? "previous" : "next");
-                        }}
-                      />
-                      <span
-                        data-testid="document-find-count"
-                        aria-live="polite"
-                        className="min-w-[4rem] text-right text-[0.68rem] font-normal tracking-normal text-stone-400 dark:text-slate-500"
-                      >
-                        {documentFindQuery
-                          ? documentFindResult.total > 0
-                            ? `${documentFindResult.activeIndex + 1} of ${documentFindResult.total}`
-                            : "No results"
-                          : null}
-                      </span>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon-sm"
-                        className="h-11 w-11 sm:size-6"
-                        aria-label="Previous result"
-                        title="Previous result (⇧⌘G)"
-                        data-testid="document-find-previous"
-                        disabled={documentFindResult.total === 0}
-                        onClick={() => runDocumentFind("previous")}
-                      >
-                        <ChevronUp aria-hidden="true" />
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon-sm"
-                        className="h-11 w-11 sm:size-6"
-                        aria-label="Next result"
-                        title="Next result (⌘G)"
-                        data-testid="document-find-next"
-                        disabled={documentFindResult.total === 0}
-                        onClick={() => runDocumentFind("next")}
-                      >
-                        <ChevronDown aria-hidden="true" />
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon-sm"
-                        className="h-11 w-11 sm:size-6"
-                        aria-label="Close find"
-                        data-testid="document-find-close"
-                        onClick={closeDocumentFind}
-                      >
-                        <X aria-hidden="true" />
-                      </Button>
+                            runDocumentFind(
+                              event.shiftKey ? "previous" : "next",
+                            );
+                          }}
+                        />
+                        <span
+                          data-testid="document-find-count"
+                          aria-live="polite"
+                          className="min-w-[4rem] text-right text-[0.68rem] font-normal tracking-normal text-stone-400 dark:text-slate-500"
+                        >
+                          {documentFindQuery
+                            ? documentFindResult.total > 0
+                              ? `${documentFindResult.activeIndex + 1} of ${documentFindResult.total}`
+                              : "No results"
+                            : null}
+                        </span>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon-sm"
+                          className="h-11 w-11 sm:size-6"
+                          aria-label="Previous result"
+                          title="Previous result (⇧⌘G)"
+                          data-testid="document-find-previous"
+                          disabled={documentFindResult.total === 0}
+                          onClick={() => runDocumentFind("previous")}
+                        >
+                          <ChevronUp aria-hidden="true" />
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon-sm"
+                          className="h-11 w-11 sm:size-6"
+                          aria-label="Next result"
+                          title="Next result (⌘G)"
+                          data-testid="document-find-next"
+                          disabled={documentFindResult.total === 0}
+                          onClick={() => runDocumentFind("next")}
+                        >
+                          <ChevronDown aria-hidden="true" />
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon-sm"
+                          className="h-11 w-11 sm:size-6"
+                          aria-label="Close find"
+                          data-testid="document-find-close"
+                          onClick={closeDocumentFind}
+                        >
+                          <X aria-hidden="true" />
+                        </Button>
+                      </div>
+                      {documentReplaceOpen ? (
+                        <div className="mt-1 border-t border-stone-200 pt-1 dark:border-slate-700">
+                          <div className="flex items-center gap-1">
+                            <Input
+                              type="text"
+                              value={documentReplacement}
+                              placeholder="Replace with"
+                              aria-label="Replace with"
+                              data-testid="document-replace-input"
+                              className="h-11 min-w-0 flex-1 text-xs sm:h-8"
+                              disabled={documentInteractionMode !== "editing"}
+                              onChange={(event) =>
+                                setDocumentReplacement(
+                                  event.currentTarget.value,
+                                )
+                              }
+                              onKeyDown={(event) => {
+                                if (
+                                  event.key !== "Enter" ||
+                                  event.nativeEvent.isComposing
+                                )
+                                  return;
+                                event.preventDefault();
+                                runDocumentReplace(false);
+                              }}
+                            />
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              className="h-11 shrink-0 sm:h-8"
+                              disabled={
+                                documentInteractionMode !== "editing" ||
+                                documentFindResult.total === 0
+                              }
+                              onClick={() => runDocumentReplace(false)}
+                              data-testid="document-replace-current"
+                            >
+                              Replace
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              className="h-11 shrink-0 sm:h-8"
+                              disabled={
+                                documentInteractionMode !== "editing" ||
+                                documentFindResult.total === 0
+                              }
+                              onClick={() => runDocumentReplace(true)}
+                              data-testid="document-replace-all"
+                            >
+                              Replace all
+                            </Button>
+                          </div>
+                          {documentInteractionMode !== "editing" ? (
+                            <p className="px-1 py-1 text-xs text-stone-500 dark:text-slate-400">
+                              Switch to Editing to replace text.
+                            </p>
+                          ) : null}
+                        </div>
+                      ) : null}
                     </div>,
                     document.body,
                   )

@@ -12,7 +12,11 @@ interface InteractionModeShortcutEvent {
   target: unknown;
 }
 
-export type DocumentFindShortcutAction = "open" | "next" | "previous";
+export type DocumentFindShortcutAction =
+  | "open"
+  | "replace"
+  | "next"
+  | "previous";
 
 const FORM_CONTROL_TAGS = new Set(["INPUT", "TEXTAREA", "SELECT"]);
 
@@ -53,7 +57,28 @@ export function matchesCopyPathShortcut(
 
 export function getDocumentFindShortcutAction(
   event: InteractionModeShortcutEvent,
+  platform?: string | null,
 ): DocumentFindShortcutAction | null {
+  const key = event.key.toLocaleLowerCase();
+  if (!event.repeat && !event.isComposing && !event.shiftKey) {
+    if (
+      event.metaKey &&
+      event.altKey &&
+      !event.ctrlKey &&
+      event.code === "KeyF"
+    ) {
+      return "replace";
+    }
+    if (
+      !isApplePlatform(platform) &&
+      event.ctrlKey &&
+      !event.metaKey &&
+      !event.altKey &&
+      key === "h"
+    ) {
+      return "replace";
+    }
+  }
   const isPrimaryShortcut =
     event.metaKey !== event.ctrlKey &&
     !event.altKey &&
@@ -61,7 +86,6 @@ export function getDocumentFindShortcutAction(
     !event.isComposing;
 
   if (!isPrimaryShortcut) return null;
-  const key = event.key.toLocaleLowerCase();
   if (key === "f" && !event.shiftKey) return "open";
   if (key !== "g") return null;
   return event.shiftKey ? "previous" : "next";

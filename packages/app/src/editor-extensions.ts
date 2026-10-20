@@ -16,6 +16,7 @@ import { TableHeader } from "@tiptap/extension-table-header";
 import { TableRow } from "@tiptap/extension-table-row";
 import TaskItem from "@tiptap/extension-task-item";
 import TaskList from "@tiptap/extension-task-list";
+import { closeHistory } from "@tiptap/pm/history";
 import type {
   Mark as ProseMirrorMark,
   Node as ProseMirrorNode,
@@ -545,7 +546,10 @@ const DocumentFindHighlight = Extension.create({
             const activeIndex =
               matches.length === 0
                 ? -1
-                : Math.min(requestedActiveIndex, matches.length - 1);
+                : Math.max(
+                    0,
+                    Math.min(requestedActiveIndex, matches.length - 1),
+                  );
 
             return {
               query,
@@ -614,6 +618,60 @@ export function clearRichTextDocumentFind(editor: Editor): void {
       activeIndex: -1,
     } satisfies DocumentFindMeta),
   );
+}
+
+export function replaceRichTextDocumentFind(
+  editor: Editor,
+  replacement: string,
+  all: boolean,
+): DocumentFindResult {
+  const state = documentFindPluginKey.getState(editor.state);
+  if (!editor.isEditable || !state?.query) {
+    return getRichTextDocumentFindResult(editor);
+  }
+  const matches = getRichTextFindMatches(editor.state.doc, state.query);
+  const activeMatch = matches[state.activeIndex];
+  if (!activeMatch) return getRichTextDocumentFindResult(editor);
+
+  const transaction = closeHistory(editor.state.tr);
+  // Work backwards so every range still refers to the original document.
+  for (const match of (all ? [...matches] : [activeMatch]).reverse()) {
+    // Inherit formatting from the matched text, not the current caret.
+    const marks = editor.state.doc.nodeAt(match.from)?.marks;
+    if (replacement) {
+      transaction.replaceWith(
+        match.from,
+        match.to,
+        editor.schema.text(replacement, marks ?? []),
+      );
+    } else {
+      transaction.delete(match.from, match.to);
+    }
+  }
+  const remaining = getRichTextFindMatches(transaction.doc, state.query);
+  const nextIndex = all
+    ? 0
+    : remaining.findIndex(
+        (match) => match.from >= activeMatch.from + replacement.length,
+      );
+  const activeIndex = remaining.length === 0 ? -1 : Math.max(0, nextIndex);
+  const nextMatch = remaining[activeIndex];
+  transaction.setMeta(documentFindPluginKey, {
+    query: state.query,
+    activeIndex,
+  } satisfies DocumentFindMeta);
+  if (nextMatch) {
+    transaction.setSelection(
+      TextSelection.create(transaction.doc, nextMatch.from, nextMatch.to),
+    );
+  }
+  editor.view.dispatch(transaction);
+  // Keep subsequent typing or another replacement in its own undo step.
+  editor.view.dispatch(closeHistory(editor.state.tr));
+  editor.view.dom
+    .querySelector(".document-find-match-active")
+    ?.scrollIntoView({ block: "center", inline: "nearest" });
+  return { activeIndex, total: remaining.length };
 }
 
 export function getRichTextDocumentFindResult(

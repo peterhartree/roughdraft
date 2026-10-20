@@ -132,12 +132,42 @@ describe("document find shortcuts", () => {
   it("ignores non-standard modifier combinations", () => {
     for (const event of [
       { ...findShortcut, metaKey: false },
-      { ...findShortcut, altKey: true },
       { ...findShortcut, ctrlKey: true },
       { ...findShortcut, shiftKey: true },
       { ...findShortcut, code: "KeyG", key: "g", altKey: true },
     ]) {
       expect(getDocumentFindShortcutAction(event)).toBeNull();
     }
+  });
+
+  it("opens replace with Command-Option-F or Control-H", () => {
+    expect(
+      getDocumentFindShortcutAction({
+        ...findShortcut,
+        altKey: true,
+        key: "ƒ",
+      }),
+    ).toBe("replace");
+    expect(
+      getDocumentFindShortcutAction({
+        ...findShortcut,
+        metaKey: false,
+        ctrlKey: true,
+        code: "KeyH",
+        key: "h",
+      }),
+    ).toBe("replace");
+  });
+
+  it("leaves Control-H available for delete-backward on macOS", () => {
+    const controlH = {
+      ...findShortcut,
+      metaKey: false,
+      ctrlKey: true,
+      code: "KeyH",
+      key: "h",
+    };
+    expect(getDocumentFindShortcutAction(controlH, "MacIntel")).toBeNull();
+    expect(getDocumentFindShortcutAction(controlH, "Win32")).toBe("replace");
   });
 });
