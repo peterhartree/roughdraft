@@ -267,6 +267,7 @@ export function EditorContextMenu({
   const linkPopoverRef = useRef<HTMLDivElement>(null);
   const linkInputRef = useRef<HTMLInputElement>(null);
   const shortcutLabel = getAddCommentShortcutLabel(getNavigatorPlatform());
+  const usesCommandKey = /mac|iphone|ipad|ipod/i.test(getNavigatorPlatform());
   const selectionMenuState = useEditorState({
     editor,
     selector: ({ editor: currentEditor }) => ({
@@ -723,6 +724,9 @@ export function EditorContextMenu({
         close();
       } catch {
         setCopyFailed(true);
+        // Keyboard copying has no open menu in which to show the retry message.
+        const bounds = editor.view.dom.getBoundingClientRect();
+        setPosition((current) => current ?? { x: bounds.left, y: bounds.top });
       }
     },
     [close, editor],
@@ -754,6 +758,24 @@ export function EditorContextMenu({
     <div
       ref={containerRef}
       className="relative"
+      onKeyDownCapture={(event) => {
+        if (
+          !editor?.view.dom.contains(event.target as Node) ||
+          event.nativeEvent.isComposing ||
+          event.key.toLowerCase() !== "c" ||
+          !event.shiftKey ||
+          event.altKey ||
+          (usesCommandKey
+            ? !event.metaKey || event.ctrlKey
+            : !event.ctrlKey || event.metaKey)
+        ) {
+          return;
+        }
+
+        event.preventDefault();
+        event.stopPropagation();
+        void handleCopy(true);
+      }}
       onMouseDownCapture={(event) => {
         if (!editor || !containerRef.current) return;
 
@@ -1210,12 +1232,21 @@ export function EditorContextMenu({
                   key={label}
                   variant="ghost"
                   data-testid={`editor-context-menu-action-${toTestIdSegment(label)}`}
-                  className="h-auto w-full justify-start rounded-xl px-3 py-2 text-left text-sm font-normal text-slate-700 hover:bg-slate-50 dark:text-slate-300 dark:hover:bg-slate-700"
+                  className="h-auto w-full justify-between gap-3 rounded-xl px-3 py-2 text-left text-sm font-normal text-slate-700 hover:bg-slate-50 dark:text-slate-300 dark:hover:bg-slate-700"
                   disabled={!editor || editor.state.selection.empty}
                   onMouseDown={(event) => event.preventDefault()}
                   onClick={() => void handleCopy(label === "Copy as Markdown")}
                 >
-                  {label}
+                  <span>{label}</span>
+                  <span className="text-[11px] font-medium text-slate-400 dark:text-slate-500">
+                    {usesCommandKey
+                      ? label === "Copy"
+                        ? "⌘C"
+                        : "⇧⌘C"
+                      : label === "Copy"
+                        ? "Ctrl+C"
+                        : "Ctrl+Shift+C"}
+                  </span>
                 </Button>
               ))}
               {copyFailed ? (

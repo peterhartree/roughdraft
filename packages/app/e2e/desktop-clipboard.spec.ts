@@ -86,6 +86,28 @@ test("writes to the system clipboard through the Electron permission boundary @s
       });
     }
 
+    for (const [shortcut, expected] of [
+      ["Meta+c", "selected text"],
+      ["Meta+Shift+c", "**selected text**"],
+    ]) {
+      await electronApp.evaluate(({ clipboard }) =>
+        clipboard.writeText("before shortcut"),
+      );
+      await selectRichText(window, "selected text");
+      await window.keyboard.press(shortcut);
+      await expect
+        .poll(() =>
+          electronApp.evaluate(({ clipboard }) => clipboard.readText()),
+        )
+        .toBe(expected);
+      expect(fs.readFileSync(documentPath, "utf8")).toBe(markdown);
+      logE2eEvent("desktop.keyboard.copy", {
+        shortcut,
+        characters: expected.length,
+        documentUnchanged: true,
+      });
+    }
+
     await electronApp.evaluate(async ({ BrowserWindow }, origin) => {
       const unrelatedWindow = new BrowserWindow({ show: false });
       await unrelatedWindow.loadURL(origin);

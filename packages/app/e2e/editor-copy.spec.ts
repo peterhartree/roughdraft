@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { expect, test, type Page } from "@playwright/test";
+import { expect, type Page, test } from "@playwright/test";
 import {
   createMarkdownProject,
   logE2eEvent,
@@ -26,7 +26,24 @@ async function readClipboard(page: Page) {
   return page.evaluate(() => navigator.clipboard.readText());
 }
 
-test.describe("rich-text editor context-menu copy actions", () => {
+async function primaryModifier(page: Page) {
+  return page.evaluate(() => {
+    const platform =
+      (
+        navigator as Navigator & {
+          userAgentData?: { platform?: string };
+        }
+      ).userAgentData?.platform ?? navigator.platform;
+    return /mac|iphone|ipad|ipod/i.test(platform) ? "Meta" : "Control";
+  });
+}
+
+function copyShortcutLabel(modifier: string, markdown = false) {
+  if (modifier === "Meta") return markdown ? "⇧⌘C" : "⌘C";
+  return markdown ? "Ctrl+Shift+C" : "Ctrl+C";
+}
+
+test.describe("rich-text editor copy actions", () => {
   let projectDir: string;
 
   test.beforeEach(() => {
@@ -59,6 +76,8 @@ test.describe("rich-text editor context-menu copy actions", () => {
     const copy = page.getByTestId(plainCopyAction);
     await expect(copy).toBeVisible();
     await expect(copy).toBeEnabled();
+    const modifier = await primaryModifier(page);
+    await expect(copy).toContainText(copyShortcutLabel(modifier));
     await captureMenuScreenshot(page, "selected-context-menu.png");
     await copy.click();
 
@@ -92,6 +111,10 @@ test.describe("rich-text editor context-menu copy actions", () => {
     const copyAsMarkdown = page.getByTestId(markdownCopyAction);
     await expect(copyAsMarkdown).toBeVisible();
     await expect(copyAsMarkdown).toBeEnabled();
+    const modifier = await primaryModifier(page);
+    await expect(copyAsMarkdown).toContainText(
+      copyShortcutLabel(modifier, true),
+    );
     await captureMenuScreenshot(page, "selected-list-context-menu.png");
     await copyAsMarkdown.click();
 
@@ -102,6 +125,116 @@ test.describe("rich-text editor context-menu copy actions", () => {
     logE2eEvent("editor-copy.markdown", {
       action: "copy-as-markdown",
       characterCount: copiedMarkdown.length,
+      passed: true,
+    });
+  });
+
+  test("the native copy shortcut copies a formatted selection as plain text", async ({
+    context,
+    page,
+  }) => {
+    await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+    const filePath = writeProjectFile(
+      projectDir,
+      "keyboard-copy.md",
+      "# Copy\n\nThis has **formatted phrase** in the middle.\n",
+    );
+
+    await openMarkdownFile(page, filePath);
+    await selectRichText(page, "formatted phrase");
+    // Native copy follows the host OS even when Chromium reports a Linux
+    // platform from userAgentData in this macOS test environment.
+    const modifier = process.platform === "darwin" ? "Meta" : "Control";
+    await page.keyboard.press(`${modifier}+c`);
+
+    await expect.poll(() => readClipboard(page)).toBe("formatted phrase");
+    logE2eEvent("editor-copy.keyboard-plain", {
+      action: "copy",
+      passed: true,
+    });
+  });
+
+  test("Cmd+Shift+C copies a formatted selection as Markdown", async ({
+    context,
+    page,
+  }) => {
+    await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+    const filePath = writeProjectFile(
+      projectDir,
+      "keyboard-copy-markdown.md",
+      "# Copy\n\nThis has **formatted phrase** in the middle.\n",
+    );
+
+    await openMarkdownFile(page, filePath);
+    await selectRichText(page, "formatted phrase");
+    const modifier = await primaryModifier(page);
+    await page.keyboard.press(`${modifier}+Shift+c`);
+
+    await expect.poll(() => readClipboard(page)).toBe("**formatted phrase**");
+    logE2eEvent("editor-copy.keyboard-markdown", {
+      action: "copy-as-markdown",
+      passed: true,
+    });
+  });
+
+  test("does not change the clipboard when the Markdown shortcut has no selection", async ({
+    context,
+    page,
+  }) => {
+    await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+    const filePath = writeProjectFile(
+      projectDir,
+      "keyboard-copy-empty-selection.md",
+      "# Copy\n\nThere is no selected text here.\n",
+    );
+
+    await openMarkdownFile(page, filePath);
+    await page.evaluate(() =>
+      navigator.clipboard.writeText("clipboard sentinel"),
+    );
+    const editor = richTextEditor(page);
+    await editor.getByText("There is no selected text here.").click();
+    await expect
+      .poll(() => page.evaluate(() => window.getSelection()?.toString() ?? ""))
+      .toBe("");
+
+    const modifier = await primaryModifier(page);
+    await page.keyboard.press(`${modifier}+Shift+c`);
+
+    await expect.poll(() => readClipboard(page)).toBe("clipboard sentinel");
+    logE2eEvent("editor-copy.keyboard-empty-selection", {
+      action: "copy-as-markdown",
+      passed: true,
+    });
+  });
+
+  test("does not intercept the Markdown shortcut in the document find input", async ({
+    context,
+    page,
+  }) => {
+    await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+    const filePath = writeProjectFile(
+      projectDir,
+      "keyboard-copy-input.md",
+      "# Copy\n\nThis has **formatted phrase** in the middle.\n",
+    );
+
+    await openMarkdownFile(page, filePath);
+    await selectRichText(page, "formatted phrase");
+    const modifier = await primaryModifier(page);
+    await page.keyboard.press(`${modifier}+F`);
+    const findInput = page.getByTestId("document-find-input");
+    await expect(findInput).toBeFocused();
+    await findInput.fill("find query");
+    await page.evaluate(() =>
+      navigator.clipboard.writeText("clipboard sentinel"),
+    );
+    await page.keyboard.press(`${modifier}+Shift+c`);
+
+    await expect(findInput).toHaveValue("find query");
+    await expect.poll(() => readClipboard(page)).toBe("clipboard sentinel");
+    logE2eEvent("editor-copy.keyboard-input", {
+      action: "copy-as-markdown",
       passed: true,
     });
   });
