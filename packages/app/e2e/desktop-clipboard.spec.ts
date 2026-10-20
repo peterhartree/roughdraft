@@ -2,6 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { _electron as electron, expect, test } from "@playwright/test";
+import { logE2eEvent, richTextEditor, selectRichText } from "./helpers";
 
 test("writes to the system clipboard through the Electron permission boundary @smoke", async () => {
   test.skip(
@@ -10,14 +11,24 @@ test("writes to the system clipboard through the Electron permission boundary @s
   );
 
   const apiPort = Number(process.env.API_PORT ?? 4317);
+  const origin = `http://localhost:${apiPort}`;
   const temporaryDirectory = fs.mkdtempSync(
     path.join(os.tmpdir(), "roughdraft-desktop-clipboard-"),
   );
   const stateFile = path.join(temporaryDirectory, "server.json");
   const userDataDirectory = path.join(temporaryDirectory, "electron-profile");
+  const status = await fetch(`${origin}/api/status`).then((response) =>
+    response.json(),
+  );
+  // The desktop startup CLI validates this state before reusing the test server.
   fs.writeFileSync(
     stateFile,
-    JSON.stringify({ port: apiPort, url: `http://127.0.0.1:${apiPort}` }),
+    JSON.stringify({
+      port: apiPort,
+      pid: status.pid,
+      startedAt: new Date().toISOString(),
+      url: origin,
+    }),
   );
 
   const electronApp = await electron.launch({
@@ -33,7 +44,7 @@ test("writes to the system clipboard through the Electron permission boundary @s
 
   try {
     const window = await electronApp.firstWindow();
-    await expect(window).toHaveURL(`http://127.0.0.1:${apiPort}/`);
+    await expect(window).toHaveURL(`${origin}/`);
 
     const expectedPath = "/Users/me/project/electron-clipboard.md";
     await window.evaluate(
@@ -45,10 +56,40 @@ test("writes to the system clipboard through the Electron permission boundary @s
       .poll(() => electronApp.evaluate(({ clipboard }) => clipboard.readText()))
       .toBe(expectedPath);
 
+    const documentPath = path.join(temporaryDirectory, "copy.md");
+    const markdown = "Before **selected text** after.\n";
+    fs.writeFileSync(documentPath, markdown);
+    const params = new URLSearchParams({ path: documentPath });
+    await window.goto(`${origin}/?${params}`);
+    await expect(richTextEditor(window)).toContainText("selected text");
+
+    for (const [action, expected] of [
+      ["copy", "selected text"],
+      ["copy-as-markdown", "**selected text**"],
+    ]) {
+      await selectRichText(window, "selected text");
+      await richTextEditor(window)
+        .getByText("selected text", { exact: true })
+        .click({ button: "right" });
+      await window.getByTestId(`editor-context-menu-action-${action}`).click();
+      await expect
+        .poll(() =>
+          electronApp.evaluate(({ clipboard }) => clipboard.readText()),
+        )
+        .toBe(expected);
+      await expect(window.getByTestId("editor-context-menu")).toBeHidden();
+      expect(fs.readFileSync(documentPath, "utf8")).toBe(markdown);
+      logE2eEvent("desktop.context-menu.copy", {
+        action,
+        characters: expected.length,
+        documentUnchanged: true,
+      });
+    }
+
     await electronApp.evaluate(async ({ BrowserWindow }, origin) => {
       const unrelatedWindow = new BrowserWindow({ show: false });
       await unrelatedWindow.loadURL(origin);
-    }, `http://127.0.0.1:${apiPort}/`);
+    }, `${origin}/`);
     const unrelatedWindow = electronApp
       .windows()
       .find((candidate) => candidate !== window);
@@ -67,7 +108,7 @@ test("writes to the system clipboard through the Electron permission boundary @s
 
     await expect
       .poll(() => electronApp.evaluate(({ clipboard }) => clipboard.readText()))
-      .toBe(expectedPath);
+      .toBe("**selected text**");
   } finally {
     await electronApp.close();
     fs.rmSync(temporaryDirectory, { recursive: true, force: true });

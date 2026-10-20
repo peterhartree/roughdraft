@@ -1,3 +1,4 @@
+import { DOMSerializer } from "@tiptap/pm/model";
 import type { Editor } from "@tiptap/react";
 import { useEditorState } from "@tiptap/react";
 import {
@@ -27,12 +28,13 @@ import {
   getAddCommentShortcutLabel,
   matchesAddCommentShortcut,
 } from "./comment-shortcuts";
+import { Button } from "./components/ui/button";
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
 } from "./components/ui/tooltip";
-import { toHtml } from "./markdown";
+import { toHtml, toMarkdown } from "./markdown";
 import type { StorageBackend } from "./storage";
 
 interface EditorContextMenuProps {
@@ -237,6 +239,7 @@ export function EditorContextMenu({
   children,
 }: EditorContextMenuProps) {
   const [position, setPosition] = useState<MenuPosition | null>(null);
+  const [copyFailed, setCopyFailed] = useState(false);
   const [selectionActionPosition, setSelectionActionPosition] =
     useState<SelectionActionPosition | null>(null);
   const [linkPopoverState, setLinkPopoverState] =
@@ -695,6 +698,36 @@ export function EditorContextMenu({
     }
   }, [close, editor]);
 
+  const handleCopy = useCallback(
+    async (asMarkdown: boolean) => {
+      if (!editor || editor.state.selection.empty) return;
+
+      setCopyFailed(false);
+      try {
+        const slice = editor.state.selection.content();
+        let text: string;
+        if (asMarkdown) {
+          // Keep the selection's block structure (including list wrappers).
+          const container = document.createElement("div");
+          container.appendChild(
+            DOMSerializer.fromSchema(editor.schema).serializeFragment(
+              slice.content,
+            ),
+          );
+          // The document serializer adds a final newline; snippets don't need it.
+          text = toMarkdown(container.innerHTML).replace(/\n$/, "");
+        } else {
+          text = editor.view.serializeForClipboard(slice).text;
+        }
+        await navigator.clipboard.writeText(text);
+        close();
+      } catch {
+        setCopyFailed(true);
+      }
+    },
+    [close, editor],
+  );
+
   const handlePasteMarkdown = useCallback(async () => {
     if (!editor) return;
 
@@ -767,6 +800,7 @@ export function EditorContextMenu({
       onContextMenu={(event) => {
         event.preventDefault();
         event.stopPropagation();
+        setCopyFailed(false);
         setPosition({ x: event.clientX, y: event.clientY });
       }}
     >
@@ -1170,6 +1204,28 @@ export function EditorContextMenu({
                     aria-hidden="true"
                   />
                 </>
+              ) : null}
+              {(["Copy", "Copy as Markdown"] as const).map((label) => (
+                <Button
+                  key={label}
+                  variant="ghost"
+                  data-testid={`editor-context-menu-action-${toTestIdSegment(label)}`}
+                  className="h-auto w-full justify-start rounded-xl px-3 py-2 text-left text-sm font-normal text-slate-700 hover:bg-slate-50 dark:text-slate-300 dark:hover:bg-slate-700"
+                  disabled={!editor || editor.state.selection.empty}
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={() => void handleCopy(label === "Copy as Markdown")}
+                >
+                  {label}
+                </Button>
+              ))}
+              {copyFailed ? (
+                <p
+                  data-testid="editor-context-menu-copy-error"
+                  role="alert"
+                  className="px-3 py-2 text-sm text-red-600 dark:text-red-400"
+                >
+                  Could not copy. Try again.
+                </p>
               ) : null}
               <button
                 type="button"
