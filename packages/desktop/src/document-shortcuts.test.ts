@@ -97,6 +97,7 @@ describe("desktop document shortcuts", () => {
 
   it.each([
     ["Command-F", { ...commandW, key: "f", code: "KeyF" }],
+    ["Command-Shift-F", { ...commandW, key: "F", code: "KeyF", shift: true }],
     ["Command-G", { ...commandW, key: "g", code: "KeyG" }],
     ["Command-Shift-G", { ...commandW, key: "g", code: "KeyG", shift: true }],
     ["Command-Shift-E", { ...commandW, key: "E", code: "KeyD", shift: true }],

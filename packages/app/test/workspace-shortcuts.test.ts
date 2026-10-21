@@ -133,7 +133,9 @@ describe("document find shortcuts", () => {
     for (const event of [
       { ...findShortcut, metaKey: false },
       { ...findShortcut, ctrlKey: true },
-      { ...findShortcut, shiftKey: true },
+      { ...findShortcut, shiftKey: true, altKey: true },
+      { ...findShortcut, shiftKey: true, repeat: true },
+      { ...findShortcut, shiftKey: true, isComposing: true },
       { ...findShortcut, code: "KeyG", key: "g", altKey: true },
     ]) {
       expect(getDocumentFindShortcutAction(event)).toBeNull();
@@ -156,6 +158,19 @@ describe("document find shortcuts", () => {
         code: "KeyH",
         key: "h",
       }),
+    ).toBe("replace");
+  });
+
+  it("also opens replace with Command-Shift-F", () => {
+    expect(
+      getDocumentFindShortcutAction(
+        {
+          ...findShortcut,
+          key: "F",
+          shiftKey: true,
+        },
+        "MacIntel",
+      ),
     ).toBe("replace");
   });
 

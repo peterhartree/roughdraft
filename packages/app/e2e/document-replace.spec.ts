@@ -63,6 +63,30 @@ test.describe("find and replace", () => {
     removeMarkdownProject(projectDir);
   });
 
+  test("Command-Shift-F and Command-Option-F open replacement in both views", async ({
+    page,
+  }) => {
+    const filePath = writeProjectFile(
+      projectDir,
+      "replace-shortcuts.md",
+      "# Shortcuts\n\nNeedle.\n",
+    );
+    for (const view of ["rich-text", "code"] as const) {
+      await openMarkdownFile(page, filePath, view);
+      const editor =
+        view === "rich-text" ? richTextEditor(page) : codeEditor(page);
+      await expect(editor).toBeVisible();
+      await editor.click();
+      for (const shortcut of ["Meta+Shift+f", "Meta+Alt+f"]) {
+        await page.keyboard.press(shortcut);
+        await expect(page.getByTestId("document-find-input")).toBeFocused();
+        await expect(page.getByTestId("document-replace-input")).toBeVisible();
+        logE2eEvent("document-replace.shortcut-opened", { shortcut, view });
+        await page.getByTestId("document-find-close").click();
+      }
+    }
+  });
+
   test("offers replacement only while editing in both editor views", async ({
     page,
   }) => {

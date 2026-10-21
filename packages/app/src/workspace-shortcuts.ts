@@ -86,6 +86,7 @@ export function getDocumentFindShortcutAction(
     !event.isComposing;
 
   if (!isPrimaryShortcut) return null;
+  if (key === "f" && event.metaKey && event.shiftKey) return "replace";
   if (key === "f" && !event.shiftKey) return "open";
   if (key !== "g") return null;
   return event.shiftKey ? "previous" : "next";

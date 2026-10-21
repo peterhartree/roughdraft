@@ -18,10 +18,7 @@ export function shouldSuppressNativeDocumentShortcut(
   const key = input.key.toLocaleLowerCase();
   const isSidebarToggle = key === "e" && input.shift;
   const isRoutedShortcut =
-    key === "w" ||
-    (key === "f" && !input.shift) ||
-    key === "g" ||
-    isSidebarToggle;
+    key === "w" || key === "f" || key === "g" || isSidebarToggle;
   if (
     input.type !== "keyDown" ||
     !isRoutedShortcut ||
