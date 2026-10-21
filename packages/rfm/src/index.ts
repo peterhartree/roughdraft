@@ -193,6 +193,7 @@ export function validateRoughdraftMarkdown(
   const endmatter = parseRoughdraftEndmatter(markdown);
   const diagnostics: RfmDiagnostic[] = [];
   const ids = new Map<string, IdReference>();
+  const inlineCommentTexts = new Map<string, string>();
   const replies: ReplyReference[] = [];
   const summary: RfmValidationSummary = {
     comments: 0,
@@ -338,6 +339,22 @@ export function validateRoughdraftMarkdown(
     }
   };
 
+  const validateCommentText = (parsed: ParsedComment) => {
+    const id = referencedId(parsed.metadata);
+    const entry = id ? endmatter.comments.get(id) : undefined;
+    if (id && !inlineCommentTexts.has(id)) {
+      inlineCommentTexts.set(id, parsed.content);
+    }
+    if (parsed.content === "" && endmatterBody(entry) === undefined) {
+      addDiagnostic(
+        "warning",
+        "empty-comment",
+        "Comment has no text inline or in YAML endmatter `body`.",
+        parsed.offset,
+      );
+    }
+  };
+
   let offset = 0;
   const scanEndOffset = endmatter.offset ?? markdown.length;
   let fence: FenceState | null = null;
@@ -384,6 +401,7 @@ export function validateRoughdraftMarkdown(
         summary.comments += 1;
         anchoredComments += 1;
         validateMetadata(parsed.metadata, "comment", nextOffset);
+        validateCommentText(parsed);
         nextOffset = parsed.endOffset;
       }
 
@@ -396,6 +414,7 @@ export function validateRoughdraftMarkdown(
       if (parsed) {
         summary.comments += 1;
         validateMetadata(parsed.metadata, "comment", offset);
+        validateCommentText(parsed);
         offset = parsed.endOffset;
         continue;
       }
@@ -414,6 +433,26 @@ export function validateRoughdraftMarkdown(
 
   for (const [id, entry] of endmatter.comments) {
     if (!entry.body && !entry.re) continue;
+
+    const inlineText = inlineCommentTexts.get(id);
+    if (inlineText !== undefined) {
+      // The inline marker owns this id; endmatter carries its body or `re`.
+      const markerOffset = ids.get(id)?.offset ?? endmatter.offset ?? 0;
+      if (hasStaleEndmatterBody(inlineText, entry)) {
+        addDiagnostic(
+          "warning",
+          "conflicting-comment-body",
+          `Comment \`${id}\` has different text inline and in YAML endmatter; the inline text is used.`,
+          markerOffset,
+        );
+        continue;
+      }
+      if (entry.re) {
+        summary.replies += 1;
+        replies.push({ id, parentId: String(entry.re), offset: markerOffset });
+      }
+      continue;
+    }
 
     const existing = ids.get(id);
     if (existing) {
@@ -501,12 +540,20 @@ export function extractRoughdraftReviewIndex(markdown: string): RfmReviewIndex {
   const validation = validateRoughdraftMarkdown(markdown);
   const endmatter = parseRoughdraftEndmatter(markdown);
   const items: RfmReviewItem[] = [];
+  const inlineCommentIds = new Set<string>();
   const noopDiagnostic = () => {};
 
   const addComment = (parsed: ParsedComment, anchorText?: string) => {
     const attrs = hydrateMetadataAttrs(parsed.metadata, endmatter, "comment");
     const id = attrs.get("id") ?? `comment-${parsed.offset.toString()}`;
-    const parentId = attrs.get("re") ?? null;
+    const referenceId = referencedId(parsed.metadata);
+    const entry = referenceId ? endmatter.comments.get(referenceId) : undefined;
+    const body = endmatterBody(entry);
+    const parentId =
+      entry && hasStaleEndmatterBody(parsed.content, entry)
+        ? null
+        : (attrs.get("re") ?? null);
+    if (referenceId) inlineCommentIds.add(referenceId);
 
     items.push({
       id,
@@ -516,7 +563,7 @@ export function extractRoughdraftReviewIndex(markdown: string): RfmReviewIndex {
       createdAt: attrs.get("at") ?? null,
       status: attrs.get("status") ?? null,
       reaction: normalizeRfmReaction(attrs.get("reaction")),
-      text: parsed.content,
+      text: parsed.content === "" && body !== undefined ? body : parsed.content,
       anchorText,
       offset: parsed.offset,
       endOffset: parsed.endOffset,
@@ -617,7 +664,7 @@ export function extractRoughdraftReviewIndex(markdown: string): RfmReviewIndex {
   }
 
   for (const [id, entry] of endmatter.comments) {
-    if (!entry.body) continue;
+    if (!entry.body || inlineCommentIds.has(id)) continue;
 
     items.push({
       id,
@@ -1426,6 +1473,31 @@ function readEndmatterEntries(value: unknown): Map<string, YamlMetadataEntry> {
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function referencedId(metadata: Metadata | null): string | undefined {
+  return metadata?.kind === "reference" ? metadata.attrs.get("id") : undefined;
+}
+
+function endmatterBody(
+  entry: YamlMetadataEntry | undefined,
+): string | undefined {
+  return entry?.body === undefined || entry.body === null
+    ? undefined
+    : String(entry.body);
+}
+
+/**
+ * An endmatter body beside non-empty inline text should repeat it. One that
+ * differs is left over from an earlier comment that used this id, so the
+ * inline text wins and the entry's `re` is ignored, as in the app.
+ */
+function hasStaleEndmatterBody(
+  inlineText: string,
+  entry: YamlMetadataEntry,
+): boolean {
+  const body = endmatterBody(entry);
+  return inlineText !== "" && body !== undefined && body !== inlineText;
 }
 
 function hydrateMetadataAttrs(

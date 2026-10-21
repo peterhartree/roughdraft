@@ -11,6 +11,8 @@ import {
 
 const USAGE_ERROR = 2;
 
+type ReviewThread = RfmReviewItem & { replies: ReviewThread[] };
+
 const REVIEW_COMMANDS = ["comments", "reply", "resolve"] as const;
 type ReviewCommand = (typeof REVIEW_COMMANDS)[number];
 
@@ -63,7 +65,7 @@ export function printReviewCommandHelp(
     log("");
     log("Flags:");
     log("  --unresolved  Hide resolved items");
-    log("  --json        Print the review index as JSON");
+    log("  --json        Print threads as JSON, with replies nested");
     return;
   }
 
@@ -249,13 +251,14 @@ function listComments(
   const items = options.unresolved
     ? withoutResolvedThreads(index.items)
     : index.items;
+  const threads = buildThreads(items);
 
   if (json) {
     deps.log(
       JSON.stringify(
         {
           path: absolutePath,
-          items,
+          threads,
           summary: index.summary,
           diagnostics: index.diagnostics,
         },
@@ -271,24 +274,47 @@ function listComments(
     return 0;
   }
 
-  const ids = new Set(items.map((item) => item.id));
-  const roots = items.filter(
-    (item) => !item.parentId || !ids.has(item.parentId),
-  );
-  const printThread = (item: RfmReviewItem, depth: number) => {
-    deps.log(formatItem(item, depth));
-    for (const reply of items.filter(
-      (candidate) => candidate.parentId === item.id,
-    )) {
+  const printThread = (thread: ReviewThread, depth: number) => {
+    deps.log(formatItem(thread, depth));
+    for (const reply of thread.replies) {
       printThread(reply, depth + 1);
     }
   };
 
-  for (const root of roots) {
-    printThread(root, 0);
+  for (const thread of threads) {
+    printThread(thread, 0);
   }
 
   return 0;
+}
+
+/**
+ * Nests replies under their parents in document order. A reply whose parent
+ * is missing, or that sits in a `re` cycle, is listed as a thread of its own.
+ */
+function buildThreads(items: RfmReviewItem[]): ReviewThread[] {
+  const ids = new Set(items.map((item) => item.id));
+  const placed = new Set<RfmReviewItem>();
+  const toThread = (item: RfmReviewItem): ReviewThread => {
+    placed.add(item);
+    return {
+      ...item,
+      replies: items
+        .filter(
+          (candidate) =>
+            candidate.parentId === item.id && !placed.has(candidate),
+        )
+        .map(toThread),
+    };
+  };
+
+  const threads = items
+    .filter((item) => !item.parentId || !ids.has(item.parentId))
+    .map(toThread);
+  for (const item of items) {
+    if (!placed.has(item)) threads.push(toThread(item));
+  }
+  return threads;
 }
 
 /** Drops resolved items along with every reply beneath them. */

@@ -890,6 +890,9 @@ function printCriticMarkupHelp(log: (message: string) => void) {
     "  If you write a reply by hand, store it in `comments.<id>.body` with `re: <parent-id>`.",
   );
   log(
+    "  An empty comment such as {>><<}{#c1} keeps its multi-paragraph text in `comments.c1.body`.",
+  );
+  log(
     "  Existing inline attribute metadata is still accepted for compatibility.",
   );
   log(

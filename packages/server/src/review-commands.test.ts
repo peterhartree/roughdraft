@@ -188,9 +188,107 @@ describe("roughdraft comments", () => {
     const result = await run(["comments", draftPath, "--unresolved", "--json"]);
 
     const payload = JSON.parse(result.logs.join("\n")) as {
-      items: Array<{ id: string }>;
+      threads: Array<{ id: string }>;
     };
-    expect(payload.items.map((item) => item.id)).toEqual(["c2"]);
+    expect(payload.threads.map((item) => item.id)).toEqual(["c2"]);
+  });
+
+  // The app writes a multi-paragraph root comment as an empty inline marker
+  // plus an endmatter body; that body is the comment's text, listed once.
+  const multiParagraphThreads = [
+    "# Draft",
+    "",
+    "Intro {==anchor text==}{>><<}{#c1} more.",
+    "",
+    "Later {==a==}{>>Short<<}{#c6} end.",
+    "",
+    "---",
+    "comments:",
+    "  c1:",
+    "    by: user",
+    "    at: 2026-10-21T06:59:17.559Z",
+    "    body: >-",
+    "      First paragraph line one",
+    "      continues here.",
+    "",
+    "",
+    "      Second paragraph.",
+    "  c6:",
+    "    by: user",
+    "    at: 2026-10-21T07:00:00.000Z",
+    "  c7:",
+    "    body: Fixed it.",
+    "    by: Claude",
+    "    at: 2026-10-21T07:05:00.000Z",
+    "    re: c6",
+    "  c8:",
+    "    body: >-",
+    "      Thanks. One more",
+    "      thing.",
+    "",
+    "",
+    "      Second point.",
+    "    by: user",
+    "    at: 2026-10-21T07:10:00.000Z",
+    "    re: c7",
+    "",
+  ].join("\n");
+
+  it("lists a multi-paragraph endmatter body once, on its anchor", async () => {
+    const draftPath = writeDraft(multiParagraphThreads);
+
+    const result = await run(["comments", draftPath]);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.logs).toEqual([
+      'c1, by user, line 3 on "anchor text": First paragraph line one continues here. Second paragraph.',
+      'c6, by user, line 5 on "a": Short',
+      "  c7, by Claude: Fixed it.",
+      "    c8, by user: Thanks. One more thing. Second point.",
+    ]);
+  });
+
+  it("prints --json as nested threads without a flat duplicate list", async () => {
+    const draftPath = writeDraft(multiParagraphThreads);
+
+    const result = await run(["comments", draftPath, "--json"]);
+
+    const payload = JSON.parse(result.logs.join("\n")) as Record<
+      string,
+      unknown
+    >;
+    expect(result.exitCode).toBe(0);
+    expect(payload).not.toHaveProperty("items");
+    expect(payload.threads).toMatchObject([
+      {
+        id: "c1",
+        anchorText: "anchor text",
+        line: 3,
+        text: "First paragraph line one continues here.\n\nSecond paragraph.",
+        replies: [],
+      },
+      {
+        id: "c6",
+        anchorText: "a",
+        line: 5,
+        text: "Short",
+        replies: [
+          {
+            id: "c7",
+            parentId: "c6",
+            text: "Fixed it.",
+            replies: [
+              {
+                id: "c8",
+                parentId: "c7",
+                text: "Thanks. One more thing.\n\nSecond point.",
+                replies: [],
+              },
+            ],
+          },
+        ],
+      },
+    ]);
   });
 });
 

@@ -961,3 +961,222 @@ describe("replying to inline comments", () => {
     expect(nextRoughdraftCommentId(markdown)).toBe("c8");
   });
 });
+
+// The app saves a multi-paragraph root comment as an empty inline marker plus
+// an endmatter `body`, because blank lines cannot live inside `{>>…<<}`. The
+// endmatter body is that comment's text, not a second comment with the same id.
+describe("endmatter bodies for inline comment markers", () => {
+  const foldedBody = [
+    "# Draft",
+    "",
+    "Intro {==anchor text==}{>><<}{#c1} more.",
+    "",
+    "---",
+    "comments:",
+    "  c1:",
+    "    by: user",
+    "    at: 2026-10-21T06:59:17.559Z",
+    "    body: >-",
+    "      First paragraph line one",
+    "      continues here.",
+    "",
+    "",
+    "      Second paragraph.",
+    "",
+  ].join("\n");
+
+  const literalBody = [
+    "# Draft",
+    "",
+    "Intro {==anchor text==}{>><<}{#c1} more.",
+    "",
+    "---",
+    "comments:",
+    "  c1:",
+    "    by: user",
+    "    at: 2026-10-21T06:59:17.559Z",
+    "    body: |-",
+    "      See the source:",
+    "",
+    "      https://example.com/report?page=2#methods",
+    "",
+  ].join("\n");
+
+  it("reads a folded multi-paragraph body as the anchored comment's text", () => {
+    const index = extractRoughdraftReviewIndex(foldedBody);
+
+    expect(index.items).toHaveLength(1);
+    expect(index.items[0]).toMatchObject({
+      id: "c1",
+      kind: "comment",
+      parentId: null,
+      author: "user",
+      anchorText: "anchor text",
+      line: 3,
+      // Folded scalar: line breaks join with a space; the two blank lines
+      // the app writes between paragraphs decode to "\n\n".
+      text: "First paragraph line one continues here.\n\nSecond paragraph.",
+    });
+  });
+
+  it("reads a literal multi-paragraph body as the anchored comment's text", () => {
+    const index = extractRoughdraftReviewIndex(literalBody);
+
+    expect(index.items).toHaveLength(1);
+    expect(index.items[0]).toMatchObject({
+      id: "c1",
+      kind: "comment",
+      anchorText: "anchor text",
+      line: 3,
+      text: "See the source:\n\nhttps://example.com/report?page=2#methods",
+    });
+  });
+
+  it.each([
+    ["folded", foldedBody],
+    ["literal", literalBody],
+  ])("validates a %s endmatter body without a duplicate id", (_, markdown) => {
+    const result = validateRoughdraftMarkdown(markdown);
+
+    expect(codes(markdown)).not.toContain("duplicate-id");
+    expect(result.ok).toBe(true);
+    expect(result.summary.comments).toBe(1);
+  });
+
+  it("keeps one item per id across a root body and an endmatter reply thread", () => {
+    const markdown = [
+      "Intro {==anchor text==}{>><<}{#c1} more.",
+      "",
+      "Later {==a==}{>>Short<<}{#c6} end.",
+      "",
+      "---",
+      "comments:",
+      "  c1:",
+      "    by: user",
+      "    at: 2026-10-21T06:59:17.559Z",
+      "    body: >-",
+      "      Root first paragraph.",
+      "",
+      "",
+      "      Root second paragraph.",
+      "  c6:",
+      "    by: user",
+      "    at: 2026-10-21T07:00:00.000Z",
+      "  c7:",
+      "    body: Fixed it.",
+      "    by: Claude",
+      "    at: 2026-10-21T07:05:00.000Z",
+      "    re: c6",
+      "  c8:",
+      "    body: >-",
+      "      Thanks. One more",
+      "      thing.",
+      "",
+      "",
+      "      Second point.",
+      "    by: user",
+      "    at: 2026-10-21T07:10:00.000Z",
+      "    re: c7",
+      "",
+    ].join("\n");
+
+    const index = extractRoughdraftReviewIndex(markdown);
+    const byId = new Map(index.items.map((item) => [item.id, item]));
+
+    expect(index.items.map((item) => item.id).sort()).toEqual([
+      "c1",
+      "c6",
+      "c7",
+      "c8",
+    ]);
+    expect(byId.get("c1")).toMatchObject({
+      kind: "comment",
+      anchorText: "anchor text",
+      line: 1,
+      text: "Root first paragraph.\n\nRoot second paragraph.",
+    });
+    expect(byId.get("c6")).toMatchObject({ kind: "comment", text: "Short" });
+    expect(byId.get("c7")).toMatchObject({ kind: "reply", parentId: "c6" });
+    expect(byId.get("c8")).toMatchObject({
+      kind: "reply",
+      parentId: "c7",
+      text: "Thanks. One more thing.\n\nSecond point.",
+    });
+
+    const result = validateRoughdraftMarkdown(markdown);
+    expect(result.ok).toBe(true);
+    expect(codes(markdown)).not.toContain("duplicate-id");
+    expect(result.summary.replies).toBe(2);
+  });
+
+  it("treats an endmatter body equal to the inline text as the same comment", () => {
+    const markdown = [
+      "Intro {==anchor==}{>>Same<<}{#c2} more.",
+      "",
+      "---",
+      "comments:",
+      "  c2:",
+      "    body: Same",
+      "    by: user",
+      "    at: 2026-10-21T07:00:00.000Z",
+      "",
+    ].join("\n");
+
+    expect(extractRoughdraftReviewIndex(markdown).items).toMatchObject([
+      { id: "c2", kind: "comment", anchorText: "anchor", text: "Same" },
+    ]);
+    expect(codes(markdown)).not.toContain("duplicate-id");
+    expect(validateRoughdraftMarkdown(markdown).ok).toBe(true);
+  });
+
+  it("keeps inline text over a conflicting endmatter body and warns", () => {
+    const markdown = [
+      "Intro {==anchor==}{>>Inline wins<<}{#c3} more.",
+      "",
+      "---",
+      "comments:",
+      "  c3:",
+      "    body: Stale body",
+      "    by: user",
+      "    at: 2026-10-21T07:00:00.000Z",
+      "    re: c1",
+      "",
+    ].join("\n");
+
+    // Matches the app: a `re` beside a body that differs from the inline text
+    // is left over from an earlier comment that used this id, so it is ignored.
+    expect(extractRoughdraftReviewIndex(markdown).items).toMatchObject([
+      { id: "c3", kind: "comment", parentId: null, text: "Inline wins" },
+    ]);
+
+    const result = validateRoughdraftMarkdown(markdown);
+    expect(result.ok).toBe(true);
+    expect(result.errors.map((error) => error.code)).not.toContain(
+      "duplicate-id",
+    );
+    expect(result.warnings.map((warning) => warning.code)).toContain(
+      "conflicting-comment-body",
+    );
+  });
+
+  it("warns about an empty inline marker whose endmatter entry has no body", () => {
+    const markdown = [
+      "Intro {==x==}{>><<}{#c9} more.",
+      "",
+      "---",
+      "comments:",
+      "  c9:",
+      "    by: user",
+      "    at: 2026-10-21T07:00:00.000Z",
+      "",
+    ].join("\n");
+
+    const result = validateRoughdraftMarkdown(markdown);
+    expect(result.warnings.map((warning) => warning.code)).toContain(
+      "empty-comment",
+    );
+    expect(result.errors.map((error) => error.code)).not.toContain(
+      "empty-comment",
+    );
+  });
+});

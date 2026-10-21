@@ -32,7 +32,7 @@ When you add a new comment or suggested change, use the extended Roughdraft form
 
 Roughdraft may already have inline attribute blocks after comments and suggestions from older documents. Preserve those attributes unless you are intentionally removing the associated comment or suggestion. For new feedback, prefer compact references plus YAML endmatter.
 
-Anchored comments usually look like `{==selected text==}{>>Comment text<<}{#c1}`. Suggested changes usually look like `{++new text++}{#s1}` or `{~~old text~>new text~~}{#s2}`. Replies live in final YAML endmatter with a `body` and `re` pointer.
+Anchored comments usually look like `{==selected text==}{>>Comment text<<}{#c1}`. Suggested changes usually look like `{++new text++}{#s1}` or `{~~old text~>new text~~}{#s2}`. Replies live in final YAML endmatter with a `body` and `re` pointer. A comment with blank lines in it is written as an empty marker, `{==selected text==}{>><<}{#c1}`, with its text in the endmatter `body`. List threads with `roughdraft comments <path>` rather than reading inline markup alone, which misses those bodies and every reply.
 
 Example:
 

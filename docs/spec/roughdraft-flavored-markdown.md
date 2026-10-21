@@ -181,6 +181,24 @@ comments:
     re: c1
 ```
 
+A root comment whose text contains a blank line cannot stay inline, because a blank line would end the Markdown paragraph and split the comment span. Writers MUST leave such a comment's inline text empty and store the text as the `body` of its endmatter entry:
+
+```markdown
+Please revisit {==this sentence==}{>><<}{#c1}.
+
+---
+comments:
+  c1:
+    by: user
+    at: "2026-04-28T12:00:00.000Z"
+    body: |-
+      Needs a source.
+
+      The 2019 survey would do.
+```
+
+Readers MUST treat an empty inline comment with an endmatter `body` as one comment: the anchor and position come from the inline marker and the text from `body`. When inline text is not empty, it is the comment's text; an endmatter `body` beside it SHOULD match it, and readers MUST ignore a `re` on an entry whose `body` differs from the inline text. A reader that inspects only inline markup will miss these bodies and every reply, so agents SHOULD list review threads with a conforming reader such as `roughdraft comments`.
+
 Readers MUST treat the document's final `---` block as review endmatter when all of these hold, and as ordinary Markdown otherwise:
 
 - It is not inside a fenced code block or YAML frontmatter.
