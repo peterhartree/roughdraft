@@ -2,12 +2,69 @@ import { describe, expect, it } from "vitest";
 import { DOCUMENT_VIEW_STATE_MAX_AGE_MS } from "../src/document-view-state";
 import {
   clearOpenFileSession,
+  createWindowOpenFileSessionStorage,
   readOpenFileSession,
   writeOpenFileSession,
 } from "../src/open-file-session";
 import { MemoryStorage } from "./helpers/memory-storage";
 
 describe("open-file session persistence", () => {
+  it("isolates desktop window sessions in shared local storage", () => {
+    const storage = new MemoryStorage();
+    const first = createWindowOpenFileSessionStorage(storage, {
+      key: "first",
+      migrateLegacy: false,
+    });
+    const second = createWindowOpenFileSessionStorage(storage, {
+      key: "second",
+      migrateLegacy: false,
+    });
+
+    writeOpenFileSession(first, {
+      activePath: "/tmp/first.md",
+      files: [
+        {
+          path: "/tmp/first.md",
+          modifiedAt: 1,
+          openedAt: 1,
+          unread: false,
+        },
+      ],
+    });
+
+    expect(readOpenFileSession(first)?.activePath).toBe("/tmp/first.md");
+    expect(readOpenFileSession(second)).toBeNull();
+  });
+
+  it("migrates the legacy session only into the designated desktop window", () => {
+    const storage = new MemoryStorage();
+    const legacySession = {
+      activePath: "/tmp/legacy.md",
+      files: [
+        {
+          path: "/tmp/legacy.md",
+          modifiedAt: 1,
+          openedAt: 1,
+          unread: false,
+        },
+      ],
+    };
+    writeOpenFileSession(storage, legacySession);
+
+    const restored = createWindowOpenFileSessionStorage(storage, {
+      key: "restored",
+      migrateLegacy: true,
+    });
+    const fresh = createWindowOpenFileSessionStorage(storage, {
+      key: "fresh",
+      migrateLegacy: false,
+    });
+
+    expect(readOpenFileSession(restored)).toEqual(legacySession);
+    expect(readOpenFileSession(fresh)).toBeNull();
+    expect(storage.values.has("roughdraft.open-file-session.v1")).toBe(false);
+  });
+
   it("round-trips the active file and ordered sidebar state", () => {
     const storage = new MemoryStorage();
     const session = {

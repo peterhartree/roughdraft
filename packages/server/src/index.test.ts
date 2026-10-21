@@ -427,6 +427,7 @@ describe("createApp", () => {
       port: 4312,
       serverRoot,
       stateless: true,
+      desktopWindowRouting: true,
       capabilities: {
         projectPathRequired: true,
         fileSystemBrowsing: true,
@@ -692,6 +693,7 @@ describe("createApp", () => {
     expect(response.body.capabilities).toMatchObject({
       remoteDocuments: true,
     });
+    expect(response.body.desktopWindowRouting).toBe(true);
   });
 
   it("registers a remote document session and returns it on GET", async () => {

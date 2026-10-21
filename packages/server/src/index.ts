@@ -901,6 +901,7 @@ export function createApp(options: CreateAppOptions = {}): CreateAppResult {
         : undefined,
       serverRoot,
       stateless: true,
+      desktopWindowRouting: true,
       capabilities: {
         projectPathRequired: true,
         fileSystemBrowsing: true,
@@ -927,6 +928,7 @@ export function createApp(options: CreateAppOptions = {}): CreateAppResult {
       (id) => {
         res.write(`event: connected\ndata: ${JSON.stringify({ id })}\n\n`);
       },
+      { router: req.query.router === "1" },
     );
     const keepAlive = setInterval(() => {
       res.write(": keep-alive\n\n");

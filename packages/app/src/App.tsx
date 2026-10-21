@@ -66,6 +66,19 @@ import {
   getRestorableDocumentViewState,
 } from "./document-view-state";
 import { FileBrowser } from "./FileBrowser";
+import { GitHubFileButtons } from "./GitHubFileButtons";
+import { GitHubUpdateBanner } from "./GitHubUpdateBanner";
+import { GitHubChangeMarkRequestContext } from "./github-change-marks";
+import {
+  type CommitAndPushResult,
+  canUpdateAutomatically,
+  commitAndPushFile,
+  type GitHubRemoteChanges,
+  type GitHubUpdateMode,
+  gitHubUpdateBannerCopy,
+  updatedFromGitHubCopy,
+  updateFileFromGitHub,
+} from "./github-file";
 import { cn } from "./lib/utils";
 import { MissingFilePanel } from "./MissingFilePanel";
 import { OpenFileSidebar, type SidebarBrowseSection } from "./OpenFileSidebar";
@@ -88,6 +101,7 @@ import {
 } from "./open-file-navigation";
 import {
   clearOpenFileSession,
+  createWindowOpenFileSessionStorage,
   readOpenFileSession,
   writeOpenFileSession,
 } from "./open-file-session";
@@ -97,6 +111,7 @@ import { RecentDocumentsPage } from "./RecentDocumentsPage";
 import { RenameFileDialog } from "./RenameFileDialog";
 import { RoughdraftFormatDemo } from "./RoughdraftFormatDemo";
 import {
+  RECENT_DOCUMENTS_KEY,
   type RecentDocument,
   readRecentDocuments,
   removeRecentDocument,
@@ -113,19 +128,6 @@ import {
 } from "./storage";
 import { UpdateNotice } from "./UpdateNotice";
 import { fetchUpdateStatus, type UpdateStatus } from "./update-status";
-import { GitHubFileButtons } from "./GitHubFileButtons";
-import { GitHubUpdateBanner } from "./GitHubUpdateBanner";
-import { GitHubChangeMarkRequestContext } from "./github-change-marks";
-import {
-  type CommitAndPushResult,
-  canUpdateAutomatically,
-  commitAndPushFile,
-  type GitHubRemoteChanges,
-  type GitHubUpdateMode,
-  gitHubUpdateBannerCopy,
-  updatedFromGitHubCopy,
-  updateFileFromGitHub,
-} from "./github-file";
 import { useFileBrowser } from "./useFileBrowser";
 import { useGitHubFile } from "./useGitHubFile";
 
@@ -1529,6 +1531,12 @@ export function PreviewPage() {
 }
 
 export function App() {
+  const [openFileSessionStorage] = useState(() => {
+    const session = window.roughdraftDesktop?.session;
+    return session
+      ? createWindowOpenFileSessionStorage(window.localStorage, session)
+      : window.localStorage;
+  });
   const [startupState] = useState(() => {
     const locationPathState = getRequestedPathState();
     const hasRemoteSession = new URLSearchParams(window.location.search).has(
@@ -1536,7 +1544,7 @@ export function App() {
     );
     const restoredSession =
       window.location.pathname === "/" && !hasRemoteSession
-        ? readOpenFileSession(window.localStorage)
+        ? readOpenFileSession(openFileSessionStorage)
         : null;
     const restoringSession =
       locationPathState.rawPath === null && restoredSession !== null;
@@ -1565,6 +1573,15 @@ export function App() {
   >(requestedPathState.documentPath ? requestedPathState.rawPath : null);
   const [openFiles, setOpenFiles] = useState<OpenFileItem[]>(
     startupState.restoredFiles,
+  );
+  const [desktopSessionPaths, setDesktopSessionPaths] = useState<
+    string[] | null
+  >(() => (window.roughdraftDesktop?.onOpenDocument ? null : []));
+  const [desktopOpenListenerReady, setDesktopOpenListenerReady] = useState(
+    () => !window.roughdraftDesktop?.onOpenDocument,
+  );
+  const [desktopCloseListenerReady, setDesktopCloseListenerReady] = useState(
+    () => !window.roughdraftDesktop?.onPrepareClose,
   );
   const [recentDocuments, setRecentDocuments] = useState(
     startupState.recentDocuments,
@@ -1622,7 +1639,9 @@ export function App() {
     useRef<Map<string, DocumentViewState>>(documentViewStates);
   const recentDocumentsRef = useRef(recentDocuments);
   const openFilesRef = useRef(openFiles);
+  const pendingDesktopOpenClaimsRef = useRef(new Set<string>());
   const fileSwitchPendingRef = useRef(false);
+  const loadingRef = useRef(loading);
   const documentDirtyRef = useRef(false);
   const documentSaveStateRef = useRef<DocumentSaveState>("saved");
   const documentDraftContentRef = useRef<string | null>(null);
@@ -1633,6 +1652,7 @@ export function App() {
     path: string | null;
     completion: Promise<void>;
   } | null>(null);
+  const desktopReadySentRef = useRef(false);
   const closeAllButtonRef = useRef<HTMLButtonElement>(null);
 
   backendRef.current = backend;
@@ -1642,6 +1662,45 @@ export function App() {
   documentSaveStateRef.current = documentSaveState;
   openFilesRef.current = openFiles;
   recentDocumentsRef.current = recentDocuments;
+  loadingRef.current = loading;
+
+  const claimDesktopDocument = useCallback(async (path: string) => {
+    const claimDocument = window.roughdraftDesktop?.claimDocument;
+    if (!claimDocument) {
+      return { status: "claimed" as const, path };
+    }
+    try {
+      return await claimDocument(path);
+    } catch (error) {
+      console.error("Failed to claim the Markdown file:", error);
+      return null;
+    }
+  }, []);
+
+  const reportDesktopOpenDocuments = useCallback((paths: string[]) => {
+    const desktop = window.roughdraftDesktop;
+    if (!desktop?.reportOpenDocuments) return;
+    const pendingClaims = pendingDesktopOpenClaimsRef.current;
+    desktop.reportOpenDocuments(
+      paths.filter((path) => !pendingClaims.has(path)),
+    );
+  }, []);
+
+  const releasePendingDesktopOpenClaim = useCallback(
+    (path: string): boolean => {
+      if (!pendingDesktopOpenClaimsRef.current.delete(path)) return false;
+
+      window.roughdraftDesktop?.releaseDocument(path);
+      openFilesRef.current = openFilesRef.current.filter(
+        (file) => file.path !== path,
+      );
+      reportDesktopOpenDocuments(openFilesRef.current.map((file) => file.path));
+      setOpenFiles((current) => current.filter((file) => file.path !== path));
+      setMissingOpenFilePath((current) => (current === path ? null : current));
+      return true;
+    },
+    [reportDesktopOpenDocuments],
+  );
 
   const applyDocumentPage = useCallback(
     (nextDocument: Page, updateDraft = true) => {
@@ -1654,7 +1713,9 @@ export function App() {
 
   const updateRecentDocuments = useCallback(
     (update: (current: RecentDocument[]) => RecentDocument[]) => {
-      const current = recentDocumentsRef.current;
+      // Storage events are asynchronous, so read the shared preference again
+      // immediately before writing to avoid replacing another window's update.
+      const current = readRecentDocuments(window.localStorage);
       const next = update(current);
       if (next === current) return;
 
@@ -1664,6 +1725,17 @@ export function App() {
     },
     [],
   );
+
+  useEffect(() => {
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key !== RECENT_DOCUMENTS_KEY) return;
+      const next = readRecentDocuments(window.localStorage);
+      recentDocumentsRef.current = next;
+      setRecentDocuments(next);
+    };
+    window.addEventListener("storage", handleStorage);
+    return () => window.removeEventListener("storage", handleStorage);
+  }, []);
 
   // Mirror the list into the desktop app's File > Open Recent menu.
   useEffect(() => {
@@ -1796,19 +1868,16 @@ export function App() {
     };
   }, []);
 
+  // The bridge subscription and initial claims belong to this renderer load;
+  // all referenced startup values are immutable snapshots.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: subscribe once per renderer load
   useEffect(() => {
-    const sourceUrl = new URL("/api/open-requests", window.location.origin);
-    if (window.roughdraftDesktop) {
-      sourceUrl.searchParams.set("client", "desktop");
-    }
-    const source = new EventSource(sourceUrl.pathname + sourceUrl.search);
-    const handleOpenRequest = (event: Event) => {
+    const handleOpenRequest = (payload: {
+      path?: unknown;
+      modifiedAt?: unknown;
+      activate?: unknown;
+    }) => {
       try {
-        const payload = JSON.parse((event as MessageEvent<string>).data) as {
-          path?: unknown;
-          modifiedAt?: unknown;
-          activate?: unknown;
-        };
         if (typeof payload.path !== "string" || !payload.path.trim()) return;
 
         const targetPath = payload.path.trim();
@@ -1858,10 +1927,72 @@ export function App() {
       }
     };
 
-    source.addEventListener("open-request", handleOpenRequest);
+    const desktop = window.roughdraftDesktop;
+    if (desktop?.onOpenDocument) {
+      const unsubscribe = desktop.onOpenDocument(handleOpenRequest);
+      setDesktopOpenListenerReady(true);
+
+      const initialPaths = startupState.restoringSession
+        ? startupState.restoredFiles.map((file) => file.path)
+        : requestedPathState.rawPath
+          ? [requestedPathState.rawPath]
+          : [];
+      let cancelled = false;
+      void desktop.startDocumentSession(initialPaths).then(
+        async (acceptedPaths) => {
+          if (cancelled) return;
+          const accepted = new Set(acceptedPaths);
+          const explicitPath = startupState.restoringSession
+            ? null
+            : requestedPathState.rawPath;
+          if (explicitPath && !accepted.has(explicitPath)) {
+            // The batch restore does not focus another owner because restored
+            // windows start concurrently. An explicit URL should do so.
+            await claimDesktopDocument(explicitPath);
+            if (!cancelled) window.location.assign("/");
+            return;
+          }
+          openFilesRef.current = openFilesRef.current.filter((file) =>
+            accepted.has(file.path),
+          );
+          setOpenFiles((current) =>
+            current.filter((file) => accepted.has(file.path)),
+          );
+          setDesktopSessionPaths(acceptedPaths);
+        },
+        (error: unknown) => {
+          if (cancelled) return;
+          console.error("Failed to start the desktop document session:", error);
+          setDesktopSessionPaths([]);
+        },
+      );
+
+      return () => {
+        cancelled = true;
+        unsubscribe();
+      };
+    }
+
+    const sourceUrl = new URL("/api/open-requests", window.location.origin);
+    if (desktop) sourceUrl.searchParams.set("client", "desktop");
+    const source = new EventSource(sourceUrl.pathname + sourceUrl.search);
+    const handleOpenRequestEvent = (event: Event) => {
+      try {
+        handleOpenRequest(
+          JSON.parse((event as MessageEvent<string>).data) as Record<
+            string,
+            unknown
+          >,
+        );
+      } catch (error) {
+        console.error("Failed to handle Roughdraft open request:", error);
+      }
+    };
+
+    source.addEventListener("open-request", handleOpenRequestEvent);
 
     return () => {
-      source.removeEventListener("open-request", handleOpenRequest);
+      source.removeEventListener("open-request", handleOpenRequestEvent);
       source.close();
     };
   }, []);
@@ -1870,12 +2001,27 @@ export function App() {
     let cancelled = false;
 
     const initialize = async () => {
+      if (window.roughdraftDesktop?.onOpenDocument && !desktopSessionPaths) {
+        return;
+      }
       // Stamp the open before any awaits so a file opened via the URL sorts
       // below open requests that arrive while its first load is in flight.
       const startupOpenedAt = Date.now();
       setLoading(true);
       setLoadError(null);
       setDocumentPage(null);
+
+      const releaseExplicitStartupClaim = () => {
+        const explicitPath = requestedPathState.rawPath;
+        if (
+          startupState.restoringSession ||
+          !explicitPath ||
+          !desktopSessionPaths?.includes(explicitPath)
+        ) {
+          return;
+        }
+        window.roughdraftDesktop?.releaseDocument(explicitPath);
+      };
 
       try {
         const detectedBackend = await detectBackend();
@@ -1901,20 +2047,27 @@ export function App() {
           !requestedPathState.projectPath ||
           !requestedPathState.documentPath
         ) {
+          releaseExplicitStartupClaim();
           setActiveDocumentPath(null);
           setLoadError("Roughdraft now opens one .md file at a time.");
           setLoading(false);
           return;
         }
 
-        const candidatePaths = startupState.restoringSession
-          ? Array.from(
-              new Set([
-                requestedPathState.rawPath,
-                ...startupState.restoredFiles.map((file) => file.path),
-              ]),
-            )
-          : [requestedPathState.rawPath];
+        const candidatePaths = (
+          startupState.restoringSession
+            ? Array.from(
+                new Set([
+                  requestedPathState.rawPath,
+                  ...startupState.restoredFiles.map((file) => file.path),
+                ]),
+              )
+            : [requestedPathState.rawPath]
+        ).filter(
+          (candidatePath) =>
+            !window.roughdraftDesktop?.onOpenDocument ||
+            desktopSessionPaths?.includes(candidatePath),
+        );
         let lastOpenError: unknown = new Error(
           "No restorable Markdown files were available.",
         );
@@ -1973,8 +2126,9 @@ export function App() {
         if (cancelled) return;
 
         console.error("Failed to open markdown file:", error);
+        releaseExplicitStartupClaim();
         if (startupState.restoringSession) {
-          clearOpenFileSession(window.localStorage);
+          clearOpenFileSession(openFileSessionStorage);
           setOpenFiles([]);
           setActiveDocumentAbsolutePath(null);
         }
@@ -2000,6 +2154,8 @@ export function App() {
     requestedPathState.documentPath,
     requestedPathState.projectPath,
     requestedPathState.rawPath,
+    desktopSessionPaths,
+    openFileSessionStorage,
     startupState.restoredFiles,
     startupState.restoringSession,
     requestDocumentViewRestore,
@@ -2026,7 +2182,7 @@ export function App() {
       return;
     }
 
-    writeOpenFileSession(window.localStorage, {
+    writeOpenFileSession(openFileSessionStorage, {
       activePath: activeDocumentAbsolutePath,
       files: openFiles,
       viewStates: documentViewStates,
@@ -2035,6 +2191,7 @@ export function App() {
     activeDocumentAbsolutePath,
     backend?.info.kind,
     documentViewStates,
+    openFileSessionStorage,
     openFiles,
   ]);
 
@@ -2052,7 +2209,7 @@ export function App() {
       }
       captureCurrentDocumentView(Date.now(), false);
 
-      writeOpenFileSession(window.localStorage, {
+      writeOpenFileSession(openFileSessionStorage, {
         activePath: currentActivePath,
         files: currentOpenFiles,
         viewStates: documentViewStatesRef.current,
@@ -2061,7 +2218,13 @@ export function App() {
 
     window.addEventListener("pagehide", handlePageHide);
     return () => window.removeEventListener("pagehide", handlePageHide);
-  }, [captureCurrentDocumentView]);
+  }, [captureCurrentDocumentView, openFileSessionStorage]);
+
+  useEffect(() => {
+    const desktop = window.roughdraftDesktop;
+    if (!desktop?.reportOpenDocuments || desktopSessionPaths === null) return;
+    reportDesktopOpenDocuments(openFiles.map((file) => file.path));
+  }, [desktopSessionPaths, openFiles, reportDesktopOpenDocuments]);
 
   useEffect(() => {
     const workspaceTitlePath = activeDocumentPath
@@ -2195,6 +2358,90 @@ export function App() {
     window.addEventListener("beforeunload", handleBeforeUnload);
     return () => window.removeEventListener("beforeunload", handleBeforeUnload);
   }, [documentDiskChangeState]);
+
+  useEffect(() => {
+    const desktop = window.roughdraftDesktop;
+    if (!desktop?.onPrepareClose) return;
+
+    const unsubscribe = desktop.onPrepareClose(async () => {
+      if (
+        loadingRef.current ||
+        fileSwitchPendingRef.current ||
+        documentResolutionRef.current ||
+        diskChangeStateBlocksFileSwitch(documentDiskChangeStateRef.current)
+      ) {
+        return false;
+      }
+
+      const activePath = activeDocumentAbsolutePathRef.current;
+      if (activeDocumentPathRef.current) {
+        const controller = documentSaveControllerRef.current;
+        if (!controller) return false;
+        try {
+          const result = await controller.flushSave();
+          if (result.status !== "saved") return false;
+        } catch (error) {
+          console.error("Failed to save before closing the window:", error);
+          return false;
+        }
+      }
+
+      if (
+        diskChangeStateBlocksFileSwitch(documentDiskChangeStateRef.current) ||
+        documentDirtyRef.current ||
+        documentSaveStateRef.current !== "saved"
+      ) {
+        return false;
+      }
+
+      captureCurrentDocumentView(Date.now(), false);
+      const currentFiles = openFilesRef.current;
+      if (
+        backendRef.current?.info.kind === "local-files" &&
+        activePath &&
+        currentFiles.some((file) => file.path === activePath)
+      ) {
+        writeOpenFileSession(openFileSessionStorage, {
+          activePath,
+          files: currentFiles,
+          viewStates: documentViewStatesRef.current,
+        });
+      }
+      reportDesktopOpenDocuments(currentFiles.map((file) => file.path));
+      return true;
+    });
+    setDesktopCloseListenerReady(true);
+    return unsubscribe;
+  }, [
+    captureCurrentDocumentView,
+    openFileSessionStorage,
+    reportDesktopOpenDocuments,
+  ]);
+
+  useEffect(() => {
+    const desktop = window.roughdraftDesktop;
+    if (
+      !desktop?.ready ||
+      desktopReadySentRef.current ||
+      !desktopOpenListenerReady ||
+      !desktopCloseListenerReady ||
+      desktopSessionPaths === null ||
+      loading ||
+      fileSwitchPending
+    ) {
+      return;
+    }
+    reportDesktopOpenDocuments(openFilesRef.current.map((file) => file.path));
+    desktopReadySentRef.current = true;
+    desktop.ready();
+  }, [
+    desktopCloseListenerReady,
+    desktopOpenListenerReady,
+    desktopSessionPaths,
+    fileSwitchPending,
+    loading,
+    reportDesktopOpenDocuments,
+  ]);
 
   const handleReloadDocumentFromDisk = useCallback(async () => {
     const currentBackend = backendRef.current;
@@ -2414,12 +2661,23 @@ export function App() {
     setPendingOpenRequestPath((current) =>
       current === targetPath ? null : current,
     );
-    void switchToOpenFileResult(targetPath);
+    void switchToOpenFileResult(targetPath).then((result) => {
+      if (!pendingDesktopOpenClaimsRef.current.has(targetPath)) return;
+      if (result !== "switched") {
+        releasePendingDesktopOpenClaim(targetPath);
+        return;
+      }
+
+      pendingDesktopOpenClaimsRef.current.delete(targetPath);
+      reportDesktopOpenDocuments(openFilesRef.current.map((file) => file.path));
+    });
   }, [
     pendingOpenRequestPath,
     loading,
     fileSwitchPending,
     backend,
+    releasePendingDesktopOpenClaim,
+    reportDesktopOpenDocuments,
     switchToOpenFileResult,
   ]);
 
@@ -2429,20 +2687,24 @@ export function App() {
     [switchToOpenFileResult],
   );
 
-  const pruneOpenFileSessionEntries = useCallback((paths: string[]) => {
-    const removedPaths = new Set(paths);
-    openFilesRef.current = openFilesRef.current.filter(
-      (file) => !removedPaths.has(file.path),
-    );
-    setOpenFiles((files) =>
-      files.filter((file) => !removedPaths.has(file.path)),
-    );
+  const pruneOpenFileSessionEntries = useCallback(
+    (paths: string[]) => {
+      const removedPaths = new Set(paths);
+      openFilesRef.current = openFilesRef.current.filter(
+        (file) => !removedPaths.has(file.path),
+      );
+      reportDesktopOpenDocuments(openFilesRef.current.map((file) => file.path));
+      setOpenFiles((files) =>
+        files.filter((file) => !removedPaths.has(file.path)),
+      );
 
-    const nextViewStates = new Map(documentViewStatesRef.current);
-    for (const path of removedPaths) nextViewStates.delete(path);
-    documentViewStatesRef.current = nextViewStates;
-    setDocumentViewStates(nextViewStates);
-  }, []);
+      const nextViewStates = new Map(documentViewStatesRef.current);
+      for (const path of removedPaths) nextViewStates.delete(path);
+      documentViewStatesRef.current = nextViewStates;
+      setDocumentViewStates(nextViewStates);
+    },
+    [reportDesktopOpenDocuments],
+  );
 
   const closeMissingOpenFile = useCallback(() => {
     if (!missingOpenFilePath) return;
@@ -2463,10 +2725,22 @@ export function App() {
     }
     if (!chosenPath) return;
 
+    const claim = await claimDesktopDocument(chosenPath);
+    if (!claim || claim.status === "focused-existing") return;
+
+    pendingDesktopOpenClaimsRef.current.add(claim.path);
     pruneOpenFileSessionEntries([missingOpenFilePath]);
     setMissingOpenFilePath(null);
-    setPendingOpenRequestPath(chosenPath);
-  }, [missingOpenFilePath, pruneOpenFileSessionEntries]);
+    setOpenFiles((current) =>
+      upsertOpenFile(current, {
+        path: claim.path,
+        modifiedAt: 0,
+        openedAt: Date.now(),
+        unread: true,
+      }),
+    );
+    setPendingOpenRequestPath(claim.path);
+  }, [claimDesktopDocument, missingOpenFilePath, pruneOpenFileSessionEntries]);
 
   // `onClosing` runs once the closing file has been saved and the view has
   // moved on, or just before leaving for the start page when it was the last
@@ -2540,13 +2814,14 @@ export function App() {
       setActiveDocumentAbsolutePath(null);
       documentPageRef.current = null;
       setDocumentPage(null);
-      clearOpenFileSession(window.localStorage);
+      clearOpenFileSession(openFileSessionStorage);
       setFileSwitcherOpen(false);
       window.location.assign("/");
       return true;
     },
     [
       documentDiskChangeState,
+      openFileSessionStorage,
       pruneOpenFileSessionEntries,
       switchToOpenFileResult,
     ],
@@ -2595,12 +2870,16 @@ export function App() {
     setActiveDocumentAbsolutePath(null);
     documentPageRef.current = null;
     setDocumentPage(null);
-    clearOpenFileSession(window.localStorage);
+    clearOpenFileSession(openFileSessionStorage);
     setFileSwitcherOpen(false);
     setCloseAllConfirmationOpen(false);
     window.location.assign("/");
     return true;
-  }, [documentDiskChangeState, pruneOpenFileSessionEntries]);
+  }, [
+    documentDiskChangeState,
+    openFileSessionStorage,
+    pruneOpenFileSessionEntries,
+  ]);
 
   useEffect(() => {
     if (backend?.info.kind !== "local-files" || openFiles.length === 0) return;
@@ -2810,11 +3089,67 @@ export function App() {
     [],
   );
 
-  const handleOpenRecentDocument = useCallback((path: string) => {
-    const nextUrl = new URL(window.location.origin);
-    nextUrl.searchParams.set("path", path);
-    window.location.assign(nextUrl.href);
-  }, []);
+  const openClaimedFile = useCallback(
+    (path: string, modifiedAt: number) => {
+      const activePath = activeDocumentAbsolutePathRef.current;
+      if (openFilesRef.current.some((file) => file.path === path)) {
+        void switchToOpenFile(path);
+        return;
+      }
+      if (
+        !shouldHandleOpenRequestInSession(
+          backendRef.current?.info.kind,
+          activePath,
+        )
+      ) {
+        const nextUrl = new URL(window.location.origin);
+        nextUrl.searchParams.set("path", path);
+        window.location.assign(nextUrl.href);
+        return;
+      }
+      setOpenFiles((current) =>
+        upsertOpenFile(current, {
+          path,
+          modifiedAt,
+          openedAt: Date.now(),
+          unread: true,
+        }),
+      );
+      setPendingOpenRequestPath(path);
+    },
+    [switchToOpenFile],
+  );
+
+  const claimAndOpenFile = useCallback(
+    async (path: string, modifiedAt: number) => {
+      const wasAlreadyOpen = openFilesRef.current.some(
+        (file) => file.path === path,
+      );
+      const claim = await claimDesktopDocument(path);
+      if (!claim || claim.status === "focused-existing") return;
+      if (!wasAlreadyOpen) {
+        pendingDesktopOpenClaimsRef.current.add(claim.path);
+      }
+      openClaimedFile(claim.path, modifiedAt);
+    },
+    [claimDesktopDocument, openClaimedFile],
+  );
+
+  const handleOpenRecentDocument = useCallback(
+    (path: string) => {
+      if (window.roughdraftDesktop?.claimDocument) {
+        const modifiedAt =
+          recentDocumentsRef.current.find((document) => document.path === path)
+            ?.modifiedAt ?? 0;
+        void claimAndOpenFile(path, modifiedAt);
+        return;
+      }
+      const nextUrl = new URL(window.location.origin);
+      nextUrl.searchParams.set("path", path);
+      window.location.assign(nextUrl.href);
+    },
+    [claimAndOpenFile],
+  );
 
   const fileBrowser = useFileBrowser({
     enabled: backend?.info.kind === "local-files",
@@ -2980,31 +3315,13 @@ export function App() {
   // in which case it waits there unread.
   const openFileFromBrowser = useCallback(
     (path: string, modifiedAt: number) => {
-      const activePath = activeDocumentAbsolutePathRef.current;
-      if (openFilesRef.current.some((file) => file.path === path)) {
-        void switchToOpenFile(path);
+      if (window.roughdraftDesktop?.claimDocument) {
+        void claimAndOpenFile(path, modifiedAt);
         return;
       }
-      if (
-        !shouldHandleOpenRequestInSession(
-          backendRef.current?.info.kind,
-          activePath,
-        )
-      ) {
-        handleOpenRecentDocument(path);
-        return;
-      }
-      setOpenFiles((current) =>
-        upsertOpenFile(current, {
-          path,
-          modifiedAt,
-          openedAt: Date.now(),
-          unread: true,
-        }),
-      );
-      setPendingOpenRequestPath(path);
+      openClaimedFile(path, modifiedAt);
     },
-    [handleOpenRecentDocument, switchToOpenFile],
+    [claimAndOpenFile, openClaimedFile],
   );
 
   const copyPathToClipboard = useCallback(async (path: string) => {
@@ -3092,8 +3409,23 @@ export function App() {
         setFileSwitchPending(true);
       }
       setFileSwitchError(null);
+      let reservedPath: string | null = null;
+      let renameCommitted = false;
 
       try {
+        if (window.roughdraftDesktop?.claimDocument) {
+          const separator = path.lastIndexOf("/");
+          const proposedPath = `${path.slice(0, separator + 1)}${name.trim()}`;
+          const claim = await claimDesktopDocument(proposedPath);
+          if (!claim) return `Couldn't check whether ${name.trim()} is open.`;
+          if (claim.status === "focused-existing") {
+            return `${name.trim()} is already open in another Roughdraft window.`;
+          }
+          // A case-only rename can resolve to the source identity. That is not
+          // a new reservation and must never release the source on failure.
+          if (claim.path !== path) reservedPath = claim.path;
+        }
+
         if (isActive) {
           const saveResult =
             await documentSaveControllerRef.current?.flushSave();
@@ -3126,6 +3458,22 @@ export function App() {
         }
         if (renamedPath === path) return null;
 
+        if (
+          window.roughdraftDesktop?.claimDocument &&
+          renamedPath !== reservedPath
+        ) {
+          const finalClaim = await claimDesktopDocument(renamedPath);
+          if (!finalClaim || finalClaim.status === "focused-existing") {
+            console.error(
+              "The renamed Markdown path could not be claimed by this window.",
+            );
+          }
+          if (reservedPath && reservedPath !== renamedPath) {
+            window.roughdraftDesktop.releaseDocument(reservedPath);
+            reservedPath = null;
+          }
+        }
+
         openFilesRef.current = renameOpenFile(
           openFilesRef.current,
           path,
@@ -3148,6 +3496,7 @@ export function App() {
         );
         fileBrowser.renamePinnedFile(path, renamedPath);
         fileBrowser.refresh();
+        renameCommitted = true;
 
         if (!isActive || !currentBackend) return null;
 
@@ -3186,6 +3535,9 @@ export function App() {
         }
         return null;
       } finally {
+        if (reservedPath && !renameCommitted) {
+          window.roughdraftDesktop?.releaseDocument(reservedPath);
+        }
         if (isActive) {
           fileSwitchPendingRef.current = false;
           setFileSwitchPending(false);
@@ -3194,6 +3546,7 @@ export function App() {
     },
     [
       captureCurrentDocumentView,
+      claimDesktopDocument,
       fileBrowser.refresh,
       fileBrowser.renamePinnedFile,
       getViewStateForPath,

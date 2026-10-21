@@ -4,7 +4,7 @@ export interface RecentDocument {
   lastViewedAt: number;
 }
 
-const RECENT_DOCUMENTS_KEY = "roughdraft.recent-documents.v1";
+export const RECENT_DOCUMENTS_KEY = "roughdraft.recent-documents.v1";
 const MAX_RECENT_DOCUMENTS = 20;
 const MAX_STORED_RECENT_DOCUMENTS_LENGTH = 100_000;
 const MAX_DATE_TIMESTAMP = 8_640_000_000_000_000;

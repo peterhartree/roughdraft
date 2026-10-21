@@ -5,21 +5,26 @@ import {
   type Event,
   ipcMain,
   Menu,
-  type OpenDialogOptions,
-  type SaveDialogOptions,
+  screen,
   session,
   shell,
+  type IpcMainEvent,
+  type IpcMainInvokeEvent,
   type WebContents,
 } from "electron";
+import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createApplicationMenuTemplate } from "./application-menu.js";
 import { shouldSuppressNativeDocumentShortcut } from "./document-shortcuts.js";
+import { DocumentOwners } from "./document-owners.js";
 import { DROPPED_MARKDOWN_IPC_CHANNEL } from "./dropped-markdown.js";
 import { LOCATE_MARKDOWN_IPC_CHANNEL } from "./locate-markdown.js";
-import { createManagedServerLoader } from "./managed-server-loader.js";
 import {
-  NativeOpenPathQueue,
+  createManagedServerLoader,
+  type ManagedServerLoader,
+} from "./managed-server-loader.js";
+import {
   postOpenDocumentIntent,
   resolveMarkdownOpenIntent,
 } from "./native-open.js";
@@ -28,10 +33,12 @@ import {
   NEW_MARKDOWN_FILE_NAME,
   newMarkdownFileDirectory,
 } from "./new-markdown-file.js";
+import { createOpenIntentStream } from "./open-intent-stream.js";
 import { shouldAllowRendererPermission } from "./permission-policy.js";
 import { parseRecentDocumentPaths } from "./recent-documents.js";
 import { RECENT_DOCUMENTS_IPC_CHANNEL } from "./recent-documents-channel.js";
 import {
+  type ManagedServerTarget,
   isAllowedExternalUrl,
   isAllowedNavigation,
   isServedFileNavigation,
@@ -44,6 +51,25 @@ import {
   nextServerLoadRetryDelay,
   startManagedServer,
 } from "./startup.js";
+import {
+  WINDOW_SESSION_CHANNEL,
+  CLAIM_DOCUMENT_CHANNEL,
+  CANCEL_CLOSE_CHANNEL,
+  REPORT_DOCUMENTS_CHANNEL,
+  RELEASE_DOCUMENT_CHANNEL,
+  WINDOW_READY_CHANNEL,
+  OPEN_DOCUMENT_CHANNEL,
+  PREPARE_CLOSE_CHANNEL,
+  PREPARE_CLOSE_RESULT_CHANNEL,
+  type DesktopOpenIntent,
+} from "./window-channels.js";
+import {
+  MAX_WINDOWS,
+  readWindowSession,
+  writeWindowSession,
+  type SavedWindow,
+  type WindowSession,
+} from "./window-session.js";
 
 const CONTENT_SECURITY_POLICY = [
   "default-src 'self'",
@@ -58,114 +84,289 @@ const CONTENT_SECURITY_POLICY = [
   "form-action 'self'",
 ].join("; ");
 
-let mainWindow: BrowserWindow | null = null;
+interface DesktopWindow {
+  id: string;
+  window: BrowserWindow;
+  loader: ManagedServerLoader;
+  origin: string | null;
+  errorDocument: boolean;
+  loadingErrorDocument: boolean;
+  loadingOrigin: string | null;
+  crashed: boolean;
+  crashRestarts: number;
+  ready: boolean;
+  readyBeforeNavigation: boolean;
+  allowClose: boolean;
+  closing: boolean;
+  pending: DesktopOpenIntent | null;
+}
+const windows = new Map<string, DesktopWindow>();
+const owners = new DocumentOwners();
+let focusedId: string | undefined;
 let validatedOrigin: string | null = null;
-let loadingErrorDocument = false;
-const nativeOpenPaths = new NativeOpenPathQueue();
-let nativeOpenDelivery = Promise.resolve();
+let routingAvailable = false;
+let serverStart: Promise<void> | null = null;
 let recentDocumentPaths: string[] = [];
+let restoring = true;
+let pendingOpen: { intent: DesktopOpenIntent; sourceId?: string } | null = null;
+let lastWorkspace: WindowSession | null = null;
+let sessionFile = "";
+let saveTimer: ReturnType<typeof setTimeout> | undefined;
+let restoreTimer: ReturnType<typeof setTimeout> | undefined;
+let quitting = false;
+let preparingQuit = false;
+let nextCloseRequest = 0;
+const closeRequests = new Map<
+  number,
+  { id: string; finish: (ready: boolean) => void }
+>();
 
-function focusMainWindow(): void {
-  if (!mainWindow || mainWindow.isDestroyed()) return;
-  if (mainWindow.isMinimized()) mainWindow.restore();
-  mainWindow.show();
-  mainWindow.focus();
-}
+const openStream = createOpenIntentStream({
+  onIntent: (intent) => {
+    void routeOpen(intent).catch(showOpenError);
+  },
+  slog: appendDesktopSlog,
+});
 
-function showNativeOpenError(error: unknown): void {
-  const message = error instanceof Error ? error.message : String(error);
-  dialog.showErrorBox("Could not open Markdown file", message);
-}
-
-async function deliverNativeOpenPath(filePath: string): Promise<void> {
-  try {
-    if (!validatedOrigin) {
-      throw new Error("The managed Roughdraft server is unavailable.");
-    }
-
-    const intent = resolveMarkdownOpenIntent(filePath);
-    await postOpenDocumentIntent(fetch, validatedOrigin, intent);
-    focusMainWindow();
-  } catch (error) {
-    showNativeOpenError(error);
-  }
-}
-
-function scheduleNativeOpenPath(filePath: string): void {
-  nativeOpenDelivery = nativeOpenDelivery.then(() =>
-    deliverNativeOpenPath(filePath),
+function activeWindow(): DesktopWindow | undefined {
+  const focused = BrowserWindow.getFocusedWindow();
+  const available = [...windows.values()].filter(
+    (entry) =>
+      !entry.window.isDestroyed() &&
+      !entry.closing &&
+      !entry.allowClose &&
+      !entry.crashed,
+  );
+  return (
+    available.find((entry) => entry.window === focused) ??
+    available.find((entry) => entry.id === focusedId) ??
+    available.at(-1)
   );
 }
 
-async function ensureNativeOpenDestination(): Promise<void> {
-  if (!mainWindow || mainWindow.isDestroyed()) {
-    await createMainWindow();
-  } else if (!validatedOrigin) {
-    await loadManagedServer();
-  }
+function focusWindow(entry: DesktopWindow): void {
+  if (entry.window.isDestroyed()) return;
+  if (entry.window.isMinimized()) entry.window.restore();
+  entry.window.show();
+  app.focus({ steal: true });
+  entry.window.focus();
+  focusedId = entry.id;
+}
 
-  if (!validatedOrigin) {
-    showNativeOpenError(
-      new Error("Start the managed Roughdraft server, then try again."),
+function snapshot(): WindowSession | null {
+  const saved = [...windows.values()]
+    .filter((entry) => !entry.window.isDestroyed())
+    .map((entry) => ({
+      id: entry.id,
+      bounds: entry.window.getNormalBounds(),
+      maximized: entry.window.isMaximized(),
+    }));
+  if (!saved.length) return lastWorkspace;
+  return {
+    windows: saved,
+    focusedId: saved.some((entry) => entry.id === focusedId)
+      ? focusedId
+      : saved.at(-1)?.id,
+  };
+}
+
+function persistSession(): void {
+  if (!sessionFile || quitting) return;
+  const state = snapshot();
+  if (!state) return;
+  lastWorkspace = state;
+  try {
+    writeWindowSession(sessionFile, state);
+  } catch (error) {
+    appendDesktopSlog("desktop.session.write-failed", {
+      message: String(error),
+    });
+  }
+}
+
+function schedulePersist(): void {
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(persistSession, 200);
+}
+
+function trustedWindow(
+  contents: WebContents | null,
+): DesktopWindow | undefined {
+  return [...windows.values()].find(
+    (entry) =>
+      !entry.window.isDestroyed() && entry.window.webContents === contents,
+  );
+}
+
+function senderWindow(
+  event: IpcMainEvent | IpcMainInvokeEvent,
+): DesktopWindow | undefined {
+  const entry = trustedWindow(event.sender);
+  if (
+    !entry ||
+    event.senderFrame !== event.sender.mainFrame ||
+    !entry.origin ||
+    !isAllowedNavigation(event.senderFrame.url, entry.origin)
+  )
+    return undefined;
+  return entry;
+}
+
+function validPath(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    value.length < 16_384 &&
+    path.isAbsolute(value) &&
+    !value.includes("\0") &&
+    path.extname(value).toLowerCase() === ".md"
+  );
+}
+
+function validPaths(value: unknown): value is string[] {
+  return Array.isArray(value) && value.length <= 100 && value.every(validPath);
+}
+
+function deliver(entry: DesktopWindow, intent: DesktopOpenIntent): void {
+  if (entry.window.isDestroyed()) return;
+  if (!entry.ready || entry.closing || entry.allowClose) {
+    if (entry.pending && entry.pending.path !== intent.path)
+      owners.releasePending(entry.id, entry.pending.path);
+    entry.pending = intent;
+    return;
+  }
+  entry.pending = null;
+  entry.window.webContents.send(OPEN_DOCUMENT_CHANNEL, {
+    ...intent,
+    activate: intent.activate === true || !entry.window.isFocused(),
+  });
+  focusWindow(entry);
+  appendDesktopSlog("desktop.open.delivered", {
+    windowId: entry.id,
+    path: intent.path,
+  });
+}
+
+function routePending(entry: DesktopWindow): void {
+  const intent = entry.pending;
+  entry.pending = null;
+  // Recovery may have released this reservation while another window claimed
+  // the file. Resolve ownership again before delivering the queued intent.
+  if (intent) void routeOpen(intent, entry.id).catch(showOpenError);
+}
+
+function finishRestore(): void {
+  restoring = false;
+  clearTimeout(restoreTimer);
+  if (pendingOpen) {
+    const pending = pendingOpen;
+    pendingOpen = null;
+    void routeOpen(pending.intent, pending.sourceId);
+  }
+}
+
+async function routeOpen(
+  intent: DesktopOpenIntent,
+  sourceId?: string,
+): Promise<void> {
+  if (!validPath(intent.path) || quitting) return;
+  if (restoring || preparingQuit || !app.isReady()) {
+    pendingOpen = { intent, sourceId };
+    return;
+  }
+  let entry = sourceId ? windows.get(sourceId) : activeWindow();
+  let owner = owners.find(intent.path);
+  if (owner) {
+    const destination = windows.get(owner.windowId);
+    if (
+      !destination ||
+      destination.window.isDestroyed() ||
+      destination.crashed
+    ) {
+      owners.releaseWindow(owner.windowId);
+      owner = null;
+    }
+  }
+  if (owner && windows.has(owner.windowId)) {
+    entry = windows.get(owner.windowId);
+    intent = { ...intent, path: owner.path, activate: true };
+  }
+  entry ??= await createWindow(lastWorkspace?.windows[0]);
+  if (!routingAvailable && validatedOrigin && !entry.ready) {
+    // An older server/renderer remains usable as one window until updated.
+    await postOpenDocumentIntent(fetch, validatedOrigin, {
+      ...intent,
+      modifiedAt: intent.modifiedAt ?? 0,
+    }).catch(showOpenError);
+    focusWindow(entry);
+    return;
+  }
+  const claim = owners.claim(entry.id, intent.path);
+  if (claim.status === "owned") {
+    const destination = windows.get(claim.windowId);
+    if (destination)
+      deliver(destination, { ...intent, path: claim.path, activate: true });
+  } else {
+    deliver(entry, { ...intent, path: claim.path });
+  }
+}
+
+function showOpenError(error: unknown): void {
+  dialog.showErrorBox(
+    "Could not open Markdown file",
+    error instanceof Error ? error.message : String(error),
+  );
+}
+
+async function openMarkdownPath(
+  filePath: string,
+  sourceId?: string,
+): Promise<void> {
+  try {
+    await routeOpen(
+      { ...resolveMarkdownOpenIntent(filePath), activate: true },
+      sourceId,
     );
+  } catch (error) {
+    showOpenError(error);
   }
 }
 
 async function chooseMarkdownFile(): Promise<void> {
-  const options = {
+  if (preparingQuit) return;
+  const entry = activeWindow() ?? (await createWindow());
+  const result = await dialog.showOpenDialog(entry.window, {
     title: "Open Markdown file",
     properties: ["openFile"],
     filters: [{ name: "Markdown", extensions: ["md"] }],
-  } satisfies OpenDialogOptions;
-  const result =
-    mainWindow && !mainWindow.isDestroyed()
-      ? await dialog.showOpenDialog(mainWindow, options)
-      : await dialog.showOpenDialog(options);
-  const filePath = result.filePaths[0];
-  if (result.canceled || !filePath) return;
-
-  await openMarkdownPath(filePath);
+  });
+  if (!result.canceled && result.filePaths[0])
+    await openMarkdownPath(result.filePaths[0], entry.id);
 }
 
-// Roughdraft edits files in place, so a new document is created on disk
-// first and then opened like any other file.
 async function createNewMarkdownFile(): Promise<void> {
-  const hasWindow = mainWindow !== null && !mainWindow.isDestroyed();
+  if (preparingQuit) return;
+  const entry = activeWindow() ?? (await createWindow());
   const directory = newMarkdownFileDirectory(
-    hasWindow && mainWindow ? mainWindow.webContents.getURL() : "",
+    entry.window.webContents.getURL(),
     recentDocumentPaths,
     app.getPath("documents"),
   );
-  const options = {
+  const result = await dialog.showSaveDialog(entry.window, {
     title: "New Markdown file",
     buttonLabel: "Create",
     defaultPath: path.join(directory, NEW_MARKDOWN_FILE_NAME),
     filters: [{ name: "Markdown", extensions: ["md"] }],
     properties: ["createDirectory", "showOverwriteConfirmation"],
-  } satisfies SaveDialogOptions;
-  const result =
-    hasWindow && mainWindow
-      ? await dialog.showSaveDialog(mainWindow, options)
-      : await dialog.showSaveDialog(options);
+  });
   if (result.canceled || !result.filePath) return;
-
-  let filePath: string;
   try {
-    filePath = await createMarkdownFile(result.filePath, (target) =>
+    const filePath = await createMarkdownFile(result.filePath, (target) =>
       shell.trashItem(target),
     );
+    await openMarkdownPath(filePath, entry.id);
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    dialog.showErrorBox("Could not create Markdown file", message);
-    return;
+    showOpenError(error);
   }
-
-  await openMarkdownPath(filePath);
-}
-
-async function openMarkdownPath(filePath: string): Promise<void> {
-  nativeOpenPaths.request(filePath);
-  await ensureNativeOpenDestination();
 }
 
 function installApplicationMenu(): void {
@@ -173,6 +374,23 @@ function installApplicationMenu(): void {
     Menu.buildFromTemplate(
       createApplicationMenuTemplate(
         {
+          newWindow: () => {
+            if (windows.size >= MAX_WINDOWS) {
+              dialog.showErrorBox(
+                "Too many windows",
+                `Close a window before opening another. Roughdraft supports up to ${MAX_WINDOWS} windows.`,
+              );
+              return;
+            }
+            if (!routingAvailable && windows.size) {
+              dialog.showErrorBox(
+                "Update Roughdraft's server",
+                "Restart the managed Roughdraft server with the current version before opening multiple windows.",
+              );
+              return;
+            }
+            if (!preparingQuit) void createWindow();
+          },
           newMarkdownFile: () => {
             void createNewMarkdownFile();
           },
@@ -180,7 +398,7 @@ function installApplicationMenu(): void {
             void chooseMarkdownFile();
           },
           openRecentDocument: (filePath) => {
-            void openMarkdownPath(filePath);
+            void openMarkdownPath(filePath, activeWindow()?.id);
           },
         },
         recentDocumentPaths,
@@ -195,20 +413,116 @@ function errorDocument(message: string): string {
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;");
-  const document = `<!doctype html>
-<html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width">
-<title>Roughdraft unavailable</title>
-<style>body{font:16px/1.5 system-ui;margin:0;padding:48px;background:#f7f5ef;color:#25231f}main{max-width:680px;margin:auto}h1{font-size:28px}code{background:#ebe7dc;padding:2px 5px;border-radius:4px}</style>
-<main><h1>Roughdraft is not running</h1><p>${escaped}</p><p>Open a Markdown file with <code>roughdraft open /absolute/path/to/file.md</code>, then reopen this app.</p></main></html>`;
-  return `data:text/html;charset=utf-8,${encodeURIComponent(document)}`;
+  return `data:text/html;charset=utf-8,${encodeURIComponent(`<!doctype html><html lang="en"><meta charset="utf-8"><title>Roughdraft unavailable</title><style>body{font:16px/1.5 system-ui;padding:48px;background:#f7f5ef;color:#25231f}main{max-width:680px;margin:auto}</style><main><h1>Roughdraft is not running</h1><p>${escaped}</p><p>Open a Markdown file with the Roughdraft CLI, then reopen this app.</p></main></html>`)}`;
 }
 
-async function createMainWindow(): Promise<void> {
-  mainWindow = new BrowserWindow({
+async function startServer(): Promise<void> {
+  serverStart ??= startManagedServer().catch((error) => {
+    serverStart = null;
+    throw error;
+  });
+  return serverStart;
+}
+
+async function connectStream(origin: string): Promise<void> {
+  const response = await fetch(new URL("/api/status", origin), {
+    signal: AbortSignal.timeout(1500),
+  });
+  const status = (await response.json()) as { desktopWindowRouting?: boolean };
+  routingAvailable = status.desktopWindowRouting === true;
+  if (routingAvailable) openStream.connect(origin);
+  else openStream.disconnect();
+}
+
+function prepareClose(entry: DesktopWindow): Promise<boolean> {
+  if (entry.window.isDestroyed()) return Promise.resolve(true);
+  if (
+    entry.crashed ||
+    entry.window.webContents.getURL().startsWith("data:text/html")
+  )
+    return Promise.resolve(true);
+  if (!entry.ready) return Promise.resolve(false);
+  return new Promise((resolve) => {
+    const requestId = ++nextCloseRequest;
+    const timer = setTimeout(() => finish(false), 8_000);
+    function finish(ready: boolean): void {
+      clearTimeout(timer);
+      closeRequests.delete(requestId);
+      resolve(ready);
+    }
+    closeRequests.set(requestId, { id: entry.id, finish });
+    entry.window.webContents.send(PREPARE_CLOSE_CHANNEL, requestId);
+  });
+}
+
+function explainBlockedClose(entry: DesktopWindow): void {
+  focusWindow(entry);
+  void dialog.showMessageBox(entry.window, {
+    type: "warning",
+    title: "Window remains open",
+    message: "Roughdraft could not safely close this window.",
+    detail:
+      "Wait for the document to finish loading or saving, and resolve any file conflict before closing.",
+    buttons: ["Keep editing"],
+  });
+}
+
+async function requestQuit(): Promise<void> {
+  if (preparingQuit) return;
+  preparingQuit = true;
+  const entries = [...windows.values()];
+  const ready = await Promise.all(entries.map(prepareClose));
+  const blocked = entries.find(
+    (entry, index) => !ready[index] && !entry.window.isDestroyed(),
+  );
+  if (blocked || pendingOpen) {
+    for (const entry of entries) {
+      if (!entry.window.isDestroyed())
+        entry.window.webContents.send(CANCEL_CLOSE_CHANNEL);
+    }
+    preparingQuit = false;
+    if (blocked) {
+      explainBlockedClose(blocked);
+      appendDesktopSlog("desktop.quit.blocked", { windowId: blocked.id });
+    }
+    if (pendingOpen) finishRestore();
+    return;
+  }
+  persistSession();
+  session.defaultSession.flushStorageData();
+  quitting = true;
+  for (const entry of entries) entry.allowClose = true;
+  appendDesktopSlog("desktop.quit.ready", { windows: entries.length });
+  app.quit();
+}
+
+async function createWindow(
+  saved?: SavedWindow,
+  migrateLegacy = false,
+): Promise<DesktopWindow> {
+  const id = saved?.id ?? randomUUID();
+  const existing = windows.get(id);
+  if (existing) return existing;
+  const bounds = saved?.bounds;
+  const visibleBounds =
+    bounds &&
+    screen
+      .getAllDisplays()
+      .some(
+        ({ workArea }) =>
+          bounds.x + bounds.width > workArea.x + 80 &&
+          bounds.x < workArea.x + workArea.width - 80 &&
+          bounds.y >= workArea.y &&
+          bounds.y < workArea.y + workArea.height - 80,
+      )
+      ? bounds
+      : undefined;
+  const window = new BrowserWindow({
     width: 1180,
     height: 900,
     minWidth: 720,
     minHeight: 520,
+    ...visibleBounds,
     show: false,
     backgroundColor: "#f7f5ef",
     title: "Roughdraft",
@@ -216,200 +530,364 @@ async function createMainWindow(): Promise<void> {
       allowRunningInsecureContent: false,
       contextIsolation: true,
       nodeIntegration: false,
-      // Sandboxed preloads cannot load ES modules, so the build bundles this
-      // one into a single CommonJS file.
       preload: fileURLToPath(new URL("./preload.cjs", import.meta.url)),
       sandbox: true,
       webSecurity: true,
+      additionalArguments: [
+        `--roughdraft-window=${id}`,
+        ...(migrateLegacy ? ["--roughdraft-migrate-session"] : []),
+      ],
     },
   });
-
-  mainWindow.once("ready-to-show", () => focusMainWindow());
-  mainWindow.on("closed", () => {
-    nativeOpenPaths.disconnect();
-    mainWindow = null;
+  const entry: DesktopWindow = {
+    id,
+    window,
+    loader: null as unknown as ManagedServerLoader,
+    origin: null,
+    errorDocument: false,
+    loadingErrorDocument: false,
+    loadingOrigin: null,
+    crashed: false,
+    crashRestarts: 0,
+    ready: false,
+    readyBeforeNavigation: false,
+    allowClose: false,
+    closing: false,
+    pending: null,
+  };
+  windows.set(id, entry);
+  focusedId ??= id;
+  appendDesktopSlog("desktop.window.created", {
+    windowId: id,
+    restored: !!saved,
   });
-
-  const preventDisallowedNavigation = (event: Event, url: string) => {
-    if (loadingErrorDocument && url.startsWith("data:text/html")) return;
-    if (!validatedOrigin || !isAllowedNavigation(url, validatedOrigin)) {
+  window.once("ready-to-show", () => {
+    if (saved?.maximized) window.maximize();
+    if (restoring) window.showInactive();
+    else focusWindow(entry);
+  });
+  window.on("focus", () => {
+    focusedId = id;
+    schedulePersist();
+  });
+  window.on("move", schedulePersist);
+  window.on("resize", schedulePersist);
+  window.on("close", (event) => {
+    if (entry.allowClose || quitting) return;
+    event.preventDefault();
+    if (entry.closing || preparingQuit) return;
+    entry.closing = true;
+    void prepareClose(entry).then((ready) => {
+      entry.closing = false;
+      if (window.isDestroyed()) return;
+      if (!ready) {
+        window.webContents.send(CANCEL_CLOSE_CHANNEL);
+        explainBlockedClose(entry);
+        routePending(entry);
+        return;
+      }
+      // Capture the final window before destroying it, for Dock reopening.
+      if (windows.size === 1) lastWorkspace = snapshot();
+      entry.allowClose = true;
+      window.close();
+    });
+  });
+  window.on("closed", () => {
+    windows.delete(id);
+    owners.releaseWindow(id);
+    for (const request of closeRequests.values())
+      if (request.id === id) request.finish(true);
+    if (focusedId === id) focusedId = [...windows.keys()].at(-1);
+    if (!quitting) persistSession();
+    if (entry.pending && !quitting)
+      void routeOpen(entry.pending).catch(showOpenError);
+    if (
+      restoring &&
+      [...windows.values()].every((candidate) => candidate.ready)
+    )
+      finishRestore();
+    appendDesktopSlog("desktop.window.closed", { windowId: id, quitting });
+  });
+  window.webContents.on(
+    "did-start-navigation",
+    (_event, url, inPlace, mainFrame) => {
+      if (!mainFrame || inPlace) return;
+      const origin = entry.loadingOrigin ?? entry.origin;
+      const errorPage =
+        entry.loadingErrorDocument && url.startsWith("data:text/html");
+      // Navigation policy cancels file handoffs and untrusted destinations;
+      // the current renderer remains loaded and will not send ready again.
+      if (
+        !errorPage &&
+        (!origin ||
+          !isAllowedNavigation(url, origin) ||
+          isServedFileNavigation(url, origin))
+      )
+        return;
+      entry.readyBeforeNavigation = entry.ready;
+      entry.ready = false;
+    },
+  );
+  window.webContents.on("render-process-gone", () => {
+    entry.ready = false;
+    entry.readyBeforeNavigation = false;
+    entry.crashed = true;
+    owners.releaseWindow(id);
+    appendDesktopSlog("desktop.window.renderer-crashed", { windowId: id });
+    if (entry.crashRestarts++ === 0) void entry.loader.load();
+  });
+  window.webContents.on("did-finish-load", () => {
+    entry.crashed = false;
+  });
+  window.webContents.on("will-prevent-unload", (event) => {
+    if (entry.allowClose) {
       event.preventDefault();
       return;
     }
-    if (isServedFileNavigation(url, validatedOrigin)) {
+    entry.ready ||= entry.readyBeforeNavigation;
+    entry.readyBeforeNavigation = false;
+    if (entry.ready) routePending(entry);
+    explainBlockedClose(entry);
+  });
+  const preventDisallowedNavigation = (event: Event, url: string) => {
+    if (entry.loadingErrorDocument && url.startsWith("data:text/html")) return;
+    if (
+      (!entry.origin || !isAllowedNavigation(url, entry.origin)) &&
+      (!entry.loadingOrigin || !isAllowedNavigation(url, entry.loadingOrigin))
+    ) {
+      event.preventDefault();
+      return;
+    }
+    if (entry.origin && isServedFileNavigation(url, entry.origin)) {
       event.preventDefault();
       void shell.openExternal(url);
     }
   };
-  mainWindow.webContents.on("will-navigate", preventDisallowedNavigation);
-  mainWindow.webContents.on("will-redirect", preventDisallowedNavigation);
-  mainWindow.webContents.on("before-input-event", (_event, input) => {
-    if (!mainWindow || mainWindow.isDestroyed()) return;
-    mainWindow.webContents.setIgnoreMenuShortcuts(
+  window.webContents.on("will-navigate", preventDisallowedNavigation);
+  window.webContents.on("will-redirect", preventDisallowedNavigation);
+  window.webContents.on("before-input-event", (_event, input) => {
+    window.webContents.setIgnoreMenuShortcuts(
       shouldSuppressNativeDocumentShortcut(
         input,
-        mainWindow.webContents.getURL(),
-        validatedOrigin,
+        window.webContents.getURL(),
+        entry.origin,
       ),
     );
   });
-  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    if (isAllowedExternalUrl(url)) {
-      void shell.openExternal(url);
-    }
+  window.webContents.setWindowOpenHandler(({ url }) => {
+    if (isAllowedExternalUrl(url)) void shell.openExternal(url);
     return { action: "deny" };
   });
-
-  await loadManagedServer();
+  entry.loader = createManagedServerLoader<BrowserWindow>({
+    resolvePage: () => (window.isDestroyed() ? null : window),
+    startServer,
+    resolveTarget: async () => {
+      try {
+        return await verifyManagedServerTarget(
+          readManagedServerTarget(resolveManagedServerStateFile()),
+        );
+      } catch (error) {
+        serverStart = null;
+        throw error;
+      }
+    },
+    loadUrl: async (page, url) => {
+      if (page.isDestroyed()) return;
+      await page.loadURL(url);
+      entry.origin = url;
+      entry.loadingOrigin = null;
+      entry.errorDocument = false;
+      await connectStream(url);
+    },
+    loadErrorDocument: async (page, message) => {
+      if (page.isDestroyed()) return;
+      entry.loadingErrorDocument = true;
+      try {
+        await page.loadURL(errorDocument(message));
+        entry.errorDocument = true;
+      } catch (error) {
+        // A dirty editor may refuse navigation; it must retain its save guards.
+        appendDesktopSlog("desktop.error-page.blocked", {
+          windowId: id,
+          message: String(error),
+        });
+      } finally {
+        entry.loadingErrorDocument = false;
+      }
+    },
+    setOrigin: (origin) => {
+      entry.loadingOrigin = origin;
+      if (origin) {
+        entry.origin ??= origin;
+        validatedOrigin = origin;
+      }
+    },
+    onConnected: () => {},
+    onDisconnected: () => {
+      entry.loadingOrigin = null;
+    },
+    nextRetryDelay: nextServerLoadRetryDelay,
+    setTimer: (callback, delay) => setTimeout(callback, delay),
+    clearTimer: (handle) => clearTimeout(handle as NodeJS.Timeout),
+    slog: appendDesktopSlog,
+  });
+  await entry.loader.load();
+  if (!restoring) persistSession();
+  return entry;
 }
 
-const managedServerLoader = createManagedServerLoader<BrowserWindow>({
-  resolvePage: () =>
-    mainWindow && !mainWindow.isDestroyed() ? mainWindow : null,
-  startServer: startManagedServer,
-  resolveTarget: () =>
-    verifyManagedServerTarget(
-      readManagedServerTarget(resolveManagedServerStateFile()),
-    ),
-  loadUrl: (window, url) => window.loadURL(url),
-  loadErrorDocument: async (window, message) => {
-    loadingErrorDocument = true;
-    try {
-      await window.loadURL(errorDocument(message));
-    } finally {
-      loadingErrorDocument = false;
+function installIpc(): void {
+  ipcMain.handle(WINDOW_SESSION_CHANNEL, (event, paths: unknown) => {
+    const entry = senderWindow(event);
+    if (!entry || !validPaths(paths)) return [];
+    const accepted: string[] = [];
+    for (const filePath of paths) {
+      const claim = owners.claim(entry.id, filePath);
+      if (claim.status === "claimed") accepted.push(claim.path);
     }
-  },
-  setOrigin: (origin) => {
-    validatedOrigin = origin;
-  },
-  onConnected: () => nativeOpenPaths.connect(scheduleNativeOpenPath),
-  onDisconnected: () => nativeOpenPaths.disconnect(),
-  nextRetryDelay: nextServerLoadRetryDelay,
-  setTimer: (callback, delayMs) => setTimeout(callback, delayMs),
-  clearTimer: (handle) => clearTimeout(handle as NodeJS.Timeout),
-  slog: appendDesktopSlog,
-});
-
-function loadManagedServer(): Promise<void> {
-  return managedServerLoader.load();
+    appendDesktopSlog("desktop.window.session-started", {
+      windowId: entry.id,
+      requested: paths.length,
+      accepted: accepted.length,
+    });
+    // Initial explicit URLs are not in the sidebar until loading completes.
+    // Keep these claims pending through the renderer's initial empty snapshot.
+    return accepted;
+  });
+  ipcMain.handle(CLAIM_DOCUMENT_CHANNEL, (event, filePath: unknown) => {
+    const entry = senderWindow(event);
+    if (!entry || !validPath(filePath))
+      throw new Error("Invalid document request");
+    const previousOwner = owners.find(filePath);
+    if (previousOwner) {
+      const previousWindow = windows.get(previousOwner.windowId);
+      if (
+        !previousWindow ||
+        previousWindow.window.isDestroyed() ||
+        previousWindow.crashed
+      )
+        owners.releaseWindow(previousOwner.windowId);
+    }
+    const claim = owners.claim(entry.id, filePath);
+    if (claim.status === "claimed") return claim;
+    const destination = windows.get(claim.windowId);
+    if (destination)
+      deliver(destination, {
+        path: claim.path,
+        modifiedAt: null,
+        activate: true,
+      });
+    return { status: "focused-existing" };
+  });
+  ipcMain.on(REPORT_DOCUMENTS_CHANNEL, (event, paths: unknown) => {
+    const entry = senderWindow(event);
+    if (entry && validPaths(paths)) owners.report(entry.id, paths);
+  });
+  ipcMain.on(RELEASE_DOCUMENT_CHANNEL, (event, filePath: unknown) => {
+    const entry = senderWindow(event);
+    if (entry && validPath(filePath)) owners.release(entry.id, filePath);
+  });
+  ipcMain.on(WINDOW_READY_CHANNEL, (event) => {
+    const entry = senderWindow(event);
+    if (!entry) return;
+    entry.ready = true;
+    entry.readyBeforeNavigation = false;
+    routePending(entry);
+    if (
+      restoring &&
+      [...windows.values()].every((candidate) => candidate.ready)
+    ) {
+      const focus = focusedId ? windows.get(focusedId) : undefined;
+      if (focus) focusWindow(focus);
+      finishRestore();
+    }
+    appendDesktopSlog("desktop.window.ready", { windowId: entry.id });
+  });
+  ipcMain.on(
+    PREPARE_CLOSE_RESULT_CHANNEL,
+    (event, requestId: unknown, ready: unknown) => {
+      const entry = senderWindow(event);
+      if (!entry || typeof requestId !== "number") return;
+      const request = closeRequests.get(requestId);
+      if (request?.id === entry.id) request.finish(ready === true);
+    },
+  );
+  ipcMain.on(DROPPED_MARKDOWN_IPC_CHANNEL, (event, filePath: unknown) => {
+    const entry = senderWindow(event);
+    if (entry && validPath(filePath)) void openMarkdownPath(filePath, entry.id);
+  });
+  ipcMain.on(RECENT_DOCUMENTS_IPC_CHANNEL, (event, value: unknown) => {
+    if (!senderWindow(event)) return;
+    const paths = parseRecentDocumentPaths(value);
+    if (!paths || paths.join("\0") === recentDocumentPaths.join("\0")) return;
+    recentDocumentPaths = paths;
+    installApplicationMenu();
+  });
+  ipcMain.handle(LOCATE_MARKDOWN_IPC_CHANNEL, async (event) => {
+    const entry = senderWindow(event);
+    if (!entry) return null;
+    const result = await dialog.showOpenDialog(entry.window, {
+      title: "Locate Markdown file",
+      properties: ["openFile"],
+      filters: [{ name: "Markdown", extensions: ["md"] }],
+    });
+    return result.canceled ? null : (result.filePaths[0] ?? null);
+  });
 }
 
 app.on("open-file", (event, filePath) => {
   event.preventDefault();
-  nativeOpenPaths.request(filePath);
-
-  if (app.isReady()) {
-    void ensureNativeOpenDestination();
-  }
+  void openMarkdownPath(filePath);
 });
 
-const hasSingleInstanceLock = app.requestSingleInstanceLock();
-if (!hasSingleInstanceLock) {
+if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
   app.on("second-instance", () => {
-    if (validatedOrigin === null) {
-      void loadManagedServer().finally(focusMainWindow);
-      return;
-    }
-    focusMainWindow();
+    void activateApp();
   });
-
   app.whenReady().then(async () => {
+    sessionFile = path.join(app.getPath("userData"), "window-session.json");
+    lastWorkspace = readWindowSession(sessionFile);
+    focusedId = lastWorkspace?.focusedId;
     if (process.platform === "darwin" && app.isPackaged) {
       try {
         app.setLoginItemSettings({ openAtLogin: true });
-        appendDesktopSlog("desktop.login-item.configured", {
-          openAtLogin: true,
-        });
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        appendDesktopSlog("desktop.login-item.failed", { message });
-        console.error(
-          `Could not configure Roughdraft to open at login: ${message}`,
-        );
+        appendDesktopSlog("desktop.login-item.failed", {
+          message: String(error),
+        });
       }
     }
-
     installApplicationMenu();
-
-    const isMainWindowWebContents = (webContents: WebContents | null) =>
-      webContents !== null &&
-      mainWindow !== null &&
-      !mainWindow.isDestroyed() &&
-      webContents === mainWindow.webContents;
-
-    ipcMain.on(DROPPED_MARKDOWN_IPC_CHANNEL, (event, filePath: unknown) => {
-      if (
-        !isMainWindowWebContents(event.sender) ||
-        event.senderFrame !== event.sender.mainFrame ||
-        typeof filePath !== "string" ||
-        !filePath.trim()
-      ) {
-        return;
-      }
-
-      nativeOpenPaths.request(filePath);
-    });
-
-    ipcMain.on(RECENT_DOCUMENTS_IPC_CHANNEL, (event, value: unknown) => {
-      if (
-        !isMainWindowWebContents(event.sender) ||
-        event.senderFrame !== event.sender.mainFrame
-      ) {
-        return;
-      }
-
-      const paths = parseRecentDocumentPaths(value);
-      if (!paths || paths.join("\0") === recentDocumentPaths.join("\0")) {
-        return;
-      }
-
-      recentDocumentPaths = paths;
-      installApplicationMenu();
-    });
-
-    ipcMain.handle(LOCATE_MARKDOWN_IPC_CHANNEL, async (event) => {
-      if (
-        !isMainWindowWebContents(event.sender) ||
-        event.senderFrame !== event.sender.mainFrame ||
-        !mainWindow ||
-        mainWindow.isDestroyed()
-      ) {
-        return null;
-      }
-
-      const result = await dialog.showOpenDialog(mainWindow, {
-        title: "Locate Markdown file",
-        properties: ["openFile"],
-        filters: [{ name: "Markdown", extensions: ["md"] }],
-      });
-      const filePath = result.filePaths[0];
-      return result.canceled || !filePath ? null : filePath;
-    });
-
+    installIpc();
     session.defaultSession.setPermissionCheckHandler(
-      (webContents, permission, requestingOrigin, details) =>
-        isMainWindowWebContents(webContents) &&
-        shouldAllowRendererPermission({
-          permission,
-          requestingOrigin,
-          validatedOrigin,
-          isMainFrame: details.isMainFrame,
-        }),
+      (contents, permission, requestingOrigin, details) => {
+        const entry = trustedWindow(contents);
+        return (
+          !!entry &&
+          shouldAllowRendererPermission({
+            permission,
+            requestingOrigin,
+            validatedOrigin: entry.origin,
+            isMainFrame: details.isMainFrame,
+          })
+        );
+      },
     );
     session.defaultSession.setPermissionRequestHandler(
-      (webContents, permission, callback, details) =>
+      (contents, permission, callback, details) => {
+        const entry = trustedWindow(contents);
         callback(
-          isMainWindowWebContents(webContents) &&
+          !!entry &&
             shouldAllowRendererPermission({
               permission,
               requestingOrigin: details.requestingUrl,
-              validatedOrigin,
+              validatedOrigin: entry.origin,
               isMainFrame: details.isMainFrame,
             }),
-        ),
+        );
+      },
     );
     session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
       if (
@@ -426,25 +904,66 @@ if (!hasSingleInstanceLock) {
         },
       });
     });
-
-    await createMainWindow();
+    // Register every restored window synchronously before their first load settles.
+    const saved = lastWorkspace?.windows;
+    restoreTimer = setTimeout(finishRestore, 10_000);
+    await Promise.all(
+      saved?.length
+        ? saved.map((entry) => createWindow(entry))
+        : [createWindow(undefined, true)],
+    );
+    persistSession();
   });
-
   app.on("activate", () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
-      void createMainWindow();
-      return;
-    }
-    if (validatedOrigin === null) {
-      void loadManagedServer().finally(focusMainWindow);
-      return;
-    }
-    // The CLI activates the app when it finds no server running.
-    void managedServerLoader.ensureConnected();
-    focusMainWindow();
+    void activateApp();
   });
-
+  app.on("before-quit", (event) => {
+    if (quitting) return;
+    event.preventDefault();
+    void requestQuit();
+  });
+  app.on("will-quit", () => {
+    clearTimeout(saveTimer);
+    clearTimeout(restoreTimer);
+    openStream.disconnect();
+    session.defaultSession.flushStorageData();
+  });
   app.on("window-all-closed", () => {
     if (process.platform !== "darwin") app.quit();
   });
+}
+
+async function activateApp(): Promise<void> {
+  if (!app.isReady() || restoring || preparingQuit) return;
+  const entry =
+    activeWindow() ?? (await createWindow(lastWorkspace?.windows[0]));
+  try {
+    let target: ManagedServerTarget;
+    try {
+      target = await verifyManagedServerTarget(
+        readManagedServerTarget(resolveManagedServerStateFile()),
+      );
+    } catch {
+      serverStart = null;
+      routingAvailable = false;
+      openStream.disconnect();
+      await startServer();
+      target = await verifyManagedServerTarget(
+        readManagedServerTarget(resolveManagedServerStateFile()),
+      );
+    }
+    await Promise.all(
+      [...windows.values()].map((candidate) =>
+        candidate.errorDocument ||
+        candidate.crashed ||
+        candidate.origin !== target.url
+          ? candidate.loader.load()
+          : Promise.resolve(),
+      ),
+    );
+    await connectStream(target.url);
+  } catch (error) {
+    appendDesktopSlog("desktop.activate.failed", { message: String(error) });
+  }
+  focusWindow(entry);
 }

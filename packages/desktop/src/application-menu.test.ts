@@ -26,6 +26,22 @@ function openRecentItems(
 }
 
 describe("desktop application menu", () => {
+  it("creates an independent window without taking the new-file shortcut", () => {
+    const newWindow = vi.fn();
+    const template = createApplicationMenuTemplate({
+      newWindow,
+      newMarkdownFile: vi.fn(),
+      openMarkdownFile: vi.fn(),
+      openRecentDocument: vi.fn(),
+    });
+    const item = fileMenuItem(template, "New Window");
+    expect(item?.accelerator).toBe("CommandOrControl+Shift+N");
+    click(item);
+    expect(newWindow).toHaveBeenCalledOnce();
+    expect(fileMenuItem(template, "New…")?.accelerator).toBe(
+      "CommandOrControl+N",
+    );
+  });
   it("offers File > Open with the native open shortcut", () => {
     const openMarkdownFile = vi.fn();
     const template = createApplicationMenuTemplate(

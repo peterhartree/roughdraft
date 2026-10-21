@@ -1,4 +1,4 @@
-const FILE_BROWSER_PREFERENCES_KEY = "roughdraft.file-browser.v1";
+export const FILE_BROWSER_PREFERENCES_KEY = "roughdraft.file-browser.v1";
 const MAX_PINNED_FOLDERS = 50;
 const MAX_PROJECT_PINS = 200;
 const MAX_FOLDER_SORT_ORDERS = 500;

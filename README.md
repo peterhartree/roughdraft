@@ -118,6 +118,8 @@ ditto packages/desktop/out/Roughdraft-darwin-arm64/Roughdraft.app /Users/ph/Appl
 
 The local app is named `Roughdraft` and uses bundle identifier `is.pjh.roughdraft`. It is unsigned and intended only for local use. `roughdraft open <file.md>` first sends the document to the managed server and then launches or activates this app. Documents open only in this app: if the bundle cannot be launched, the command fails rather than opening a browser. A document URL loaded in a local browser tab is handed to the app, and browser tabs never receive open requests.
 
+Use **File > New Window** (`Command+Shift+N`) for another independent workspace. Each window has its own open documents and restores them when the app restarts. Opening a document that is already in another window brings that window forward. `Command+N` creates a new Markdown file; pending saves and conflicts must be resolved before a window can close.
+
 The writable fork is `origin`; the read-only upstream source is `upstream`. To incorporate upstream changes deliberately:
 
 ```bash

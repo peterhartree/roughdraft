@@ -1,14 +1,47 @@
-import type { OpenFileItem } from "./open-file-navigation";
 import {
   type DocumentViewState,
   getRestorableDocumentViewState,
 } from "./document-view-state";
+import type { OpenFileItem } from "./open-file-navigation";
 
 const OPEN_FILE_SESSION_KEY = "roughdraft.open-file-session.v1";
 const MAX_RESTORED_FILES = 100;
 const MAX_STORED_SESSION_LENGTH = 1_000_000;
 
 type SessionStorage = Pick<Storage, "getItem" | "setItem" | "removeItem">;
+
+/**
+ * Gives one desktop window an isolated view of the existing open-file session
+ * storage contract. Browser sessions keep using localStorage directly.
+ */
+export function createWindowOpenFileSessionStorage(
+  storage: SessionStorage,
+  session: { key: string; migrateLegacy: boolean },
+): SessionStorage {
+  const scopedKey = `${OPEN_FILE_SESSION_KEY}.${session.key}`;
+
+  if (session.migrateLegacy) {
+    try {
+      if (storage.getItem(scopedKey) === null) {
+        const legacyValue = storage.getItem(OPEN_FILE_SESSION_KEY);
+        if (legacyValue !== null) {
+          storage.setItem(scopedKey, legacyValue);
+        }
+      }
+      storage.removeItem(OPEN_FILE_SESSION_KEY);
+    } catch {
+      // Startup still works without persistence when storage is unavailable.
+    }
+  }
+
+  const resolveKey = (key: string) =>
+    key === OPEN_FILE_SESSION_KEY ? scopedKey : key;
+  return {
+    getItem: (key) => storage.getItem(resolveKey(key)),
+    setItem: (key, value) => storage.setItem(resolveKey(key), value),
+    removeItem: (key) => storage.removeItem(resolveKey(key)),
+  };
+}
 
 export interface OpenFileSession {
   activePath: string;

@@ -17,6 +17,51 @@ describe("OpenRequestBroker", () => {
     expect(second).toEqual(["/tmp/draft.md"]);
   });
 
+  it("prefers a desktop router over newer legacy clients", () => {
+    const broker = new OpenRequestBroker();
+    const router: string[] = [];
+    const legacyDesktop: string[] = [];
+    const browser: string[] = [];
+    broker.connect((intent) => router.push(intent.path), undefined, {
+      router: true,
+    });
+    broker.connect((intent) => legacyDesktop.push(intent.path));
+    broker.connect((intent) => browser.push(intent.path));
+
+    broker.request({ path: "/tmp/draft.md", modifiedAt: 100 });
+
+    expect(router).toEqual(["/tmp/draft.md"]);
+    expect(legacyDesktop).toEqual([]);
+    expect(browser).toEqual([]);
+  });
+
+  it("falls back to the newest legacy client after the router disconnects", () => {
+    const broker = new OpenRequestBroker();
+    const older: string[] = [];
+    const newer: string[] = [];
+    const router = broker.connect(() => {}, undefined, { router: true });
+    broker.connect((intent) => older.push(intent.path));
+    broker.connect((intent) => newer.push(intent.path));
+    router.disconnect();
+
+    broker.request({ path: "/tmp/draft.md", modifiedAt: 100 });
+
+    expect(older).toEqual([]);
+    expect(newer).toEqual(["/tmp/draft.md"]);
+  });
+
+  it("delivers a queued startup intent when the router connects", () => {
+    const broker = new OpenRequestBroker();
+    broker.request({ path: "/tmp/startup.md", modifiedAt: null });
+    const router: string[] = [];
+
+    broker.connect((intent) => router.push(intent.path), undefined, {
+      router: true,
+    });
+
+    expect(router).toEqual(["/tmp/startup.md"]);
+  });
+
   it("holds a cold-start intent until a client connects", () => {
     const broker = new OpenRequestBroker();
 

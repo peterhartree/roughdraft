@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getRevealFolders, type MarkdownTreeListing } from "./file-browser";
 import {
+  FILE_BROWSER_PREFERENCES_KEY,
   type FileBrowserPreferences,
   isFolderOpen,
   readFileBrowserPreferences,
@@ -54,16 +55,27 @@ export function useFileBrowser({
 
   const updatePreferences = useCallback(
     (update: (current: FileBrowserPreferences) => FileBrowserPreferences) => {
-      setPreferences((current) => {
-        const next = update(current);
-        if (next !== current) {
-          writeFileBrowserPreferences(window.localStorage, next);
-        }
-        return next;
-      });
+      // Another desktop window may have written shared pins since this
+      // renderer last received a storage event. Base each mutation on the
+      // latest stored value so it does not overwrite that newer change.
+      const current = readFileBrowserPreferences(window.localStorage);
+      const next = update(current);
+      if (next !== current) {
+        writeFileBrowserPreferences(window.localStorage, next);
+      }
+      setPreferences(next);
     },
     [],
   );
+
+  useEffect(() => {
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key !== FILE_BROWSER_PREFERENCES_KEY) return;
+      setPreferences(readFileBrowserPreferences(window.localStorage));
+    };
+    window.addEventListener("storage", handleStorage);
+    return () => window.removeEventListener("storage", handleStorage);
+  }, []);
 
   useEffect(() => {
     if (!enabled) return;

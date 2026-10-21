@@ -6,9 +6,15 @@ Roughdraft's browser launch does not have its own macOS application identity, so
 
 ## Decision
 
-The personal fork packages the existing loopback-served React app in a thin Electron shell. Electron owns one native window, app activation, managed-server target validation, renderer isolation, navigation restrictions, external-link handoff, and explicit local-file open entry points. It does not own document state or expose a privileged API to page code. A sandboxed preload handles user-initiated file drops and forwards only a resolved `.md` path to the trusted main process.
+The personal fork packages the existing loopback-served React app in a thin Electron shell. Electron owns native windows, their stable identities and positions, app activation, managed-server target validation, renderer isolation, navigation restrictions, external-link handoff, and explicit local-file open entry points. It does not own document state or expose a privileged API to page code. A sandboxed preload handles user-initiated file drops and forwards only a resolved `.md` path to the trusted main process.
 
-The CLI, native File menu, macOS document-open events, and window file drops send the same typed document-open intent to the existing Express server. The server delivers it to the current renderer when connected or retains only the newest undelivered intent until a renderer connects. The renderer opens that intent in the current window.
+The desktop main process routes typed document-open intents. Native File menu actions, macOS document-open events and window file drops call it directly. CLI and browser handoff intents arrive through one server event stream, prioritised over legacy renderer connections. Browser-only deployments retain renderer event streams. The newest undelivered intent is retained during startup.
+
+Each native window contains the existing local-file sidebar and editor. File > New Window (Command+Shift+N) creates an empty workspace; Command+N still creates a Markdown file. An open targets the window whose sidebar already contains that file, otherwise the originating window for menus and drops, or the most recently focused window for external opens. Main canonicalises paths for ownership while preserving each renderer's path spelling. Claims are synchronous, and sidebar snapshots release closed entries. This prevents duplicate editors across desktop windows; version-checked saves remain the data-integrity boundary.
+
+The sandboxed preload exposes a narrow window/session interface: identity, document ownership, targeted opens, readiness and close preparation. IPC accepts only registered windows' main frames at the validated local origin. Window identity survives renderer reloads. Startup waits for restored sessions before routing external opens, with a bounded fallback for unavailable renderers.
+
+Window metadata is saved atomically in Electron's user-data directory. Explicit window closure removes that workspace from the next restored set; closing the final window retains it for Dock reopening. App quit first asks every renderer to flush its pending save and check for conflicts. No window closes if any cannot prepare safely. Input is held during this check, and restored if closure is cancelled. Successful quit saves the whole window set and flushes Chromium storage.
 
 ## Consequences
 
@@ -18,4 +24,4 @@ The Electron runtime becomes a maintained dependency and must stay current. The 
 
 ## What this explicitly does not mean
 
-The shell is not a document database, vault, editor implementation, global shortcut daemon, or remote-content browser. The pending intent slot is not tab state. A future tabs release requires a separate decision for per-tab identity, dirty/conflict state, close behaviour, and session persistence.
+The shell is not a document database, vault, editor implementation, global shortcut daemon, or remote-content browser. The pending intent slot is not tab state. Chrome-style tabs, moving documents between windows and simultaneous editors for the same file require separate decisions.

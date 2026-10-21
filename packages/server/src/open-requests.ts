@@ -22,18 +22,28 @@ export interface OpenDocumentIntent {
 
 type DeliverOpenRequest = (intent: OpenDocumentIntent) => void;
 
+interface OpenRequestClient {
+  deliver: DeliverOpenRequest;
+  router: boolean;
+}
+
+export interface OpenRequestConnectionOptions {
+  router?: boolean;
+}
+
 export class OpenRequestBroker {
-  private readonly clients = new Map<number, DeliverOpenRequest>();
+  private readonly clients = new Map<number, OpenRequestClient>();
   private nextClientId = 1;
   private pendingIntent: OpenDocumentIntent | null = null;
 
   connect(
     deliver: DeliverOpenRequest,
     onConnected?: (id: number) => void,
+    options: OpenRequestConnectionOptions = {},
   ): OpenRequestConnection {
     const id = this.nextClientId;
     this.nextClientId += 1;
-    this.clients.set(id, deliver);
+    this.clients.set(id, { deliver, router: options.router === true });
     onConnected?.(id);
 
     if (this.pendingIntent !== null) {
@@ -51,13 +61,16 @@ export class OpenRequestBroker {
   }
 
   request(intent: OpenDocumentIntent): OpenRequestResult {
-    const newestClient = Array.from(this.clients.values()).at(-1);
+    const clientsNewestFirst = Array.from(this.clients.values()).reverse();
+    const newestClient =
+      clientsNewestFirst.find((client) => client.router) ??
+      clientsNewestFirst.at(0);
     if (!newestClient) {
       this.pendingIntent = intent;
       return { accepted: true, delivered: false };
     }
 
-    newestClient(intent);
+    newestClient.deliver(intent);
     return { accepted: true, delivered: true };
   }
 }
