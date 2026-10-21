@@ -35,6 +35,7 @@ import {
   TooltipTrigger,
 } from "./components/ui/tooltip";
 import { toHtml, toMarkdown } from "./markdown";
+import { writeRichTextToClipboard } from "./rich-clipboard";
 import type { StorageBackend } from "./storage";
 
 interface EditorContextMenuProps {
@@ -706,21 +707,23 @@ export function EditorContextMenu({
       setCopyFailed(false);
       try {
         const slice = editor.state.selection.content();
-        let text: string;
+        // Keep the selection's block structure (including list wrappers).
+        const container = document.createElement("div");
+        container.appendChild(
+          DOMSerializer.fromSchema(editor.schema).serializeFragment(
+            slice.content,
+          ),
+        );
+        // The document serializer adds a final newline; snippets don't need it.
+        const markdown = toMarkdown(container.innerHTML).replace(/\n$/, "");
         if (asMarkdown) {
-          // Keep the selection's block structure (including list wrappers).
-          const container = document.createElement("div");
-          container.appendChild(
-            DOMSerializer.fromSchema(editor.schema).serializeFragment(
-              slice.content,
-            ),
-          );
-          // The document serializer adds a final newline; snippets don't need it.
-          text = toMarkdown(container.innerHTML).replace(/\n$/, "");
+          await navigator.clipboard.writeText(markdown);
         } else {
-          text = editor.view.serializeForClipboard(slice).text;
+          await writeRichTextToClipboard(
+            markdown,
+            editor.view.serializeForClipboard(slice).text,
+          );
         }
-        await navigator.clipboard.writeText(text);
         close();
       } catch {
         setCopyFailed(true);

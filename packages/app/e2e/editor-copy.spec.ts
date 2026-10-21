@@ -26,6 +26,53 @@ async function readClipboard(page: Page) {
   return page.evaluate(() => navigator.clipboard.readText());
 }
 
+async function readClipboardItems(page: Page) {
+  return page.evaluate(async () => {
+    const flavours: Record<string, string> = {};
+    for (const item of await navigator.clipboard.read()) {
+      for (const type of item.types) {
+        flavours[type] = await (await item.getType(type)).text();
+      }
+    }
+    return flavours;
+  });
+}
+
+// Selects from the start of the text node holding `startText` to the end of
+// the one holding `endText`, so the selection spans differently formatted runs.
+async function selectAcrossTextNodes(
+  page: Page,
+  startText: string,
+  endText: string,
+) {
+  await richTextEditor(page).focus();
+  await page.evaluate(
+    ({ startText, endText }) => {
+      const editor = document.querySelector(".ProseMirror");
+      if (!editor) throw new Error("Could not find rich-text editor");
+      const walker = document.createTreeWalker(editor, NodeFilter.SHOW_TEXT);
+      let start: Node | null = null;
+      let end: Node | null = null;
+      for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+        if (!start && node.textContent === startText) start = node;
+        if (start && node.textContent === endText) {
+          end = node;
+          break;
+        }
+      }
+      if (!start || !end) throw new Error("Could not find selection ends");
+      const range = document.createRange();
+      range.setStart(start, 0);
+      range.setEnd(end, end.textContent?.length ?? 0);
+      const selection = window.getSelection();
+      selection?.removeAllRanges();
+      selection?.addRange(range);
+      document.dispatchEvent(new Event("selectionchange", { bubbles: true }));
+    },
+    { startText, endText },
+  );
+}
+
 async function primaryModifier(page: Page) {
   return page.evaluate(() => {
     const platform =
@@ -81,11 +128,49 @@ test.describe("rich-text editor copy actions", () => {
     await captureMenuScreenshot(page, "selected-context-menu.png");
     await copy.click();
 
+    await expect.poll(() => readClipboard(page)).toBe("formatted phrase");
     const copiedText = await readClipboard(page);
-    expect(copiedText).toBe("formatted phrase");
     logE2eEvent("editor-copy.plain-text", {
       action: "copy",
       characterCount: copiedText.length,
+      passed: true,
+    });
+  });
+
+  test("Copy also puts the selection on the clipboard as clean rich text", async ({
+    context,
+    page,
+  }) => {
+    await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+    const filePath = writeProjectFile(
+      projectDir,
+      "copy-rich.md",
+      "# Copy\n\nThis has **formatted phrase** and _emphasis_ {>>a review note<<} here.\n",
+    );
+
+    await openMarkdownFile(page, filePath);
+    const editor = richTextEditor(page);
+    await selectAcrossTextNodes(page, "formatted phrase", "emphasis");
+    await editor
+      .getByText("formatted phrase", { exact: true })
+      .click({ button: "right" });
+    await page.getByTestId(plainCopyAction).click();
+
+    await expect
+      .poll(() => readClipboard(page))
+      .toBe("formatted phrase and emphasis");
+    const clipboard = await readClipboardItems(page);
+    expect(clipboard["text/plain"]).toBe("formatted phrase and emphasis");
+    // Chat apps such as Slack keep formatting only from the HTML flavour.
+    expect(clipboard["text/html"]).toContain(
+      "<strong>formatted phrase</strong>",
+    );
+    expect(clipboard["text/html"]).toContain("<em>emphasis</em>");
+    expect(clipboard["text/html"]).not.toContain("data-");
+    expect(clipboard["text/html"]).not.toContain("a review note");
+    logE2eEvent("editor-copy.rich-text", {
+      action: "copy",
+      types: Object.keys(clipboard),
       passed: true,
     });
   });
@@ -267,8 +352,8 @@ test.describe("rich-text editor copy actions", () => {
     const copy = page.getByTestId(plainCopyAction);
     await expect(copy).toBeEnabled();
     await copy.click();
+    await expect.poll(() => readClipboard(page)).toBe("formatted phrase");
     const copiedText = await readClipboard(page);
-    expect(copiedText).toBe("formatted phrase");
     logE2eEvent("editor-copy.viewing-mode", {
       action: "copy",
       characterCount: copiedText.length,
@@ -290,21 +375,26 @@ test.describe("rich-text editor copy actions", () => {
     await openMarkdownFile(page, filePath);
     await page.evaluate(() => {
       const clipboard = navigator.clipboard;
-      const originalWriteText = clipboard.writeText.bind(clipboard);
       let attempts = 0;
-      Object.defineProperty(clipboard, "writeText", {
-        configurable: true,
-        value: async (text: string) => {
-          attempts += 1;
-          if (attempts === 1) {
-            throw new DOMException(
-              "Simulated clipboard failure",
-              "NotAllowedError",
-            );
-          }
-          return originalWriteText(text);
-        },
-      });
+      // Copy writes rich text with write(); Copy as Markdown uses writeText().
+      for (const method of ["write", "writeText"] as const) {
+        const original = clipboard[method].bind(clipboard) as (
+          data: never,
+        ) => Promise<void>;
+        Object.defineProperty(clipboard, method, {
+          configurable: true,
+          value: async (data: never) => {
+            attempts += 1;
+            if (attempts === 1) {
+              throw new DOMException(
+                "Simulated clipboard failure",
+                "NotAllowedError",
+              );
+            }
+            return original(data);
+          },
+        });
+      }
     });
 
     const editor = richTextEditor(page);

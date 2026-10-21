@@ -77,6 +77,12 @@ test("writes to the system clipboard through the Electron permission boundary @s
           electronApp.evaluate(({ clipboard }) => clipboard.readText()),
         )
         .toBe(expected);
+      if (action === "copy") {
+        // The system clipboard carries HTML too, so pasting into Slack keeps bold.
+        expect(
+          await electronApp.evaluate(({ clipboard }) => clipboard.readHTML()),
+        ).toContain("<strong>selected text</strong>");
+      }
       await expect(window.getByTestId("editor-context-menu")).toBeHidden();
       expect(fs.readFileSync(documentPath, "utf8")).toBe(markdown);
       logE2eEvent("desktop.context-menu.copy", {

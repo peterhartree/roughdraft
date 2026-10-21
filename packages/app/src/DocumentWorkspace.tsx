@@ -45,10 +45,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "./components/ui/tooltip";
-import {
-  criticMarkdownHasReviewRail,
-  criticMarkdownToRenderedHtml,
-} from "./critic-markup";
+import { criticMarkdownHasReviewRail } from "./critic-markup";
 import type { DocumentDiskChangeState } from "./disk-change-state";
 import {
   type DocumentFindDirection,
@@ -69,6 +66,10 @@ import {
   type DocumentSaveState,
   PageCard,
 } from "./PageCard";
+import {
+  markdownToPlainText,
+  writeRichTextToClipboard,
+} from "./rich-clipboard";
 import type { Page, StorageBackend } from "./storage";
 import { useReviewLayoutShiftAnimation } from "./useReviewLayoutShiftAnimation";
 import {
@@ -130,71 +131,6 @@ function formatFileCopyPreview(value: string) {
   const normalized = value.replace(/\s+/g, " ").trim();
   if (normalized.length <= FILE_COPY_PREVIEW_MAX_LENGTH) return normalized;
   return `${normalized.slice(0, FILE_COPY_PREVIEW_MAX_LENGTH - 1)}...`;
-}
-
-function markdownToPlainText(markdown: string) {
-  const template = document.createElement("template");
-  template.innerHTML = markdownToCleanRichHtml(markdown);
-  return (template.content.textContent ?? "").trimEnd();
-}
-
-function unwrapElement(element: HTMLElement) {
-  element.replaceWith(...element.childNodes);
-}
-
-function markdownToCleanRichHtml(markdown: string) {
-  const template = document.createElement("template");
-  template.innerHTML = criticMarkdownToRenderedHtml(markdown).html;
-
-  for (const element of Array.from(
-    template.content.querySelectorAll<HTMLElement>(
-      "[data-comment-anchorless='true']",
-    ),
-  )) {
-    element.remove();
-  }
-
-  for (const element of Array.from(
-    template.content.querySelectorAll<HTMLElement>("[data-comment-ids]"),
-  )) {
-    unwrapElement(element);
-  }
-
-  for (const element of Array.from(
-    template.content.querySelectorAll<HTMLElement>(
-      "[data-critic-change-kind='addition'], [data-critic-change-kind='substitution-new']",
-    ),
-  )) {
-    element.remove();
-  }
-
-  for (const element of Array.from(
-    template.content.querySelectorAll<HTMLElement>("[data-critic-change-kind]"),
-  )) {
-    unwrapElement(element);
-  }
-
-  return template.innerHTML;
-}
-
-async function writeRichTextToClipboard(markdown: string) {
-  const clipboardWithRichText = navigator.clipboard as Clipboard & {
-    write?: Clipboard["write"];
-  };
-  const html = markdownToCleanRichHtml(markdown);
-  const plainText = markdownToPlainText(markdown);
-
-  if (clipboardWithRichText.write && typeof ClipboardItem !== "undefined") {
-    await clipboardWithRichText.write([
-      new ClipboardItem({
-        "text/html": new Blob([html], { type: "text/html" }),
-        "text/plain": new Blob([plainText], { type: "text/plain" }),
-      }),
-    ]);
-    return;
-  }
-
-  await navigator.clipboard.writeText(plainText);
 }
 
 function getSaveStatusViewModel(
