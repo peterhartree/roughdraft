@@ -85,10 +85,7 @@ test.describe("document outline", () => {
 
     // The outline sits in the margin, clear of the text column.
     const outlineBox = await outline.boundingBox();
-    const headingBox = await headingInEditor(
-      page,
-      "Summary",
-    ).boundingBox();
+    const headingBox = await headingInEditor(page, "Summary").boundingBox();
     expect(outlineBox && headingBox).toBeTruthy();
     expect((outlineBox?.x ?? 0) + (outlineBox?.width ?? 0)).toBeLessThan(
       headingBox?.x ?? 0,

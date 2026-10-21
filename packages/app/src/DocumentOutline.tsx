@@ -92,7 +92,6 @@ function readHeadings(scroller: HTMLElement): HeadingSnapshot {
   };
 }
 
-
 /** Moves focus between the outline's buttons with the arrow keys. */
 function handleListKeyDown(event: ReactKeyboardEvent<HTMLElement>) {
   if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
