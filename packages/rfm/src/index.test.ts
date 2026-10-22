@@ -3,8 +3,8 @@ import {
   appendRoughdraftDocumentComment,
   appendRoughdraftReply,
   extractRoughdraftReviewIndex,
-  markRoughdraftResolved,
   nextRoughdraftCommentId,
+  resolveRoughdraftThreads,
   setRoughdraftReaction,
   validateRoughdraftMarkdown,
 } from "./index";
@@ -575,48 +575,6 @@ describe("RFM mutation helpers", () => {
         message: "This closes early <<} and corrupts the thread.",
       }),
     ).toThrow(/CriticMarkup close delimiter/);
-  });
-
-  it("marks a target resolved without changing unrelated markup", () => {
-    const markdown =
-      'Add {++one example++}{id="s1" by="AI" at="2026-04-28T12:05:00.000Z"} and keep {>>open question<<}{id="c1" by="user" at="2026-04-28T12:06:00.000Z"}.\n';
-
-    const updated = markRoughdraftResolved(markdown, {
-      targetId: "s1",
-      summary: "Accepted in draft.",
-    });
-
-    expect(updated).toBe(
-      'Add {++one example++}{id="s1" by="AI" at="2026-04-28T12:05:00.000Z" status="resolved" resolved="Accepted in draft."} and keep {>>open question<<}{id="c1" by="user" at="2026-04-28T12:06:00.000Z"}.\n',
-    );
-  });
-
-  it("marks an endmatter-backed target resolved in YAML", () => {
-    const markdown = [
-      "Add {++one example++}{#s1}.",
-      "",
-      "---",
-      "workflow:",
-      "  owner: editorial",
-      "suggestions:",
-      "  s1:",
-      "    by: AI",
-      '    at: "2026-04-28T12:05:00.000Z"',
-      "",
-    ].join("\n");
-
-    const updated = markRoughdraftResolved(markdown, {
-      targetId: "s1",
-      summary: "Accepted in draft.",
-    });
-
-    expect(updated).toContain("status: resolved");
-    expect(updated).toContain("resolved: Accepted in draft.");
-    expect(updated).toContain("workflow:\n  owner: editorial");
-    expect(extractRoughdraftReviewIndex(updated).items[0]).toMatchObject({
-      id: "s1",
-      status: "resolved",
-    });
   });
 });
 
@@ -1246,5 +1204,352 @@ describe("replying to replies", () => {
     expect(updated).toContain(
       '{id="c1" by="user" at="2026-10-07T08:00:00.000Z"}{>>Fixed.<<}{id="c3" by="Claude" at="2026-10-07T09:00:00.000Z" re="c1"}\n---',
     );
+  });
+});
+
+describe("resolveRoughdraftThreads", () => {
+  const compactDraft = [
+    "# Draft",
+    "",
+    "Keep {==the claim==}{>>Needs a source<<}{#c1} as written.",
+    "",
+    "Standalone note {>>Tighten this<<}{#c3} here.",
+    "",
+    "---",
+    "comments:",
+    "  c1:",
+    "    by: user",
+    '    at: "2026-10-22T08:00:00.000Z"',
+    "  c2:",
+    "    body: Added one.",
+    "    by: Claude",
+    '    at: "2026-10-22T08:05:00.000Z"',
+    "    re: c1",
+    "  c3:",
+    "    by: user",
+    '    at: "2026-10-22T08:06:00.000Z"',
+    "  c4:",
+    "    body: Agreed.",
+    "    by: user",
+    '    at: "2026-10-22T08:07:00.000Z"',
+    "    re: c2",
+    "",
+  ].join("\n");
+
+  const ids = (markdown: string) =>
+    extractRoughdraftReviewIndex(markdown).items.map((item) => item.id);
+
+  it("unwraps the highlight and removes the comment, its replies and their endmatter", () => {
+    const result = resolveRoughdraftThreads(compactDraft, {
+      targetIds: ["c1"],
+    });
+
+    expect(result.threadIds).toEqual(["c1"]);
+    expect(result.removedIds).toEqual(["c1", "c2", "c4"]);
+    expect(result.markdown).toContain("Keep the claim as written.");
+    expect(result.markdown).not.toMatch(/\bc[124]:/);
+    expect(ids(result.markdown)).toEqual(["c3"]);
+    expect(validateRoughdraftMarkdown(result.markdown).ok).toBe(true);
+  });
+
+  it("resolves the whole thread when given a reply id", () => {
+    const result = resolveRoughdraftThreads(compactDraft, {
+      targetIds: ["c4"],
+    });
+
+    expect(result.threadIds).toEqual(["c1"]);
+    expect(ids(result.markdown)).toEqual(["c3"]);
+  });
+
+  it("removes a standalone comment and the space before it", () => {
+    const result = resolveRoughdraftThreads(compactDraft, {
+      targetIds: ["c3"],
+    });
+
+    expect(result.markdown).toContain("Standalone note here.");
+    expect(ids(result.markdown)).toEqual(["c1", "c2", "c4"]);
+  });
+
+  it("drops the endmatter block when nothing is left in it", () => {
+    const markdown = [
+      "Keep {==the claim==}{>>Needs a source<<}{#c1} as written.",
+      "",
+      "---",
+      "comments:",
+      "  c1:",
+      "    by: user",
+      '    at: "2026-10-22T08:00:00.000Z"',
+      "  c2:",
+      "    body: Done.",
+      "    by: Claude",
+      '    at: "2026-10-22T08:05:00.000Z"',
+      "    re: c1",
+      "",
+    ].join("\n");
+
+    const result = resolveRoughdraftThreads(markdown, { targetIds: ["c1"] });
+
+    expect(result.markdown).toBe("Keep the claim as written.\n");
+  });
+
+  it("removes an inline-attribute thread with chained inline replies", () => {
+    const markdown =
+      'Keep {==the claim==}{>>Needs proof<<}{id="c1" by="user" at="2026-10-07T08:00:00.000Z"}{>>Added it<<}{id="c2" by="AI" at="2026-10-07T08:01:00.000Z" re="c1"} and {>>Open<<}{id="c3" by="user" at="2026-10-07T08:02:00.000Z"}.\n';
+
+    const result = resolveRoughdraftThreads(markdown, { targetIds: ["c1"] });
+
+    expect(result.markdown).toBe(
+      'Keep the claim and {>>Open<<}{id="c3" by="user" at="2026-10-07T08:02:00.000Z"}.\n',
+    );
+  });
+
+  it("keeps the highlight while another thread still uses it", () => {
+    const markdown = [
+      "Keep {==the claim==}{>>First<<}{#c1}{>>Second<<}{#c2} here.",
+      "",
+      "---",
+      "comments:",
+      "  c1:",
+      "    by: user",
+      '    at: "2026-10-22T08:00:00.000Z"',
+      "  c2:",
+      "    by: user",
+      '    at: "2026-10-22T08:01:00.000Z"',
+      "",
+    ].join("\n");
+
+    const result = resolveRoughdraftThreads(markdown, { targetIds: ["c1"] });
+
+    expect(result.markdown).toContain(
+      "Keep {==the claim==}{>>Second<<}{#c2} here.",
+    );
+    expect(ids(result.markdown)).toEqual(["c2"]);
+  });
+
+  it("removes a document-level comment that lives only in endmatter", () => {
+    const markdown = [
+      "Body text {==here==}{>>Inline<<}{#c1}.",
+      "",
+      "---",
+      "comments:",
+      "  c1:",
+      "    by: user",
+      '    at: "2026-10-22T08:00:00.000Z"',
+      "  c2:",
+      "    body: Overall note",
+      "    by: user",
+      '    at: "2026-10-22T08:01:00.000Z"',
+      "",
+    ].join("\n");
+
+    const result = resolveRoughdraftThreads(markdown, { targetIds: ["c2"] });
+
+    expect(ids(result.markdown)).toEqual(["c1"]);
+    expect(result.markdown).toContain("Body text {==here==}{>>Inline<<}{#c1}.");
+  });
+
+  describe("suggestions", () => {
+    const withSuggestions = [
+      "Add {++one example++}{#s1} and {--this--}{#s2} and {~~old~>new~~}{#s3}.",
+      "",
+      "Keep {==x==}{>>Check<<}{#c1}.",
+      "",
+      "---",
+      "comments:",
+      "  c1:",
+      "    by: user",
+      '    at: "2026-10-22T08:00:00.000Z"',
+      "  c2:",
+      "    body: Why this example?",
+      "    by: user",
+      '    at: "2026-10-22T08:01:00.000Z"',
+      "    re: s1",
+      "suggestions:",
+      "  s1:",
+      "    by: Claude",
+      '    at: "2026-10-22T08:00:00.000Z"',
+      "  s2:",
+      "    by: Claude",
+      '    at: "2026-10-22T08:00:00.000Z"',
+      "  s3:",
+      "    by: Claude",
+      '    at: "2026-10-22T08:00:00.000Z"',
+      "",
+    ].join("\n");
+
+    it.each([
+      "s1",
+      "s2",
+      "s3",
+    ])("refuses to resolve suggested change %s without touching it", (id) => {
+      expect(() =>
+        resolveRoughdraftThreads(withSuggestions, { targetIds: [id] }),
+      ).toThrow(/suggested change.*accepting or rejecting/i);
+    });
+
+    it("removes a comment on a suggestion but keeps the suggestion", () => {
+      const result = resolveRoughdraftThreads(withSuggestions, {
+        targetIds: ["c2"],
+      });
+
+      expect(result.threadIds).toEqual(["c2"]);
+      expect(ids(result.markdown)).toEqual(["s1", "s2", "s3", "c1"]);
+      expect(result.markdown).toContain("{++one example++}{#s1}");
+      expect(validateRoughdraftMarkdown(result.markdown).ok).toBe(true);
+    });
+
+    it("leaves suggestions and their comments in place with all", () => {
+      const result = resolveRoughdraftThreads(withSuggestions, { all: true });
+
+      expect(result.threadIds).toEqual(["c1"]);
+      expect(result.skippedSuggestionIds).toEqual(["s1", "s2", "s3"]);
+      expect(ids(result.markdown)).toEqual(["s1", "s2", "s3", "c2"]);
+      expect(result.markdown).toContain("Keep x.");
+      expect(validateRoughdraftMarkdown(result.markdown).ok).toBe(true);
+    });
+  });
+
+  it("resolves every comment thread with all", () => {
+    const result = resolveRoughdraftThreads(compactDraft, { all: true });
+
+    expect(result.threadIds).toEqual(["c1", "c3"]);
+    expect(result.markdown).toBe(
+      [
+        "# Draft",
+        "",
+        "Keep the claim as written.",
+        "",
+        "Standalone note here.",
+        "",
+      ].join("\n"),
+    );
+  });
+
+  describe("other endmatter keys", () => {
+    const withWorkflow = [
+      "Keep {==a==}{>>One<<}{#c1} and {==b==}{>>Two<<}{#c2}.",
+      "",
+      "---",
+      "workflow:",
+      "  owner: editorial",
+      "comments:",
+      "  c1:",
+      "    by: user",
+      '    at: "2026-10-22T08:00:00.000Z"',
+      "  c2:",
+      "    by: user",
+      '    at: "2026-10-22T08:01:00.000Z"',
+      "",
+    ].join("\n");
+
+    it("keeps them while review metadata remains", () => {
+      const result = resolveRoughdraftThreads(withWorkflow, {
+        targetIds: ["c1"],
+      });
+
+      expect(result.markdown).toContain("workflow:\n  owner: editorial");
+      expect(ids(result.markdown)).toEqual(["c2"]);
+    });
+
+    it("refuses rather than turn them into visible document text", () => {
+      expect(() =>
+        resolveRoughdraftThreads(withWorkflow, { all: true }),
+      ).toThrow(/workflow/);
+    });
+  });
+
+  it("clears threads an older resolve only marked resolved", () => {
+    const markdown = [
+      "One {==a==}{>>Done<<}{#c1} two {==b==}{>>Open<<}{#c3} three",
+      '{>>Old done<<}{id="c5" by="user" at="2026-10-07T08:00:00.000Z" status="resolved"} four {++add++}{#s1}.',
+      "",
+      "---",
+      "comments:",
+      "  c1:",
+      "    by: user",
+      '    at: "2026-10-22T08:00:00.000Z"',
+      "    status: resolved",
+      "    resolved: Fixed",
+      "  c2:",
+      "    body: Done it.",
+      "    by: Claude",
+      '    at: "2026-10-22T08:05:00.000Z"',
+      "    re: c1",
+      "  c3:",
+      "    by: user",
+      '    at: "2026-10-22T08:06:00.000Z"',
+      "suggestions:",
+      "  s1:",
+      "    by: Claude",
+      '    at: "2026-10-22T08:00:00.000Z"',
+      "    status: resolved",
+      "",
+    ].join("\n");
+
+    const result = resolveRoughdraftThreads(markdown, { markedResolved: true });
+
+    expect(result.threadIds).toEqual(["c1", "c5"]);
+    expect(result.removedIds).toEqual(["c1", "c2", "c5"]);
+    expect(result.skippedSuggestionIds).toEqual(["s1"]);
+    expect(ids(result.markdown)).toEqual(["c3", "s1"]);
+    expect(result.markdown).toContain(
+      "One a two {==b==}{>>Open<<}{#c3} three\nfour {++add++}{#s1}.",
+    );
+    expect(validateRoughdraftMarkdown(result.markdown).ok).toBe(true);
+  });
+
+  it("removes a standalone comment that fills its own line", () => {
+    const markdown = [
+      "First paragraph.",
+      "",
+      '{>>A note on its own line<<}{id="c1" by="user" at="2026-10-07T08:00:00.000Z"}',
+      "",
+      "Second paragraph.",
+      "",
+    ].join("\n");
+
+    const result = resolveRoughdraftThreads(markdown, { targetIds: ["c1"] });
+
+    expect(result.markdown).toBe("First paragraph.\n\nSecond paragraph.\n");
+  });
+
+  it("removes neighbouring standalone comments together", () => {
+    const markdown =
+      'Text {>>a<<}{id="c1" by="user" at="2026-10-07T08:00:00.000Z"} {>>b<<}{id="c2" by="user" at="2026-10-07T08:01:00.000Z"}.\n';
+
+    const result = resolveRoughdraftThreads(markdown, { all: true });
+
+    expect(result.markdown).toBe("Text.\n");
+  });
+
+  it("ignores CriticMarkup inside code", () => {
+    const markdown = [
+      "Real {==x==}{>>Fix<<}{#c1}.",
+      "",
+      "```",
+      "Example {==x==}{>>Fix<<}{#c1}",
+      "```",
+      "",
+      "---",
+      "comments:",
+      "  c1:",
+      "    by: user",
+      '    at: "2026-10-22T08:00:00.000Z"',
+      "",
+    ].join("\n");
+
+    const result = resolveRoughdraftThreads(markdown, { targetIds: ["c1"] });
+
+    expect(result.markdown).toBe(
+      ["Real x.", "", "```", "Example {==x==}{>>Fix<<}{#c1}", "```", ""].join(
+        "\n",
+      ),
+    );
+  });
+
+  it("throws on an unknown id", () => {
+    expect(() =>
+      resolveRoughdraftThreads(compactDraft, { targetIds: ["c9"] }),
+    ).toThrow("Review item not found: c9");
   });
 });

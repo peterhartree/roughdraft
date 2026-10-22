@@ -334,22 +334,130 @@ describe("roughdraft reply to a reply", () => {
 });
 
 describe("roughdraft resolve", () => {
-  it("marks an inline comment resolved with a summary", async () => {
-    const draftPath = writeDraft(inlineParent);
+  const draft = [
+    "# Draft",
+    "",
+    "Please revisit {==this sentence==}{>>Needs a source.<<}{#c1} now.",
+    "",
+    'Also {>>Shorter?<<}{id="c3" by="user" at="2026-10-07T08:02:00.000Z"} here and {++one example++}{#s1}.',
+    "",
+    "---",
+    "comments:",
+    "  c1:",
+    "    by: user",
+    '    at: "2026-10-07T08:00:00.000Z"',
+    "  c2:",
+    "    body: Added one.",
+    "    by: Claude",
+    '    at: "2026-10-07T08:01:00.000Z"',
+    "    re: c1",
+    "suggestions:",
+    "  s1:",
+    "    by: Claude",
+    '    at: "2026-10-07T08:03:00.000Z"',
+    "",
+  ].join("\n");
 
-    const result = await run([
-      "resolve",
-      draftPath,
-      "c1",
-      "--summary",
-      "Source added",
-    ]);
+  const ids = (markdown: string) =>
+    extractRoughdraftReviewIndex(markdown).items.map((item) => item.id);
+
+  it("removes the thread and its replies, keeping the highlighted text", async () => {
+    const draftPath = writeDraft(draft);
+
+    const result = await run(["resolve", draftPath, "c1"]);
 
     const markdown = fs.readFileSync(draftPath, "utf8");
     expect(result.exitCode).toBe(0);
-    expect(result.logs).toEqual(["Resolved c1."]);
-    expect(extractRoughdraftReviewIndex(markdown).items[0]?.status).toBe(
-      "resolved",
+    expect(result.logs).toEqual(["Resolved c1 (removed c1, c2)."]);
+    expect(markdown).toContain("Please revisit this sentence now.");
+    expect(ids(markdown)).toEqual(["c3", "s1"]);
+    expect(validateRoughdraftMarkdown(markdown).ok).toBe(true);
+  });
+
+  it("resolves several threads in one call", async () => {
+    const draftPath = writeDraft(draft);
+
+    const result = await run(["resolve", draftPath, "c2", "c3", "--json"]);
+
+    const markdown = fs.readFileSync(draftPath, "utf8");
+    expect(result.exitCode).toBe(0);
+    expect(JSON.parse(result.logs[0] ?? "{}")).toEqual({
+      ok: true,
+      path: draftPath,
+      threads: ["c1", "c3"],
+      removed: ["c1", "c2", "c3"],
+      suggestionsLeft: [],
+    });
+    expect(markdown).toContain("Also here and {++one example++}{#s1}.");
+    expect(ids(markdown)).toEqual(["s1"]);
+  });
+
+  it("resolves every comment thread with --all and reports suggestions left", async () => {
+    const draftPath = writeDraft(draft);
+
+    const result = await run(["resolve", draftPath, "--all"]);
+
+    const markdown = fs.readFileSync(draftPath, "utf8");
+    expect(result.exitCode).toBe(0);
+    expect(result.logs).toEqual([
+      "Resolved 2 threads: c1, c3 (removed c1, c2, c3).",
+      "Left 1 suggested change in place: s1. Accept or reject it by editing the text.",
+    ]);
+    expect(ids(markdown)).toEqual(["s1"]);
+    expect(validateRoughdraftMarkdown(markdown).ok).toBe(true);
+  });
+
+  it("clears threads an older version only marked resolved, with --resolved", async () => {
+    const draftPath = writeDraft(
+      'One {>>Done already<<}{id="c1" by="user" at="2026-10-07T08:00:00.000Z" status="resolved"}{>>Agreed<<}{id="c2" by="AI" at="2026-10-07T08:01:00.000Z" re="c1"} two {>>Open<<}{id="c3" by="user" at="2026-10-07T08:02:00.000Z"}.\n',
     );
+
+    const result = await run(["resolve", draftPath, "--resolved"]);
+
+    expect(result.exitCode).toBe(0);
+    expect(fs.readFileSync(draftPath, "utf8")).toBe(
+      'One two {>>Open<<}{id="c3" by="user" at="2026-10-07T08:02:00.000Z"}.\n',
+    );
+  });
+
+  it("does nothing when no thread matches", async () => {
+    const draftPath = writeDraft(draft);
+
+    const result = await run(["resolve", draftPath, "--resolved"]);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.logs).toEqual(["No threads to resolve."]);
+    expect(fs.readFileSync(draftPath, "utf8")).toBe(draft);
+  });
+
+  it("refuses a suggested change without touching the file", async () => {
+    const draftPath = writeDraft(draft);
+
+    const result = await run(["resolve", draftPath, "s1"]);
+
+    expect(result.exitCode).toBe(1);
+    expect(result.errors[0]).toMatch(/^s1 is a suggested change/);
+    expect(fs.readFileSync(draftPath, "utf8")).toBe(draft);
+  });
+
+  it("rejects --summary, which has nowhere to go once the thread is removed", async () => {
+    const draftPath = writeDraft(draft);
+
+    const result = await run(["resolve", draftPath, "c1", "--summary", "Done"]);
+
+    expect(result.exitCode).toBe(2);
+    expect(result.errors[0]).toMatch(/--summary is no longer supported/);
+    expect(fs.readFileSync(draftPath, "utf8")).toBe(draft);
+  });
+
+  it("needs ids or one of --all and --resolved, not both", async () => {
+    const draftPath = writeDraft(draft);
+
+    const none = await run(["resolve", draftPath]);
+    const both = await run(["resolve", draftPath, "c1", "--all"]);
+
+    expect(none.exitCode).toBe(2);
+    expect(both.exitCode).toBe(2);
+    expect(fs.readFileSync(draftPath, "utf8")).toBe(draft);
   });
 });

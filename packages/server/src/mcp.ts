@@ -3,8 +3,8 @@ import path from "node:path";
 import {
   appendRoughdraftReply,
   extractRoughdraftReviewIndex,
-  markRoughdraftResolved,
 } from "@roughdraft/rfm";
+import { resolveThreadsInFile } from "./review-commands.js";
 
 interface JsonRpcRequest {
   jsonrpc?: "2.0";
@@ -80,17 +80,17 @@ const tools: ToolDefinition[] = [
     },
   },
   {
-    name: "roughdraft_mark_resolved",
+    name: "roughdraft_resolve_thread",
     description:
-      "Mark one CriticMarkup comment or suggestion as resolved using canonical RFM metadata.",
+      "Resolve comment threads by removing them from a local Markdown file, as the app's Delete thread does: the comment, its replies and their endmatter entries go, and highlighted text stays. Pass targetId (any comment or reply id in the thread) or all: true. Suggested changes are refused; accept or reject them by editing the text.",
     inputSchema: {
       type: "object",
       additionalProperties: false,
-      required: ["documentPath", "targetId"],
+      required: ["documentPath"],
       properties: {
         documentPath: { type: "string" },
         targetId: { type: "string" },
-        summary: { type: "string" },
+        all: { type: "boolean" },
       },
     },
   },
@@ -247,16 +247,28 @@ export async function callTool(
     return { ok: true, documentPath };
   }
 
-  if (name === "roughdraft_mark_resolved") {
+  if (name === "roughdraft_resolve_thread") {
     const documentPath = requireDocumentPath(args);
-    const targetId = requireString(args, "targetId");
+    const all = args.all === true;
+    const targetId =
+      typeof args.targetId === "string" && args.targetId.trim()
+        ? args.targetId
+        : undefined;
+    if (all === Boolean(targetId)) {
+      throw new Error("Pass either targetId or all: true.");
+    }
     const markdown = fs.readFileSync(documentPath, "utf8");
-    const updated = markRoughdraftResolved(markdown, {
-      targetId,
-      summary: typeof args.summary === "string" ? args.summary : undefined,
+    const result = await resolveThreadsInFile(documentPath, markdown, {
+      targetIds: targetId ? [targetId] : [],
+      all,
     });
-    fs.writeFileSync(documentPath, updated);
-    return { ok: true, documentPath };
+    return {
+      ok: true,
+      documentPath,
+      threads: result.threadIds,
+      removed: result.removedIds,
+      suggestionsLeft: result.skippedSuggestionIds,
+    };
   }
 
   throw new Error(`Unknown tool: ${name}`);

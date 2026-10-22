@@ -90,9 +90,23 @@ export interface AppendRoughdraftDocumentCommentOptions {
   id?: string;
 }
 
-export interface MarkRoughdraftResolvedOptions {
-  targetId: string;
-  summary?: string;
+export interface ResolveRoughdraftThreadsOptions {
+  /** Comment or reply ids; each resolves the whole thread it belongs to. */
+  targetIds?: string[];
+  /** Resolve every comment thread. Suggested changes are left in place. */
+  all?: boolean;
+  /** Resolve every thread with an item marked `status: resolved`. */
+  markedResolved?: boolean;
+}
+
+export interface ResolveRoughdraftThreadsResult {
+  markdown: string;
+  /** Root comment of each thread removed, in document order. */
+  threadIds: string[];
+  /** Every comment and reply removed, thread by thread. */
+  removedIds: string[];
+  /** Suggested changes that `all` or `markedResolved` left in place. */
+  skippedSuggestionIds: string[];
 }
 
 export interface SetRoughdraftReactionOptions {
@@ -806,56 +820,344 @@ function assertSafeCommentBodyText(message: string): void {
   );
 }
 
-export function markRoughdraftResolved(
+/**
+ * Resolves comment threads the way the app's "Delete thread" does: removes
+ * the thread's root comment and every reply beneath it, unwraps a highlight
+ * that no other comment uses (`{==text==}{>>…<<}{#c1}` becomes `text`),
+ * removes standalone comments, deletes their endmatter entries, and drops the
+ * endmatter block once nothing is left in it.
+ *
+ * An id inside a thread resolves the whole thread. A thread on a suggested
+ * change stops at the suggestion: its comments go, the suggestion stays.
+ * Suggested changes themselves are refused, because resolving one means
+ * accepting or rejecting it, which changes the text.
+ */
+export function resolveRoughdraftThreads(
   markdown: string,
-  options: MarkRoughdraftResolvedOptions,
-): string {
+  options: ResolveRoughdraftThreadsOptions,
+): ResolveRoughdraftThreadsResult {
   const index = extractRoughdraftReviewIndex(markdown);
-  const target = index.items.find((item) => item.id === options.targetId);
-  if (!target) {
-    throw new Error(`Review item not found: ${options.targetId}`);
-  }
-
   const endmatter = parseRoughdraftEndmatter(markdown);
-  const endmatterKind = endmatter.comments.has(options.targetId)
-    ? "comment"
-    : endmatter.suggestions.has(options.targetId)
-      ? "suggestion"
-      : null;
-
-  if (endmatterKind) {
-    const comments = new Map(endmatter.comments);
-    const suggestions = new Map(endmatter.suggestions);
-    const map = endmatterKind === "comment" ? comments : suggestions;
-    const current = map.get(options.targetId) ?? {};
-    map.set(options.targetId, {
-      ...current,
-      status: "resolved",
-      ...(options.summary ? { resolved: options.summary } : {}),
-    });
-    return writeRoughdraftEndmatter(markdown, { comments, suggestions });
-  }
-
-  const metadataStart = findCanonicalMetadataStart(markdown, target.endOffset);
-  if (metadataStart === null) {
+  if (endmatter.diagnostics.length > 0) {
     throw new Error(
-      `Review item has no canonical metadata: ${options.targetId}`,
+      `Cannot resolve threads: ${endmatter.diagnostics[0]?.message ?? "the endmatter is invalid."}`,
     );
   }
 
-  const metadata = parseCanonicalMetadata(markdown, metadataStart);
-  if (!metadata) {
-    throw new Error(`Review item has invalid metadata: ${options.targetId}`);
+  const itemsById = new Map<string, RfmReviewItem>();
+  for (const item of index.items) {
+    if (!itemsById.has(item.id)) itemsById.set(item.id, item);
   }
 
-  metadata.attrs.set("status", "resolved");
-  if (options.summary) {
-    metadata.attrs.set("resolved", options.summary);
+  // Parent links: the index's view wins (it ignores a stale endmatter `re`, as
+  // the app does); endmatter entries the index skipped still count, so their
+  // replies are removed with the thread.
+  const parentById = new Map<string, string | null>();
+  for (const item of index.items) {
+    if (!parentById.has(item.id)) parentById.set(item.id, item.parentId);
+  }
+  for (const [id, entry] of endmatter.comments) {
+    if (!parentById.has(id)) {
+      parentById.set(id, typeof entry.re === "string" ? entry.re : null);
+    }
+  }
+  const childrenById = new Map<string, string[]>();
+  for (const [id, parentId] of parentById) {
+    if (!parentId || parentId === id) continue;
+    childrenById.set(parentId, [...(childrenById.get(parentId) ?? []), id]);
   }
 
-  return `${markdown.slice(0, metadata.offset)}${serializeMetadataAttributes(
-    Object.fromEntries(metadata.attrs),
-  )}${markdown.slice(metadata.endOffset)}`;
+  const isSuggestion = (id: string) => itemsById.get(id)?.kind === "suggestion";
+  const threadRootOf = (id: string): string => {
+    let current = id;
+    const seen = new Set<string>([current]);
+    for (;;) {
+      const parentId = parentById.get(current);
+      if (
+        !parentId ||
+        seen.has(parentId) ||
+        !itemsById.has(parentId) ||
+        isSuggestion(parentId)
+      ) {
+        return current;
+      }
+      seen.add(parentId);
+      current = parentId;
+    }
+  };
+  const isOnSuggestion = (id: string) => {
+    const parentId = parentById.get(threadRootOf(id));
+    return parentId ? isSuggestion(parentId) : false;
+  };
+
+  const requested: string[] = [];
+  const skippedSuggestionIds: string[] = [];
+  if (options.all) {
+    for (const item of index.items) {
+      if (item.kind === "suggestion") {
+        skippedSuggestionIds.push(item.id);
+      } else if (!isOnSuggestion(item.id)) {
+        requested.push(item.id);
+      }
+    }
+  }
+  if (options.markedResolved) {
+    for (const item of index.items) {
+      if (item.status !== "resolved") continue;
+      if (item.kind === "suggestion") {
+        skippedSuggestionIds.push(item.id);
+      } else {
+        requested.push(item.id);
+      }
+    }
+  }
+  for (const id of options.targetIds ?? []) {
+    const item = itemsById.get(id);
+    if (!item) throw new Error(`Review item not found: ${id}`);
+    if (item.kind === "suggestion") {
+      throw new Error(
+        `${id} is a suggested change, not a comment thread. Resolving it means accepting or rejecting it, which changes the text, so resolve will not do it: edit the Markdown to keep the new or the old text, and delete its \`suggestions.${id}\` endmatter entry.`,
+      );
+    }
+    requested.push(id);
+  }
+
+  const threadIds: string[] = [];
+  for (const id of requested) {
+    const rootId = threadRootOf(id);
+    if (!threadIds.includes(rootId)) threadIds.push(rootId);
+  }
+  const documentOrder = new Map(index.items.map((item, i) => [item.id, i]));
+  threadIds.sort(
+    (left, right) =>
+      (documentOrder.get(left) ?? Number.MAX_SAFE_INTEGER) -
+      (documentOrder.get(right) ?? Number.MAX_SAFE_INTEGER),
+  );
+
+  const removedIds: string[] = [];
+  const removed = new Set<string>();
+  const visit = (id: string) => {
+    if (removed.has(id)) return;
+    removed.add(id);
+    removedIds.push(id);
+    for (const childId of childrenById.get(id) ?? []) visit(childId);
+  };
+  for (const rootId of threadIds) visit(rootId);
+
+  if (removed.size === 0) {
+    return { markdown, threadIds, removedIds, skippedSuggestionIds };
+  }
+
+  const body = removeInlineComments(
+    markdown.slice(0, endmatter.offset ?? markdown.length),
+    removed,
+    endmatter,
+  );
+
+  let updated = body;
+  if (endmatter.offset !== null) {
+    const comments = new Map(
+      [...endmatter.comments].filter(([id]) => !removed.has(id)),
+    );
+    const data: Record<string, unknown> = { ...(endmatter.data ?? {}) };
+    if (comments.size > 0) {
+      data.comments = Object.fromEntries(comments);
+    } else {
+      delete data.comments;
+    }
+    const trimmedBody = body.replace(/\s*$/, "\n");
+    updated =
+      Object.keys(data).length === 0
+        ? trimmedBody
+        : `${trimmedBody}\n---\n${stringifyYaml(data)}`;
+
+    if (
+      Object.keys(data).length > 0 &&
+      detectRoughdraftEndmatter(updated).kind !== "review"
+    ) {
+      throw new Error(
+        `Cannot resolve: the endmatter would keep ${Object.keys(data)
+          .map((key) => `\`${key}\``)
+          .join(
+            ", ",
+          )} but no longer read as review metadata, so it would show as document text. Edit the endmatter by hand.`,
+      );
+    }
+  }
+
+  return { markdown: updated, threadIds, removedIds, skippedSuggestionIds };
+}
+
+/**
+ * Removes the inline comment blocks whose ids are in `ids` from the document
+ * body, using the same scan as the review index so code stays untouched.
+ */
+function removeInlineComments(
+  body: string,
+  ids: ReadonlySet<string>,
+  endmatter: RoughdraftEndmatter,
+): string {
+  const edits: Array<{ start: number; end: number; text: string }> = [];
+  const noopDiagnostic = () => {};
+  const commentId = (parsed: ParsedComment) =>
+    hydrateMetadataAttrs(parsed.metadata, endmatter, "comment").get("id") ??
+    `comment-${parsed.offset.toString()}`;
+
+  let offset = 0;
+  let fence: FenceState | null = null;
+  while (offset < body.length) {
+    if (isLineStart(body, offset)) {
+      const fenceMatch = matchFence(body, offset, fence);
+      if (fenceMatch) {
+        fence = fence ? null : fenceMatch.fence;
+        offset = nextLineOffset(body, offset);
+        continue;
+      }
+    }
+
+    if (fence) {
+      offset = nextLineOffset(body, offset);
+      continue;
+    }
+
+    const codeSpanEnd = matchInlineCodeSpan(body, offset);
+    if (codeSpanEnd !== null) {
+      offset = codeSpanEnd;
+      continue;
+    }
+
+    if (body.startsWith("{==", offset)) {
+      const end = body.indexOf("==}", offset + 3);
+      if (end === -1) {
+        offset += 3;
+        continue;
+      }
+
+      const anchorText = body.slice(offset + 3, end);
+      let nextOffset = end + 3;
+      const kept: string[] = [];
+      let anchored = 0;
+      while (body.startsWith("{>>", nextOffset)) {
+        const parsed = parseComment(body, nextOffset, noopDiagnostic);
+        if (!parsed) break;
+        anchored += 1;
+        if (!ids.has(commentId(parsed))) {
+          kept.push(body.slice(parsed.offset, parsed.endOffset));
+        }
+        nextOffset = parsed.endOffset;
+      }
+
+      if (anchored > 0 && kept.length < anchored) {
+        edits.push({
+          start: offset,
+          end: nextOffset,
+          text:
+            kept.length === 0
+              ? anchorText
+              : `${body.slice(offset, end + 3)}${kept.join("")}`,
+        });
+      }
+      offset = anchored > 0 ? nextOffset : end + 3;
+      continue;
+    }
+
+    if (body.startsWith("{>>", offset)) {
+      // Adjacent blocks form one standalone run, as in the app; widen the
+      // removal only when the whole run goes.
+      const run: ParsedComment[] = [];
+      let nextOffset = offset;
+      while (body.startsWith("{>>", nextOffset)) {
+        const parsed = parseComment(body, nextOffset, noopDiagnostic);
+        if (!parsed) break;
+        run.push(parsed);
+        nextOffset = parsed.endOffset;
+      }
+      if (run.length > 0) {
+        const removedBlocks = run.filter((parsed) =>
+          ids.has(commentId(parsed)),
+        );
+        if (removedBlocks.length === run.length) {
+          edits.push(standaloneRemoval(body, offset, nextOffset));
+        } else {
+          for (const parsed of removedBlocks) {
+            edits.push({
+              start: parsed.offset,
+              end: parsed.endOffset,
+              text: "",
+            });
+          }
+        }
+        offset = nextOffset;
+        continue;
+      }
+    }
+
+    const parsedSuggestion = parseSuggestion(body, offset, noopDiagnostic);
+    if (parsedSuggestion) {
+      offset = parsedSuggestion.endOffset;
+      continue;
+    }
+
+    offset += 1;
+  }
+
+  let result = "";
+  let cursor = 0;
+  for (const edit of edits.sort((left, right) => left.start - right.start)) {
+    // Whitespace widening can overlap a neighbouring removal; only empty
+    // removals are widened, so trimming the overlap loses nothing.
+    if (edit.end <= cursor) continue;
+    const start = Math.max(edit.start, cursor);
+    result += body.slice(cursor, start) + edit.text;
+    cursor = edit.end;
+  }
+  return result + body.slice(cursor);
+}
+
+/**
+ * Widens a standalone comment's removal so it leaves no stray space or empty
+ * line: a comment alone on its line takes the line with it, and one between
+ * words takes one neighbouring space.
+ */
+function standaloneRemoval(
+  body: string,
+  start: number,
+  end: number,
+): { start: number; end: number; text: string } {
+  let lineStart = start;
+  while (lineStart > 0 && /[ \t]/.test(body[lineStart - 1] ?? "")) {
+    lineStart -= 1;
+  }
+  let lineEnd = end;
+  while (lineEnd < body.length && /[ \t]/.test(body[lineEnd] ?? "")) {
+    lineEnd += 1;
+  }
+  const atLineStart = lineStart === 0 || body[lineStart - 1] === "\n";
+  const atLineEnd =
+    lineEnd === body.length || body[lineEnd] === "\n" || body[lineEnd] === "\r";
+
+  if (atLineStart && atLineEnd) {
+    let removeEnd = lineEnd;
+    if (body.startsWith("\r\n", removeEnd)) removeEnd += 2;
+    else if (body[removeEnd] === "\n") removeEnd += 1;
+    // Between two blank lines, take one of them too.
+    const blankBefore = /(?:^|\n)[ \t]*\r?\n$/.test(body.slice(0, lineStart));
+    const blankAfter = /^[ \t]*(?:\r?\n|$)/.test(body.slice(removeEnd));
+    if (blankBefore && blankAfter) {
+      const match = body.slice(removeEnd).match(/^[ \t]*(?:\r?\n|$)/);
+      removeEnd += match?.[0].length ?? 0;
+    }
+    return { start: lineStart, end: removeEnd, text: "" };
+  }
+
+  if (atLineStart) return { start, end: lineEnd, text: "" };
+  if (
+    start > lineStart &&
+    (atLineEnd || /[ \t.,;:!?)\]]/.test(body[end] ?? ""))
+  ) {
+    return { start: lineStart, end, text: "" };
+  }
+  return { start, end, text: "" };
 }
 
 export function setRoughdraftReaction(

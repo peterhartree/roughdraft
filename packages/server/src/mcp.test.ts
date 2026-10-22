@@ -36,4 +36,37 @@ describe("mcp", () => {
 
     expect(fs.readFileSync(documentPath, "utf8")).toBe(original);
   });
+
+  it("resolves a thread by removing it, keeping the highlighted text", async () => {
+    fs.writeFileSync(
+      documentPath,
+      [
+        "# Draft",
+        "",
+        "Keep {==this claim==}{>>Needs proof<<}{#c1} as written.",
+        "",
+        "---",
+        "comments:",
+        "  c1:",
+        "    by: user",
+        '    at: "2026-04-28T12:00:00.000Z"',
+        "  c2:",
+        "    body: Added it.",
+        "    by: AI",
+        '    at: "2026-04-28T12:05:00.000Z"',
+        "    re: c1",
+        "",
+      ].join("\n"),
+    );
+
+    const result = await callTool("roughdraft_resolve_thread", {
+      documentPath,
+      targetId: "c2",
+    });
+
+    expect(result).toMatchObject({ threads: ["c1"], removed: ["c1", "c2"] });
+    expect(fs.readFileSync(documentPath, "utf8")).toBe(
+      "# Draft\n\nKeep this claim as written.\n",
+    );
+  });
 });

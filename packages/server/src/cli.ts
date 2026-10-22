@@ -675,7 +675,9 @@ function printHelp(log: (message: string) => void) {
   log("  doctor [path]      Diagnose setup or validate Markdown");
   log("  comments <path>    List review comments, replies and suggestions");
   log("  reply <path>       Reply to a comment: --to <id> [--by <label>]");
-  log("  resolve <path> <id> Mark a comment or suggestion resolved");
+  log(
+    "  resolve <path> <id> Resolve a thread by removing it (--all for every thread)",
+  );
   log("  help agent         Print the agent setup prompt");
   log("  help criticmarkup  Show CriticMarkup examples");
   log("  agent-setup        Print the agent setup prompt");
@@ -884,6 +886,18 @@ function printCriticMarkupHelp(log: (message: string) => void) {
   log("  roughdraft reply <path> --to c1 --by <label> --body <text>");
   log("  The command picks the id and format. Omit --body to read the reply");
   log("  from stdin. List threads with `roughdraft comments <path>`.");
+  log("");
+  log("Resolve finished threads:");
+  log(
+    "  roughdraft resolve <path> c1        Remove c1's thread and its replies",
+  );
+  log("  roughdraft resolve <path> --all     Remove every comment thread");
+  log(
+    "  Resolving removes the thread from the document, so the user no longer",
+  );
+  log(
+    "  sees it. Suggested changes are accepted or rejected by editing the text.",
+  );
   log("");
   log("Reply guidance:");
   log(

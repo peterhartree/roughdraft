@@ -3,9 +3,11 @@ import path from "node:path";
 import {
   appendRoughdraftReply,
   extractRoughdraftReviewIndex,
-  markRoughdraftResolved,
   nextRoughdraftCommentId,
+  type ResolveRoughdraftThreadsOptions,
+  type ResolveRoughdraftThreadsResult,
   type RfmReviewItem,
+  resolveRoughdraftThreads,
   validateRoughdraftMarkdown,
 } from "@roughdraft/rfm";
 
@@ -27,24 +29,25 @@ interface ReviewCommandOptions {
   help: boolean;
   json: boolean;
   unresolved: boolean;
+  all: boolean;
+  resolved: boolean;
   to?: string;
   by?: string;
   body?: string;
-  summary?: string;
   positionals: string[];
 }
 
 const VALUE_FLAGS = {
   comments: [],
   reply: ["--to", "--by", "--body"],
-  resolve: ["--summary"],
+  resolve: [],
 } as const satisfies Record<ReviewCommand, readonly string[]>;
 
 const USAGE: Record<ReviewCommand, string> = {
   comments: "roughdraft comments <path> [--unresolved] [--json]",
   reply:
     "roughdraft reply <path> --to <id> [--by <label>] [--body <text>] [--json]",
-  resolve: "roughdraft resolve <path> <id> [--summary <text>] [--json]",
+  resolve: "roughdraft resolve <path> (<id>... | --all | --resolved) [--json]",
 };
 
 export function isReviewCommand(value: string): value is ReviewCommand {
@@ -87,11 +90,24 @@ export function printReviewCommandHelp(
     return;
   }
 
-  log("Marks a comment or suggestion as resolved.");
+  log("Resolves review threads by removing them from the document, as the");
+  log(
+    "app's Delete thread does: the comment, every reply beneath it and their",
+  );
+  log("endmatter entries go, and highlighted text stays as plain text. An id");
+  log("inside a thread resolves the whole thread. The user will no longer see");
+  log("the thread, or any reply in it, so leave open the threads the user");
+  log("should still read.");
+  log("");
+  log("Suggested changes are not resolved: accept or reject them by editing");
+  log("the text. Comments on a suggested change can be resolved; the");
+  log("suggestion stays.");
   log("");
   log("Flags:");
-  log("  --summary <text>  Short resolution summary");
-  log("  --json            Print the result as JSON");
+  log("  --all       Resolve every comment thread; suggested changes stay");
+  log("  --resolved  Resolve the threads marked `status: resolved`, which");
+  log("              earlier versions of this command left in the document");
+  log("  --json      Print the result as JSON");
 }
 
 export async function runReviewCommand(
@@ -115,8 +131,7 @@ export async function runReviewCommand(
   }
 
   const json = globalJson || options.json;
-  const expectedPositionals = command === "resolve" ? 2 : 1;
-  if (options.positionals.length !== expectedPositionals) {
+  if (!hasValidPositionals(command, options)) {
     deps.error(`Usage: ${USAGE[command]}`);
     return USAGE_ERROR;
   }
@@ -133,7 +148,18 @@ export async function runReviewCommand(
     return addReply(absolutePath, markdown, options, json, deps);
   }
 
-  return resolveItem(absolutePath, markdown, options, json, deps);
+  return resolveThreads(absolutePath, markdown, options, json, deps);
+}
+
+function hasValidPositionals(
+  command: ReviewCommand,
+  options: ReviewCommandOptions,
+): boolean {
+  if (command !== "resolve") return options.positionals.length === 1;
+
+  const ids = options.positionals.length - 1;
+  const modes = [ids > 0, options.all, options.resolved].filter(Boolean);
+  return options.positionals.length >= 1 && modes.length === 1;
 }
 
 function parseReviewCommandOptions(
@@ -144,6 +170,8 @@ function parseReviewCommandOptions(
     help: false,
     json: false,
     unresolved: false,
+    all: false,
+    resolved: false,
     positionals: [],
   };
   const valueFlags: readonly string[] = VALUE_FLAGS[command];
@@ -169,6 +197,18 @@ function parseReviewCommandOptions(
     if (arg === "--unresolved" && command === "comments") {
       parsed.unresolved = true;
       continue;
+    }
+
+    if (command === "resolve" && (arg === "--all" || arg === "--resolved")) {
+      if (arg === "--all") parsed.all = true;
+      if (arg === "--resolved") parsed.resolved = true;
+      continue;
+    }
+
+    if (command === "resolve" && splitFlag(arg)[0] === "--summary") {
+      throw new Error(
+        "--summary is no longer supported: resolve removes the thread from the document, so a summary would not be seen. To tell the user something, reply with `roughdraft reply` and leave the thread open.",
+      );
     }
 
     const [flag, inlineValue] = arg.startsWith("--")
@@ -212,7 +252,6 @@ function setValueFlag(
   if (flag === "--to") parsed.to = value;
   if (flag === "--by") parsed.by = value;
   if (flag === "--body") parsed.body = value;
-  if (flag === "--summary") parsed.summary = value;
 }
 
 function readMarkdownFile(
@@ -422,38 +461,81 @@ async function addReply(
   return 0;
 }
 
-async function resolveItem(
+async function resolveThreads(
   absolutePath: string,
   markdown: string,
   options: ReviewCommandOptions,
   json: boolean,
   deps: ReviewCommandDependencies,
 ): Promise<number> {
-  const id = options.positionals[1] ?? "";
-  let updated: string;
+  let result: ResolveRoughdraftThreadsResult;
   try {
-    updated = markRoughdraftResolved(markdown, {
-      targetId: id,
-      summary: options.summary,
+    result = await resolveThreadsInFile(absolutePath, markdown, {
+      targetIds: options.positionals.slice(1),
+      all: options.all,
+      markedResolved: options.resolved,
     });
   } catch (error) {
     deps.error(error instanceof Error ? error.message : String(error));
     return 1;
   }
 
-  if (addsErrors(markdown, updated)) {
-    deps.error(`${id} was not resolved: the result would not validate.`);
-    return 1;
+  if (json) {
+    deps.log(
+      JSON.stringify({
+        ok: true,
+        path: absolutePath,
+        threads: result.threadIds,
+        removed: result.removedIds,
+        suggestionsLeft: result.skippedSuggestionIds,
+      }),
+    );
+    return 0;
   }
 
-  await writeAtomically(absolutePath, updated);
-
-  if (json) {
-    deps.log(JSON.stringify({ ok: true, path: absolutePath, id }));
+  const { threadIds, removedIds, skippedSuggestionIds } = result;
+  if (threadIds.length === 0) {
+    deps.log("No threads to resolve.");
+  } else if (threadIds.length === 1) {
+    deps.log(`Resolved ${threadIds[0]} (removed ${removedIds.join(", ")}).`);
   } else {
-    deps.log(`Resolved ${id}.`);
+    deps.log(
+      `Resolved ${threadIds.length} threads: ${threadIds.join(", ")} (removed ${removedIds.join(", ")}).`,
+    );
+  }
+  if (skippedSuggestionIds.length > 0) {
+    const one = skippedSuggestionIds.length === 1;
+    deps.log(
+      `Left ${skippedSuggestionIds.length} suggested change${one ? "" : "s"} in place: ${skippedSuggestionIds.join(", ")}. Accept or reject ${one ? "it" : "them"} by editing the text.`,
+    );
   }
   return 0;
+}
+
+/**
+ * Removes the requested threads and writes the file atomically, refusing when
+ * the result would add validation errors or still contain a removed item.
+ */
+export async function resolveThreadsInFile(
+  absolutePath: string,
+  markdown: string,
+  options: ResolveRoughdraftThreadsOptions,
+): Promise<ResolveRoughdraftThreadsResult> {
+  const result = resolveRoughdraftThreads(markdown, options);
+  if (result.removedIds.length === 0) return result;
+
+  const removed = new Set(result.removedIds);
+  const leftover = extractRoughdraftReviewIndex(result.markdown).items.filter(
+    (item) => removed.has(item.id),
+  );
+  if (leftover.length > 0 || addsErrors(markdown, result.markdown)) {
+    throw new Error(
+      `Nothing was resolved: the result would not validate${leftover.length > 0 ? ` (${leftover.map((item) => item.id).join(", ")} still present)` : ""}.`,
+    );
+  }
+
+  await writeAtomically(absolutePath, result.markdown);
+  return result;
 }
 
 function addsErrors(before: string, after: string): boolean {
