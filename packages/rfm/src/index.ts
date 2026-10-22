@@ -742,9 +742,12 @@ export function appendRoughdraftReply(
   const endmatter = parseRoughdraftEndmatter(markdown);
   const replyId = options.id ?? nextRoughdraftCommentId(markdown);
   // Blank lines would split an inline comment span, so multi-paragraph
-  // replies always go to endmatter, which accepts any parent format.
+  // replies always go to endmatter, which accepts any parent format. A parent
+  // with no inline span (a reply or document comment kept in endmatter) can
+  // only take an endmatter reply; the app nests it under that parent.
   if (
     isEndmatterBackedItem(markdown, parent) ||
+    !hasInlineSpan(parent) ||
     /\r?\n[ \t]*\r?\n/.test(options.message)
   ) {
     const comments = new Map(endmatter.comments);
@@ -772,7 +775,10 @@ export function appendRoughdraftReply(
   let insertAt = parent.endOffset;
   for (;;) {
     const next = index.items.find(
-      (item) => item.kind !== "suggestion" && item.offset === insertAt,
+      (item) =>
+        item.kind !== "suggestion" &&
+        hasInlineSpan(item) &&
+        item.offset === insertAt,
     );
     if (!next) break;
     insertAt = next.endOffset;
@@ -1591,6 +1597,14 @@ function writeRoughdraftEndmatter(
   }
 
   return `${body}\n---\n${stringifyYaml(data)}`;
+}
+
+/**
+ * Items kept only in endmatter are indexed with a zero-width span at the
+ * endmatter offset; inline items always span at least their markers.
+ */
+function hasInlineSpan(item: RfmReviewItem): boolean {
+  return item.endOffset > item.offset;
 }
 
 function isEndmatterBackedItem(markdown: string, item: RfmReviewItem): boolean {

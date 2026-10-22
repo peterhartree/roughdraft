@@ -1180,3 +1180,71 @@ describe("endmatter bodies for inline comment markers", () => {
     );
   });
 });
+
+// A reply that lives only in endmatter has no inline span, so its offset and
+// end offset are both the endmatter offset.
+describe("replying to replies", () => {
+  const nestedThread = [
+    "Intro {==anchor==}{>>Parent<<}{#c5} end.",
+    "",
+    "---",
+    "comments:",
+    "  c5:",
+    "    by: user",
+    '    at: "2026-10-22T08:00:00.000Z"',
+    "  c6:",
+    "    body: First reply.",
+    "    by: Claude",
+    '    at: "2026-10-22T08:05:00.000Z"',
+    "    re: c5",
+    "",
+  ].join("\n");
+
+  it("nests a reply under an endmatter reply, as the app threads it", () => {
+    const updated = appendRoughdraftReply(nestedThread, {
+      parentId: "c6",
+      message: "Reply to the reply.",
+      author: "Claude",
+      at: "2026-10-22T08:10:00.000Z",
+    });
+
+    expect(
+      updated.startsWith("Intro {==anchor==}{>>Parent<<}{#c5} end.\n"),
+    ).toBe(true);
+    expect(extractRoughdraftReviewIndex(updated).items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "c7",
+          kind: "reply",
+          parentId: "c6",
+          text: "Reply to the reply.",
+        }),
+      ]),
+    );
+    expect(validateRoughdraftMarkdown(updated).ok).toBe(true);
+  });
+
+  it("adds an inline reply to an inline comment that ends where endmatter starts", () => {
+    const markdown = [
+      'Text {>>Please fix<<}{id="c1" by="user" at="2026-10-07T08:00:00.000Z"}',
+      "---",
+      "comments:",
+      "  c2:",
+      "    body: Overall note",
+      "    by: user",
+      '    at: "2026-10-07T08:30:00.000Z"',
+      "",
+    ].join("\n");
+
+    const updated = appendRoughdraftReply(markdown, {
+      parentId: "c1",
+      message: "Fixed.",
+      author: "Claude",
+      at: "2026-10-07T09:00:00.000Z",
+    });
+
+    expect(updated).toContain(
+      '{id="c1" by="user" at="2026-10-07T08:00:00.000Z"}{>>Fixed.<<}{id="c3" by="Claude" at="2026-10-07T09:00:00.000Z" re="c1"}\n---',
+    );
+  });
+});

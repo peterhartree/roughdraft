@@ -304,6 +304,35 @@ describe("roughdraft comments --unresolved", () => {
   });
 });
 
+describe("roughdraft reply to a reply", () => {
+  it("nests the reply under an endmatter reply", async () => {
+    const draftPath = writeDraft(
+      [
+        compactParent.trimEnd(),
+        "  c2:",
+        "    body: First reply.",
+        "    by: Claude",
+        '    at: "2026-10-07T08:05:00.000Z"',
+        "    re: c1",
+        "",
+      ].join("\n"),
+    );
+
+    const result = await run(
+      ["reply", draftPath, "--to", "c2", "--by", "Claude"],
+      "Second-level reply.\n",
+    );
+
+    const markdown = fs.readFileSync(draftPath, "utf8");
+    expect(result.exitCode).toBe(0);
+    expect(result.logs).toEqual(["Added reply c3 to c2."]);
+    expect(replyTo(markdown, "c2")).toMatchObject([
+      { id: "c3", text: "Second-level reply." },
+    ]);
+    expect(validateRoughdraftMarkdown(markdown).ok).toBe(true);
+  });
+});
+
 describe("roughdraft resolve", () => {
   it("marks an inline comment resolved with a summary", async () => {
     const draftPath = writeDraft(inlineParent);
