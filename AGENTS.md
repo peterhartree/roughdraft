@@ -1,5 +1,11 @@
 # Roughdraft Agent Instructions
 
+## Automatic commits and pushes
+
+This repository has standing authorisation to commit and push finished, verified work automatically, including directly from `main`. After completing a coherent unit, commit its intended changes on the current branch and push that branch to `origin` (https://github.com/peterhartree/roughdraft) without asking for confirmation. Honour any explicit instruction to hold a commit or push.
+
+Stage only the finished unit's files or hunks. Leave unfinished work and unrelated changes from Peter or other sessions uncommitted. Use Conventional Commits with the appropriate co-author trailer. Run checks proportionate to the change before committing and pushing; never bypass failing checks or use force flags without explicit per-command approval. `upstream` is read-only.
+
 ## Testing Principles
 
 Use the repo-local `test-desiderata` skill when planning, adding, changing, or reviewing tests. Keep the core bar visible even when the skill is not loaded: tests should optimize for Kent Beck's Test Desiderata (https://testdesiderata.com/) as context-specific tradeoffs, not as a mechanical checklist.
