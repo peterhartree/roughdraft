@@ -8,6 +8,8 @@ Roughdraft renders Markdown through rich text and code editing surfaces. Acciden
 
 Roughdraft should preserve user-authored Markdown unless an edit requires a minimal, understandable serialization change. Frontmatter, local links, image paths, tables, task lists, code fences, inline code, raw supported HTML blocks, and CriticMarkup need explicit tests.
 
+The rich-text editor serialises the whole document, so saving keeps the source text of every line the user did not edit (`preserveUneditedMarkdown`). The editor's output is compared, line by line, with its output for the unedited source, and only the changed lines replace source text. The result is saved only if it parses back to the same document; otherwise the editor's output is saved as it is. Edited lines still go through the serialiser, which therefore keeps thematic-break markers, soft line breaks, bare URLs and link paths as written.
+
 ## Consequences
 
 Round-trip tests are part of the product contract. New Markdown support should add fixture coverage before broad parser refactors.

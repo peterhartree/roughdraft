@@ -24,6 +24,7 @@ import {
   criticMarkdownHasReviewRail,
   criticMarkdownToEditorState,
   editorStateToCriticMarkdown,
+  preserveUneditedMarkdown,
   getCommentDescendantIds,
 } from "./critic-markup";
 import {
@@ -803,6 +804,9 @@ const RichTextEditorSurface = memo(function RichTextEditorSurface({
   const [comments, setComments] = useState<Map<string, CriticComment>>(
     () => parsedContent.comments,
   );
+  // Saves keep the text of unedited lines from the Markdown the editor loaded.
+  const sourceMarkdownRef = useRef(sourceMarkdown);
+  sourceMarkdownRef.current = sourceMarkdown;
   const frontmatterRef = useRef<string | null>(parsedContent.frontmatter);
   const endmatterRef = useRef<string | null>(parsedContent.endmatter);
 
@@ -827,13 +831,16 @@ const RichTextEditorSurface = memo(function RichTextEditorSurface({
       if (!currentDoc) return;
 
       onMarkdownChange(
-        editorStateToCriticMarkdown(
-          currentDoc,
-          nextComments ?? commentsRef.current,
-          {
-            frontmatter: frontmatterRef.current,
-            endmatter: endmatterRef.current,
-          },
+        preserveUneditedMarkdown(
+          sourceMarkdownRef.current,
+          editorStateToCriticMarkdown(
+            currentDoc,
+            nextComments ?? commentsRef.current,
+            {
+              frontmatter: frontmatterRef.current,
+              endmatter: endmatterRef.current,
+            },
+          ),
         ),
       );
     },

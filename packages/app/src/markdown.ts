@@ -5,6 +5,8 @@ import { Marked, marked, type TokenizerObject } from "marked";
 import TurndownService from "turndown";
 
 export const rawMarkdownBlockAttribute = "data-markdown-raw-block";
+export const softBreakAttribute = "data-soft-break";
+export const thematicBreakAttribute = "data-markdown-hr";
 
 export interface MarkdownOptions {
   resolveFileUrl?: (path: string) => string | null;
@@ -169,6 +171,14 @@ function normalizeMarkdownPath(path: string): string {
   return `./${path.replace(/^\/+/, "")}`;
 }
 
+// A bare URL is written back bare only while its text still produces the same
+// link: GFM adds "http://" to www. links and "mailto:" to email addresses.
+function isLiteralAutolinkText(text: string, href: string): boolean {
+  return (
+    text === href || `http://${text}` === href || `mailto:${text}` === href
+  );
+}
+
 function tableHasUnsupportedMarkdownContent(table: HTMLTableElement): boolean {
   return Boolean(
     table.querySelector(
@@ -331,10 +341,13 @@ export function createMarkedRenderer(options?: MarkdownOptions) {
     const text = this.parser.parseInline(tokens);
     const titleAttr = title ? ` title="${escapeHtml(title)}"` : "";
     const markdownSrcAttr = ` data-markdown-src="${escapeHtml(rawHref)}"`;
+    // `<url>` autolinks and GFM bare URLs ("literal") keep their source form.
     const autolinkAttr =
       !title && raw?.startsWith("<") && raw.endsWith(">")
         ? ' data-markdown-autolink="true"'
-        : "";
+        : raw && !raw.startsWith("[") && !raw.startsWith("<")
+          ? ' data-markdown-autolink="literal"'
+          : "";
     const externalAttr =
       isExternalUrl(rawHref) && !rawHref.startsWith("mailto:")
         ? ' target="_blank" rel="noreferrer noopener"'
@@ -352,6 +365,19 @@ export function createMarkedRenderer(options?: MarkdownOptions) {
 
     return `<img src="${escapeHtml(renderedHref)}" alt="${escapeHtml(alt)}"${titleAttr}${markdownSrcAttr}>`;
   };
+
+  // Soft line breaks are content in Markdown source (lettered lines under a
+  // list item, hard-wrapped prose); keep them as breaks so saving rewrites
+  // neither the line structure nor the indentation.
+  renderer.text = function (token) {
+    const html = baseRenderer.text.call(this, token);
+    return "tokens" in token && token.tokens
+      ? html
+      : html.replace(/\n/g, `<br ${softBreakAttribute}="true">`);
+  };
+
+  renderer.hr = ({ raw }) =>
+    `<hr ${thematicBreakAttribute}="${escapeHtml(raw.trim())}">\n`;
 
   renderer.list = function (token) {
     const hasTaskItems = token.items.some((item) => item.task);
@@ -459,6 +485,21 @@ export function createTurndownService(): TurndownService {
     },
   });
 
+  service.addRule("softBreak", {
+    filter: (node) =>
+      node.nodeName === "BR" &&
+      (node as HTMLElement).getAttribute(softBreakAttribute) === "true",
+    replacement: () => "\n",
+  });
+
+  service.addRule("thematicBreak", {
+    filter: "hr",
+    replacement(_content, node) {
+      const marker = (node as HTMLElement).getAttribute(thematicBreakAttribute);
+      return `\n\n${marker && /^([-*_])(?:[ \t]*\1){2,}$/.test(marker) ? marker : "* * *"}\n\n`;
+    },
+  });
+
   service.use(tables as Parameters<TurndownService["use"]>[0]);
   service.use(taskListItems as Parameters<TurndownService["use"]>[0]);
 
@@ -534,18 +575,27 @@ export function createTurndownService(): TurndownService {
     filter: "a",
     replacement(content, node) {
       const element = node as HTMLAnchorElement;
-      const href =
-        element.getAttribute("data-markdown-src") ||
-        element.getAttribute("href") ||
-        "";
+      const source = element.getAttribute("data-markdown-src");
+      const href = source || element.getAttribute("href") || "";
       const normalizedHref =
-        isExternalUrl(href) || isInPageAnchor(href)
+        source || isExternalUrl(href) || isInPageAnchor(href)
           ? href
           : normalizeMarkdownPath(href);
       const title = element.getAttribute("title");
       const titleMarkdown = title
         ? ` "${title.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`
         : "";
+
+      if (
+        element.getAttribute("data-markdown-autolink") === "literal" &&
+        !titleMarkdown &&
+        isLiteralAutolinkText(content, href) &&
+        /^(?:[.,:;!?'")\]]*(?:\s|$))/.test(
+          element.nextSibling?.textContent ?? "",
+        )
+      ) {
+        return content;
+      }
 
       if (
         element.getAttribute("data-markdown-autolink") === "true" &&
@@ -564,13 +614,10 @@ export function createTurndownService(): TurndownService {
     filter: "img",
     replacement(_content, node) {
       const element = node as HTMLImageElement;
-      const src =
-        element.getAttribute("data-markdown-src") ||
-        element.getAttribute("src") ||
-        "";
-      const normalizedSrc = isExternalUrl(src)
-        ? src
-        : normalizeMarkdownPath(src);
+      const source = element.getAttribute("data-markdown-src");
+      const src = source || element.getAttribute("src") || "";
+      const normalizedSrc =
+        source || isExternalUrl(src) ? src : normalizeMarkdownPath(src);
       const alt = element.getAttribute("alt") || "";
       const title = element.getAttribute("title");
       const titleMarkdown = title

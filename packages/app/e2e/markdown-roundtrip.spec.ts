@@ -286,4 +286,36 @@ test.describe("markdown round-trips", () => {
       file: "prevent-default.md",
     });
   });
+
+  test("saving a rich-text edit rewrites only the edited line @smoke", async ({
+    page,
+  }) => {
+    const original = fs.readFileSync(
+      new URL(
+        "../test/fixtures/markdown/meeting-notes-roundtrip.md",
+        import.meta.url,
+      ),
+      "utf8",
+    );
+    const filePath = writeProjectFile(projectDir, "meeting.md", original);
+
+    await openMarkdownFile(page, filePath);
+    await selectRichText(page, "possibly");
+    const started = Date.now();
+    await page.keyboard.type("probably", { delay: 0 });
+    const typingMs = Date.now() - started;
+
+    const expected = original.replace(
+      "possibly automated",
+      "probably automated",
+    );
+    await expect
+      .poll(() => readProjectFile(projectDir, "meeting.md"))
+      .toBe(expected);
+
+    logE2eEvent("markdown-roundtrip.source-preserved", {
+      file: "meeting.md",
+      typingMs,
+    });
+  });
 });

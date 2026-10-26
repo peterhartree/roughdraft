@@ -26,6 +26,7 @@ import {
   splitYamlDocumentMetadata,
   type MarkdownOptions,
 } from "../markdown";
+import { mergeEditsIntoSource } from "../source-preserving-save";
 
 export type CriticReaction = "up" | "down" | "clarify";
 
@@ -1874,6 +1875,41 @@ export function editorStateToCriticMarkdown(
     ),
     endmatter,
   );
+}
+
+function criticMarkdownRoundTrip(markdown: string): string {
+  const { doc, comments, frontmatter, endmatter } =
+    criticMarkdownToEditorState(markdown);
+  return editorStateToCriticMarkdown(doc, comments, { frontmatter, endmatter });
+}
+
+const baselineCache = new Map<string, string>();
+const BASELINE_CACHE_SIZE = 8;
+
+function cachedRoundTrip(source: string): string {
+  const cached = baselineCache.get(source);
+  if (cached !== undefined) return cached;
+
+  const baseline = criticMarkdownRoundTrip(source);
+  baselineCache.set(source, baseline);
+  if (baselineCache.size > BASELINE_CACHE_SIZE) {
+    const oldest = baselineCache.keys().next().value;
+    if (oldest !== undefined) baselineCache.delete(oldest);
+  }
+  return baseline;
+}
+
+/**
+ * Returns the Markdown to save for `next`, the editor's serialisation of a
+ * document opened from `source`, keeping the source text of every line the
+ * user did not edit. The result is used only if it reads back as the same
+ * document; otherwise `next` is saved as it is.
+ */
+export function preserveUneditedMarkdown(source: string, next: string): string {
+  const merged = mergeEditsIntoSource(source, cachedRoundTrip(source), next);
+  if (merged === null || merged === next) return next;
+
+  return criticMarkdownRoundTrip(merged) === next ? merged : next;
 }
 
 export function createCriticComment(

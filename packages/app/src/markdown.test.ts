@@ -177,13 +177,19 @@ describe("normalizeBlockSpacing", () => {
 });
 
 describe("toMarkdown", () => {
-  it("round-trips local links and images to normalized markdown paths", () => {
+  it("round-trips local links and images with their source paths", () => {
     const markdown = toMarkdown(
       '<p><a href="/api/files?path=notes%2Fdraft.md" data-markdown-src="../notes/draft.md">Draft</a></p><p><img src="/api/files?path=images%2Fsketch.png" alt="Sketch" data-markdown-src="images/sketch.png"></p>',
     );
 
     expect(markdown).toContain("[Draft](../notes/draft.md)");
-    expect(markdown).toContain("![Sketch](./images/sketch.png)");
+    expect(markdown).toContain("![Sketch](images/sketch.png)");
+  });
+
+  it("writes links and rules added in the editor in the default style", () => {
+    expect(toMarkdown('<p><a href="notes/draft.md">Draft</a></p><hr>')).toBe(
+      "[Draft](./notes/draft.md)\n\n* * *\n",
+    );
   });
 
   it("keeps in-page anchors untouched", () => {

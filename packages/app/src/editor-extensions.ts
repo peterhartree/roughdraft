@@ -34,6 +34,8 @@ import {
 import {
   rawMarkdownBlockAttribute,
   renderRawMarkdownBlockPreview,
+  softBreakAttribute,
+  thematicBreakAttribute,
 } from "./markdown";
 import { reviewAuthorFromBy, reviewAuthorToBy } from "./review-author";
 
@@ -1097,6 +1099,43 @@ const LooseLists = Extension.create({
   },
 });
 
+// Soft line breaks and thematic-break markers are Markdown source details the
+// editor has no node for; carry them as attributes so saving writes them back.
+const MarkdownSourceDetails = Extension.create({
+  name: "markdownSourceDetails",
+
+  addGlobalAttributes() {
+    return [
+      {
+        types: ["hardBreak"],
+        attributes: {
+          soft: {
+            default: false,
+            parseHTML: (element) =>
+              element.getAttribute(softBreakAttribute) === "true",
+            renderHTML: (attributes) =>
+              attributes.soft ? { [softBreakAttribute]: "true" } : {},
+          },
+        },
+      },
+      {
+        types: ["horizontalRule"],
+        attributes: {
+          markdownMarker: {
+            default: null,
+            parseHTML: (element) =>
+              element.getAttribute(thematicBreakAttribute),
+            renderHTML: (attributes) =>
+              attributes.markdownMarker
+                ? { [thematicBreakAttribute]: attributes.markdownMarker }
+                : {},
+          },
+        },
+      },
+    ];
+  },
+});
+
 export function createEditorExtensions(placeholder: string) {
   return [
     StarterKit.configure({
@@ -1108,6 +1147,7 @@ export function createEditorExtensions(placeholder: string) {
       link: false,
     }),
     LooseLists,
+    MarkdownSourceDetails,
     Placeholder.configure({
       placeholder,
     }),
@@ -1115,6 +1155,12 @@ export function createEditorExtensions(placeholder: string) {
       autolink: true,
       openOnClick: false,
       linkOnPaste: true,
+      // The default check rejects relative paths such as "notes/plan.md";
+      // validate only links that could name a scheme. Browsers drop
+      // whitespace and control characters inside URLs, so strip them first.
+      isAllowedUri: (url, ctx) =>
+        !/^[^/?#]*:/.test(url.replace(/[\s\p{Cc}\p{Cf}]/gu, "")) ||
+        ctx.defaultValidate(url),
     }),
     MarkdownCode,
     Table.configure({
