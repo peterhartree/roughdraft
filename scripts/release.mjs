@@ -34,9 +34,6 @@ if (desktopVersion !== version) {
 if (run("git", ["rev-parse", "--abbrev-ref", "HEAD"]) !== "main") {
   fail("Release from main.");
 }
-if (run("git", ["status", "--porcelain", "--untracked-files=no"])) {
-  fail("Commit or discard local changes first.");
-}
 run("git", ["fetch", "--quiet", "origin", "main", "--tags"]);
 const head = run("git", ["rev-parse", "HEAD"]);
 if (head !== run("git", ["rev-parse", "origin/main"])) {

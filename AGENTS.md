@@ -154,7 +154,7 @@ When you hand off a user-visible change, cut a release unless one was already pu
 
 1. Bump `version` in both `package.json` and `packages/desktop/package.json`: patch for fixes, minor for features.
 2. Commit `chore(release): v<version>` and push `main`.
-3. Run `pnpm release`. It refuses unless `main` is clean and pushed, and writes the notes from the `feat` and `fix` commits since the last release. Pass `--notes-file <path>` to write them yourself, or `--dry-run` to preview.
+3. Run `pnpm release`. It refuses unless the version is new and `main` is pushed, since it tags the pushed commit, and writes the notes from the `feat` and `fix` commits since the last release. Pass `--notes-file <path>` to write them yourself, or `--dry-run` to preview.
 
 Upstream merges bring upstream's version numbers. The fork numbers its own releases, so keep the fork's version when resolving them.
 
