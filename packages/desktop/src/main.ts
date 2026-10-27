@@ -145,13 +145,21 @@ function activeWindow(): DesktopWindow | undefined {
   );
 }
 
+// Automated tests set this so their windows never take over the screen or
+// the keyboard of the person working at the machine.
+const backgroundOnly = process.env.ROUGHDRAFT_DESKTOP_BACKGROUND === "1";
+
 function focusWindow(entry: DesktopWindow): void {
   if (entry.window.isDestroyed()) return;
   if (entry.window.isMinimized()) entry.window.restore();
+  focusedId = entry.id;
+  if (backgroundOnly) {
+    entry.window.showInactive();
+    return;
+  }
   entry.window.show();
   app.focus({ steal: true });
   entry.window.focus();
-  focusedId = entry.id;
 }
 
 function snapshot(): WindowSession | null {
@@ -848,6 +856,9 @@ if (!app.requestSingleInstanceLock()) {
     void activateApp();
   });
   app.whenReady().then(async () => {
+    if (backgroundOnly && process.platform === "darwin") {
+      app.setActivationPolicy("accessory");
+    }
     sessionFile = path.join(app.getPath("userData"), "window-session.json");
     lastWorkspace = readWindowSession(sessionFile);
     focusedId = lastWorkspace?.focusedId;
