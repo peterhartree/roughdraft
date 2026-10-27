@@ -396,6 +396,48 @@
     @apply bg-transparent p-0 text-inherit;
   }
 
+  .tiptap .mermaid-block {
+    margin: 1.35em 0;
+  }
+
+  .tiptap .mermaid-diagram {
+    @apply overflow-x-auto rounded-2xl border p-4;
+    display: flex;
+    justify-content: center;
+    min-height: 3rem;
+    border-color: var(--code-block-border);
+  }
+
+  .tiptap .mermaid-diagram:empty {
+    display: none;
+  }
+
+  .tiptap .mermaid-diagram svg {
+    height: auto;
+    max-width: 100%;
+  }
+
+  .tiptap .mermaid-error {
+    @apply mt-2 text-xs text-destructive;
+  }
+
+  .tiptap .mermaid-toolbar {
+    @apply mt-1.5 flex items-center gap-2 text-xs text-muted-foreground;
+  }
+
+  .tiptap .mermaid-toolbar [hidden] {
+    display: none;
+  }
+
+  .tiptap .mermaid-block > pre {
+    display: none;
+    margin-top: 0.5em;
+  }
+
+  .tiptap .mermaid-block[data-source-open] > pre {
+    display: block;
+  }
+
   .tiptap blockquote {
     @apply border-l-4 border-slate-300 dark:border-slate-600 pl-4 text-slate-600 dark:text-slate-400;
     margin: 1.3em 0;

@@ -39,6 +39,7 @@ import {
   thematicBreakAttribute,
 } from "./markdown";
 import { MarkdownAlerts } from "./markdown-alerts";
+import { MermaidCodeBlockView } from "./mermaid-code-block";
 import { reviewAuthorFromBy, reviewAuthorToBy } from "./review-author";
 
 declare module "@tiptap/core" {
@@ -957,6 +958,31 @@ const MarkdownCode = Code.extend({
 
 const MarkdownCodeBlock = CodeBlock.extend({
   marks: "commentRef criticChange",
+
+  addNodeView() {
+    return ({ node, editor }) => {
+      if (node.attrs.language === "mermaid") {
+        return new MermaidCodeBlockView(node, editor);
+      }
+
+      const dom = document.createElement("pre");
+      const contentDOM = document.createElement("code");
+      if (node.attrs.language) {
+        contentDOM.className = `${this.options.languageClassPrefix}${node.attrs.language}`;
+      }
+      dom.append(contentDOM);
+
+      return {
+        dom,
+        contentDOM,
+        // A change of language rebuilds the view, so a fence that becomes
+        // Mermaid starts drawing its diagram.
+        update: (updated) =>
+          updated.type === node.type &&
+          updated.attrs.language === node.attrs.language,
+      };
+    };
+  },
 });
 
 const MarkdownImage = Image.extend({
