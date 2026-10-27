@@ -58,15 +58,77 @@ function createRawMarkdownBlock(markdown: string): string {
   )}"></div>\n`;
 }
 
+const svgOpeningPattern = /^\s*<svg\b/i;
+
+function isOwnRawMarkdownBlock(raw: string): boolean {
+  return raw.trimStart().startsWith(`<div ${rawMarkdownBlockAttribute}=`);
+}
+
+// Any other block-level HTML (a <div>, a sized <img>) has no editor node, so
+// the editor would flatten it to its text and an edit would save it as
+// Markdown. Keep each block whole, as a read-only preview. An <svg> counts as
+// a block from its opening line to the line holding </svg>, though Markdown
+// sees a one-line SVG as a paragraph and splits one at blank lines. Markdown
+// between an opening and closing tag, set off by blank lines, stays editable.
+function protectHtmlBlockTokens(markdown: string): string {
+  const tokens = new Marked({ gfm: true }).lexer(markdown);
+  let output = "";
+  let copied = 0;
+  let searchFrom = 0;
+
+  for (const token of tokens) {
+    // The lexer normalises line endings, so locate each token in the source
+    // and leave any token it can't find exactly as it was.
+    const start = markdown.indexOf(token.raw, searchFrom);
+    if (start === -1) continue;
+    searchFrom = start + token.raw.length;
+    if (start < copied) continue;
+
+    let end: number | null = null;
+    if (
+      (token.type === "html" || token.type === "paragraph") &&
+      svgOpeningPattern.test(token.raw)
+    ) {
+      const close = markdown.toLowerCase().indexOf("</svg>", start);
+      if (close !== -1) {
+        const lineEnd = markdown.indexOf("\n", close);
+        end = lineEnd === -1 ? markdown.length : lineEnd + 1;
+      }
+    } else if (
+      token.type === "html" &&
+      token.block &&
+      !isOwnRawMarkdownBlock(token.raw)
+    ) {
+      end = searchFrom;
+    }
+
+    if (end === null) continue;
+
+    // Blank lines after the block stay outside the placeholder: the
+    // placeholder is itself HTML, which would swallow a following paragraph.
+    const raw = markdown.slice(start, end);
+    const block = raw.replace(/(?:\r?\n)+$/, "");
+    output +=
+      markdown.slice(copied, start) +
+      createRawMarkdownBlock(block) +
+      raw.slice(block.length).replace(/^\r?\n/, "");
+    copied = end;
+  }
+
+  return output + markdown.slice(copied);
+}
+
 function protectRawHtmlBlocks(markdown: string): string {
-  return markdown
-    .replace(
-      /^[ \t]*<details\b[\s\S]*?<\/details>[ \t]*(?:\r?\n|$)/gim,
-      (raw) => createRawMarkdownBlock(raw),
-    )
-    .replace(/^[ \t]*<!--[\s\S]*?-->[ \t]*(?:\r?\n|$)/gm, (raw) =>
-      createRawMarkdownBlock(raw),
-    );
+  return protectHtmlBlockTokens(
+    markdown
+      .replace(
+        /^[ \t]*<details\b[\s\S]*?<\/details>[ \t]*(?:\r?\n|$)/gim,
+        (raw) => createRawMarkdownBlock(raw),
+      )
+      .replace(/^[ \t]*<!--[\s\S]*?-->[ \t]*(?:\r?\n|$)/gm, (raw) =>
+        createRawMarkdownBlock(raw),
+      ),
+  );
 }
 
 function indentWidth(whitespace: string): number {
@@ -406,13 +468,25 @@ export interface RawMarkdownBlockPreview {
   hasTable: boolean;
 }
 
-function sanitizePreviewHtml(html: string): RawMarkdownBlockPreview {
+function sanitizePreviewHtml(
+  html: string,
+  resolveFileUrl?: MarkdownOptions["resolveFileUrl"],
+): RawMarkdownBlockPreview {
   const sanitized = DOMPurify.sanitize(html, {
-    USE_PROFILES: { html: true },
+    USE_PROFILES: { html: true, svg: true, svgFilters: true },
     FORBID_TAGS: ["form", "style"],
     ADD_ATTR: ["target"],
   });
   const doc = new DOMParser().parseFromString(sanitized, "text/html");
+
+  // Raw HTML never passes through the Markdown image renderer, so resolve
+  // relative image paths here, beside the document, as Markdown images are.
+  for (const image of doc.body.querySelectorAll("img[src]")) {
+    const src = image.getAttribute("src") ?? "";
+    if (!image.hasAttribute("data-markdown-src")) {
+      image.setAttribute("src", resolveRenderedUrl(src, resolveFileUrl));
+    }
+  }
 
   return {
     html: doc.body.innerHTML,
@@ -430,10 +504,17 @@ function escapePipesInsideCodeSpans(value: string): string {
 
 export function renderRawMarkdownBlockPreview(
   encoded: string,
+  options?: MarkdownOptions,
 ): RawMarkdownBlockPreview | null {
   const raw = decodeRawMarkdownBlock(encoded);
   const trimmed = raw.trim();
   if (!trimmed || trimmed.startsWith("<!--")) return null;
+
+  // An SVG is markup throughout; parsing it as Markdown would split it at
+  // blank lines.
+  if (svgOpeningPattern.test(raw)) {
+    return sanitizePreviewHtml(raw, options?.resolveFileUrl);
+  }
 
   // Pipe tables are protected precisely because GFM would split cells on
   // pipes inside code spans; escape them so the preview keeps cells whole.
@@ -444,9 +525,12 @@ export function renderRawMarkdownBlockPreview(
   const parser = new Marked({
     gfm: true,
     async: false,
-    renderer: createMarkedRenderer(),
+    renderer: createMarkedRenderer(options),
   });
-  return sanitizePreviewHtml(parser.parse(source) as string);
+  return sanitizePreviewHtml(
+    parser.parse(source) as string,
+    options?.resolveFileUrl,
+  );
 }
 
 const doubleTildeDelPattern =

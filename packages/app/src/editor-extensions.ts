@@ -32,6 +32,7 @@ import {
   getDocumentFindActiveIndex,
 } from "./document-find";
 import {
+  type MarkdownOptions,
   rawMarkdownBlockAttribute,
   renderRawMarkdownBlockPreview,
   softBreakAttribute,
@@ -1012,11 +1013,19 @@ const MarkdownImage = Image.extend({
   },
 });
 
-const RawMarkdownBlock = Node.create({
+interface RawMarkdownBlockOptions {
+  resolveFileUrl?: MarkdownOptions["resolveFileUrl"];
+}
+
+const RawMarkdownBlock = Node.create<RawMarkdownBlockOptions>({
   name: "rawMarkdownBlock",
   group: "block",
   atom: true,
   selectable: true,
+
+  addOptions() {
+    return { resolveFileUrl: undefined };
+  },
 
   addAttributes() {
     return {
@@ -1043,10 +1052,12 @@ const RawMarkdownBlock = Node.create({
     return ({ node }) => {
       const dom = document.createElement("div");
       dom.contentEditable = "false";
+      dom.setAttribute("data-testid", "raw-markdown-block");
 
       const apply = (current: ProseMirrorNode) => {
         const preview = renderRawMarkdownBlockPreview(
           String(current.attrs.rawMarkdown ?? ""),
+          { resolveFileUrl: this.options.resolveFileUrl },
         );
         dom.className = preview?.hasTable
           ? "raw-markdown-block tableWrapper"
@@ -1137,7 +1148,10 @@ const MarkdownSourceDetails = Extension.create({
   },
 });
 
-export function createEditorExtensions(placeholder: string) {
+export function createEditorExtensions(
+  placeholder: string,
+  options?: Pick<MarkdownOptions, "resolveFileUrl">,
+) {
   return [
     StarterKit.configure({
       heading: {
@@ -1177,7 +1191,7 @@ export function createEditorExtensions(placeholder: string) {
     }),
     CommentRef,
     CriticChange,
-    RawMarkdownBlock,
+    RawMarkdownBlock.configure({ resolveFileUrl: options?.resolveFileUrl }),
     MarkdownCodeBlock,
     CommentHighlight,
     CriticChangeHighlight,
