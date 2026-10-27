@@ -40,6 +40,9 @@ export interface SelfUpdateDependencies {
   sleep: (ms: number) => Promise<void>;
   report: (progress: UpdateProgress) => void;
   log: (line: string) => void;
+  /** The commit the last successful update installed. */
+  readInstalledCommit: () => string | null;
+  writeInstalledCommit: (commit: string) => void;
   /** Leave the freshly installed app closed (used by tests and dry runs). */
   relaunch?: boolean;
   quitTimeoutMs?: number;
@@ -130,7 +133,11 @@ export async function runSelfUpdate(
       "Couldn't compare the checkout with GitHub.",
     ),
   );
-  if (behind === 0) {
+  const head = () =>
+    must(git(["rev-parse", "HEAD"]), "Couldn't read the checkout's commit.");
+  // A failed update leaves the checkout ahead of what was installed, so
+  // "nothing to pull" alone doesn't mean the installed app is current.
+  if (behind === 0 && deps.readInstalledCommit() === head()) {
     deps.log("Roughdraft is already up to date.");
     deps.report({
       state: "done",
@@ -140,10 +147,12 @@ export async function runSelfUpdate(
     });
     return "current";
   }
-  must(
-    git(["merge", "--ff-only", "--quiet", "origin/main"]),
-    "The checkout has commits that aren't on GitHub, so it can't move to the latest version.",
-  );
+  if (behind > 0) {
+    must(
+      git(["merge", "--ff-only", "--quiet", "origin/main"]),
+      "The checkout has commits that aren't on GitHub, so it can't move to the latest version.",
+    );
+  }
 
   const pnpm = (args: string[]) =>
     deps.run("pnpm", ["--dir", deps.repoRoot, ...args]);
@@ -194,6 +203,8 @@ export async function runSelfUpdate(
   deps.run("touch", [appPath]);
   deps.run(LSREGISTER, ["-f", appPath]);
 
+  deps.writeInstalledCommit(head());
+
   if (deps.relaunch !== false) {
     step("relaunching", "Reopening Roughdraft…");
     must(deps.run("open", [appPath]), `Couldn't open ${appPath}.`);
@@ -211,6 +222,10 @@ export async function runSelfUpdate(
 
 export function defaultUpdateProgressFile(homeDir: string): string {
   return path.join(homeDir, ".roughdraft", "update-progress.json");
+}
+
+export function defaultInstalledCommitFile(homeDir: string): string {
+  return path.join(homeDir, ".roughdraft", "installed-commit");
 }
 
 export function defaultUpdateLogFile(homeDir: string): string {
@@ -285,6 +300,22 @@ export function createSelfUpdateDependencies(options: {
     exists: (filePath) => fs.existsSync(filePath),
     sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     report: (progress) => writeUpdateProgress(options.progressFile, progress),
+    readInstalledCommit: () => {
+      try {
+        return (
+          fs
+            .readFileSync(defaultInstalledCommitFile(os.homedir()), "utf8")
+            .trim() || null
+        );
+      } catch {
+        return null;
+      }
+    },
+    writeInstalledCommit: (commit) => {
+      const file = defaultInstalledCommitFile(os.homedir());
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, `${commit}\n`);
+    },
     log: options.log,
     relaunch: options.relaunch,
   };

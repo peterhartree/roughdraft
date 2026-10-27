@@ -3,6 +3,7 @@
   "version": "0.2.0",
   "description": "A local markdown review app",
   "license": "MIT",
+  "packageManager": "pnpm@10.26.0",
   "author": "Nathan Baschez",
   "repository": {
     "type": "git",

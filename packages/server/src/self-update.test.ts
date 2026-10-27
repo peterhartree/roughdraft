@@ -20,12 +20,15 @@ interface FakeMac {
   build?: CommandResult;
   /** How many checks the app stays running for after being asked to quit. */
   quitAfterChecks?: number;
+  installedCommit?: string | null;
 }
 
 function fakeMac(mac: FakeMac = {}) {
   const commands: string[] = [];
   const reports: UpdateProgress[] = [];
   let quitRequested = false;
+  let installedCommit =
+    mac.installedCommit === undefined ? "old" : mac.installedCommit;
   let runningChecks = 0;
   const deps: SelfUpdateDependencies = {
     repoRoot: "/repo",
@@ -37,12 +40,17 @@ function fakeMac(mac: FakeMac = {}) {
     report: (progress) => reports.push(progress),
     log: () => {},
     quitTimeoutMs: 2_000,
+    readInstalledCommit: () => installedCommit,
+    writeInstalledCommit: (commit) => {
+      installedCommit = commit;
+    },
     run: (command, args) => {
       const line = [command, ...args].join(" ");
       commands.push(line);
       if (line.includes("rev-parse --abbrev-ref HEAD"))
         return ok(`${mac.branch ?? "main"}\n`);
       if (line.includes("status --porcelain")) return ok(mac.changes ?? "");
+      if (line.includes("rev-parse HEAD")) return ok("new\n");
       if (line.includes("rev-list --count")) return ok(`${mac.behind ?? 3}\n`);
       if (line.endsWith(" build")) return mac.build ?? ok();
       if (command === "osascript") {
@@ -59,7 +67,7 @@ function fakeMac(mac: FakeMac = {}) {
       return ok();
     },
   };
-  return { deps, commands, reports };
+  return { deps, commands, reports, installed: () => installedCommit };
 }
 
 function index(commands: string[], fragment: string): number {
@@ -88,12 +96,26 @@ describe("runSelfUpdate", () => {
     expect(reports.at(-1)?.state).toBe("done");
   });
 
-  it("does nothing when the checkout already has the latest version", async () => {
-    const { deps, commands } = fakeMac({ behind: 0 });
+  it("does nothing when the latest version is already installed", async () => {
+    const { deps, commands } = fakeMac({ behind: 0, installedCommit: "new" });
 
     await expect(runSelfUpdate(deps)).resolves.toBe("current");
     expect(commands.some((line) => line.includes("merge"))).toBe(false);
     expect(commands.some((line) => line.startsWith("ditto"))).toBe(false);
+  });
+
+  it("finishes an update whose build failed last time", async () => {
+    // The pull succeeded, so there is nothing left to pull, but the
+    // installed app is still the old one.
+    const { deps, commands, installed } = fakeMac({
+      behind: 0,
+      installedCommit: "old",
+    });
+
+    await expect(runSelfUpdate(deps)).resolves.toBe("updated");
+    expect(commands.some((line) => line.includes("merge"))).toBe(false);
+    expect(commands.some((line) => line.startsWith("ditto"))).toBe(true);
+    expect(installed()).toBe("new");
   });
 
   it("refuses a checkout with local changes", async () => {
