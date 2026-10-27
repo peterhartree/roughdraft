@@ -129,15 +129,22 @@ After finishing and verifying user-visible Roughdraft improvements, package the 
 The canonical installation is in Peter's **personal** Applications directory: `/Users/ph/Applications/Roughdraft.app`. It is not installed in the system `/Applications` directory, which is what Finder's usual Applications sidebar item opens. Check both locations before reporting that the app is missing, and do not silently move it to `/Applications`.
 
 ```bash
+pnpm build
 pnpm --filter @roughdraft/desktop package
+app_exe=/Users/ph/Applications/Roughdraft.app/Contents/MacOS/Roughdraft
 osascript -e 'tell application "Roughdraft" to quit'
+while pgrep -f "$app_exe" >/dev/null; do sleep 0.5; done
+roughdraft stop
 mkdir -p /Users/ph/Applications
 ditto packages/desktop/out/Roughdraft-darwin-arm64/Roughdraft.app /Users/ph/Applications/Roughdraft.app
 touch /Users/ph/Applications/Roughdraft.app
 lsregister_cmd=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
 "$lsregister_cmd" -f /Users/ph/Applications/Roughdraft.app
 open /Users/ph/Applications/Roughdraft.app
+ps -o lstart= -p "$(pgrep -f "$app_exe")"
 ```
+
+Run no other `roughdraft` command between quitting and `ditto`: `roughdraft start` and `roughdraft open` launch the installed app to start the server, so they relaunch the old build, and `open` afterwards only activates it. The new app starts a fresh server from the rebuilt `packages/server/dist`. The final `ps` must show a start time after the install.
 
 ### macOS app icon and Launch Services cache
 
