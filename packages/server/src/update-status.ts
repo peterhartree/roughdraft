@@ -28,6 +28,61 @@ interface ResolveUpdateStatusOptions {
   fetchImpl?: typeof fetch;
   packageJsonPath?: string;
   packageName?: string;
+  /**
+   * Where to remember the last check. Agents run the CLI many times an hour,
+   * so without this every command would ask the release source again.
+   */
+  cacheFile?: string;
+  now?: () => number;
+}
+
+interface UpdateCheckCache {
+  packageName: string;
+  checkedAt: number;
+  latestVersion: string | null;
+}
+
+const CHECK_INTERVAL_MS = 12 * 60 * 60 * 1000;
+// An unreachable source is retried sooner, but not on every command.
+const FAILED_CHECK_INTERVAL_MS = 60 * 60 * 1000;
+
+export function defaultUpdateCheckCacheFile(homeDir: string): string {
+  return path.join(homeDir, ".roughdraft", "update-check.json");
+}
+
+function readCachedLatestVersion(
+  cacheFile: string,
+  packageName: string,
+  now: number,
+): { latestVersion: string | null } | null {
+  try {
+    const cache = JSON.parse(
+      fs.readFileSync(cacheFile, "utf8"),
+    ) as Partial<UpdateCheckCache>;
+    if (cache.packageName !== packageName) return null;
+    if (typeof cache.checkedAt !== "number") return null;
+    const latestVersion =
+      typeof cache.latestVersion === "string" ? cache.latestVersion : null;
+    const interval = latestVersion
+      ? CHECK_INTERVAL_MS
+      : FAILED_CHECK_INTERVAL_MS;
+    if (now - cache.checkedAt < 0 || now - cache.checkedAt >= interval) {
+      return null;
+    }
+    return { latestVersion };
+  } catch {
+    return null;
+  }
+}
+
+function writeCachedLatestVersion(
+  cacheFile: string,
+  cache: UpdateCheckCache,
+): void {
+  try {
+    fs.mkdirSync(path.dirname(cacheFile), { recursive: true });
+    fs.writeFileSync(cacheFile, `${JSON.stringify(cache)}\n`);
+  } catch {}
 }
 
 function readInstalledPackageInfo(packageJsonPath = defaultPackageJsonPath): {
@@ -150,10 +205,26 @@ export async function resolveUpdateStatus(
   const packageName =
     options.packageName?.trim() || installedPackageInfo.packageName;
   const currentVersion = installedPackageInfo.currentVersion;
-  const latestVersion = await fetchLatestVersion(
-    packageName,
-    options.fetchImpl ?? fetch,
-  );
+  const now = (options.now ?? Date.now)();
+  const cached = options.cacheFile
+    ? readCachedLatestVersion(options.cacheFile, packageName, now)
+    : null;
+  let latestVersion: string | null;
+  if (cached) {
+    latestVersion = cached.latestVersion;
+  } else {
+    latestVersion = await fetchLatestVersion(
+      packageName,
+      options.fetchImpl ?? fetch,
+    );
+    if (options.cacheFile) {
+      writeCachedLatestVersion(options.cacheFile, {
+        packageName,
+        checkedAt: now,
+        latestVersion,
+      });
+    }
+  }
 
   return {
     packageName,

@@ -23,7 +23,10 @@ import { markdownTreeFromQuery } from "./markdown-tree.js";
 import { OpenRequestBroker } from "./open-requests.js";
 import { RenameRejectedError, renameMarkdownFile } from "./rename.js";
 import { moveToTrash } from "./trash.js";
-import { resolveUpdateStatus } from "./update-status.js";
+import {
+  defaultUpdateCheckCacheFile,
+  resolveUpdateStatus,
+} from "./update-status.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const staticDir = path.resolve(__dirname, "../../app/dist");
@@ -1200,6 +1203,7 @@ export function createApp(options: CreateAppOptions = {}): CreateAppResult {
       fetchImpl,
       packageJsonPath: options.packageJsonPath,
       packageName: options.packageName,
+      cacheFile: defaultUpdateCheckCacheFile(homeDir),
     });
     res.json(updateStatus);
   });

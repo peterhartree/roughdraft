@@ -22,7 +22,11 @@ import {
   readProcessStdin,
   runReviewCommand,
 } from "./review-commands.js";
-import { resolveUpdateStatus, type UpdateStatus } from "./update-status.js";
+import {
+  defaultUpdateCheckCacheFile,
+  resolveUpdateStatus,
+  type UpdateStatus,
+} from "./update-status.js";
 
 const AGENT_SETUP_URL = "https://roughdraft.md/setup.md";
 const ROUGHDRAFT_FLAVORED_MARKDOWN_SPEC_URL =
@@ -641,7 +645,11 @@ export function createCliDependencies(
       overrides.openBrowserUrl ?? overrides.openUrl ?? defaultOpenBrowserUrl,
     resolveUpdateStatus:
       overrides.resolveUpdateStatus ??
-      (() => resolveUpdateStatus({ fetchImpl })),
+      (() =>
+        resolveUpdateStatus({
+          fetchImpl,
+          cacheFile: defaultUpdateCheckCacheFile(os.homedir()),
+        })),
     log: overrides.log ?? ((message) => console.log(message)),
     error: overrides.error ?? ((message) => console.error(message)),
     readStdin: overrides.readStdin ?? readProcessStdin,
