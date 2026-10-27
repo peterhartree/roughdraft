@@ -3857,13 +3857,6 @@ export function App() {
         </Dialog>
       ) : null}
       <div className="relative flex min-w-0 flex-1 flex-col overflow-hidden">
-        {updateStatus ? (
-          <div className="pointer-events-none absolute top-4 right-4 z-40 max-w-sm">
-            <div className="pointer-events-auto">
-              <UpdateNotice updateStatus={updateStatus} />
-            </div>
-          </div>
-        ) : null}
         <GitHubChangeMarkRequestContext.Provider
           value={gitHubChangeMarkContext}
         >
