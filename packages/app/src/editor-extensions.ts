@@ -37,6 +37,7 @@ import {
   softBreakAttribute,
   thematicBreakAttribute,
 } from "./markdown";
+import { MarkdownAlerts } from "./markdown-alerts";
 import { reviewAuthorFromBy, reviewAuthorToBy } from "./review-author";
 
 declare module "@tiptap/core" {
@@ -1148,6 +1149,7 @@ export function createEditorExtensions(placeholder: string) {
     }),
     LooseLists,
     MarkdownSourceDetails,
+    MarkdownAlerts,
     Placeholder.configure({
       placeholder,
     }),

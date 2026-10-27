@@ -129,6 +129,22 @@ describe("saving from the rich-text editor", () => {
     expect(roundTrip(input)).toBe(input);
   });
 
+  it("keeps a GitHub alert callout when a line inside it is edited", () => {
+    const input = [
+      "Intro paragraph.",
+      "",
+      "> [!WARNING]",
+      "> The judge removes the weakest ideas.",
+      ">",
+      "> Will never sees them.",
+      "",
+    ].join("\n");
+
+    expect(editAndSave(input, [["never sees", "doesn't see"]])).toBe(
+      input.replace("never sees", "doesn't see"),
+    );
+  });
+
   it("still drops links to script URLs", () => {
     const output = roundTrip(
       '[a](javascript:alert(1)) <a href="java&#9;script:alert(1)">c</a>\n',

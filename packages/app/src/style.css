@@ -405,6 +405,79 @@
     margin-bottom: 0;
   }
 
+  /* GitHub alerts: colours follow GitHub's own so files read the same there. */
+  .tiptap blockquote.markdown-alert {
+    --markdown-alert-color: #0969da;
+    border-left-color: var(--markdown-alert-color);
+    color: inherit;
+  }
+
+  .tiptap blockquote.markdown-alert-tip {
+    --markdown-alert-color: #1a7f37;
+  }
+
+  .tiptap blockquote.markdown-alert-important {
+    --markdown-alert-color: #8250df;
+  }
+
+  .tiptap blockquote.markdown-alert-warning {
+    --markdown-alert-color: #9a6700;
+  }
+
+  .tiptap blockquote.markdown-alert-caution {
+    --markdown-alert-color: #d1242f;
+  }
+
+  .dark .tiptap blockquote.markdown-alert {
+    --markdown-alert-color: #4493f8;
+  }
+
+  .dark .tiptap blockquote.markdown-alert-tip {
+    --markdown-alert-color: #3fb950;
+  }
+
+  .dark .tiptap blockquote.markdown-alert-important {
+    --markdown-alert-color: #ab7df8;
+  }
+
+  .dark .tiptap blockquote.markdown-alert-warning {
+    --markdown-alert-color: #d29922;
+  }
+
+  .dark .tiptap blockquote.markdown-alert-caution {
+    --markdown-alert-color: #f85149;
+  }
+
+  .tiptap .markdown-alert-icon {
+    display: inline-block;
+    width: 1em;
+    height: 1em;
+    margin-right: 0.4em;
+    vertical-align: -0.125em;
+    color: var(--markdown-alert-color);
+    user-select: none;
+  }
+
+  .tiptap .markdown-alert-icon svg {
+    width: 100%;
+    height: 100%;
+  }
+
+  .tiptap .markdown-alert-label {
+    color: var(--markdown-alert-color);
+    font-size: 0.8125em;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+
+  /* The brackets stay real, editable text, but recede behind the label. */
+  .tiptap .markdown-alert-syntax {
+    color: var(--markdown-alert-color);
+    font-size: 0.8125em;
+    opacity: 0.4;
+  }
+
   .tiptap ul {
     @apply list-disc;
     margin: 0.45em 0 1.05em;
