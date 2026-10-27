@@ -59,14 +59,17 @@ async function itemByPath(
   filePath: string,
 ): Promise<Locator> {
   const items = window.getByTestId(testId);
-  const paths = await items.evaluateAll(
-    (elements, attributeName) =>
-      elements.map((element) => element.getAttribute(attributeName)),
-    attribute,
-  );
-  const index = paths.indexOf(filePath);
-  expect(index).toBeGreaterThanOrEqual(0);
-  return items.nth(index);
+  const indexOfPath = async () =>
+    (
+      await items.evaluateAll(
+        (elements, attributeName) =>
+          elements.map((element) => element.getAttribute(attributeName)),
+        attribute,
+      )
+    ).indexOf(filePath);
+  // A new window loads its recent documents after it first renders.
+  await expect.poll(indexOfPath).toBeGreaterThanOrEqual(0);
+  return items.nth(await indexOfPath());
 }
 
 async function openNewWindow(electronApp: ElectronApplication): Promise<void> {
