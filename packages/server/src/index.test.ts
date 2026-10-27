@@ -46,6 +46,35 @@ describe("createApp", () => {
     expect(fs.readFileSync(filePath, "utf-8")).toBe("# Draft\n");
   });
 
+  it("starts one background update at a time, from Roughdraft's own page", async () => {
+    let started = 0;
+    const { app } = createApp({
+      homeDir,
+      staticDirPath: projectDir,
+      startSelfUpdate: () => {
+        started += 1;
+      },
+    });
+
+    const formPost = await request(app)
+      .post("/api/update")
+      .type("form")
+      .send("x=1");
+    expect(formPost.status).toBe(415);
+    expect(started).toBe(0);
+
+    const first = await request(app).post("/api/update").send({});
+    expect(first.status).toBe(202);
+    expect(started).toBe(1);
+
+    const second = await request(app).post("/api/update").send({});
+    expect(second.status).toBe(409);
+    expect(started).toBe(1);
+
+    const progress = await request(app).get("/api/update-progress");
+    expect(progress.body).toMatchObject({ state: "running" });
+  });
+
   it("serves the live-HTML frame under a policy that blocks the network", async () => {
     const { app } = createApp({ homeDir, staticDirPath: projectDir });
 
@@ -452,11 +481,15 @@ describe("createApp", () => {
     expect(response.body).not.toHaveProperty("projectDir");
   });
 
-  it("reports update status from npm metadata", async () => {
+  it("reports a newer release of the fork from GitHub", async () => {
     const packageJsonPath = path.join(projectDir, "package.json");
     fs.writeFileSync(
       packageJsonPath,
-      JSON.stringify({ name: "roughdraft", version: "0.1.0" }),
+      JSON.stringify({
+        name: "roughdraft",
+        version: "0.2.0",
+        repository: "https://github.com/peterhartree/roughdraft",
+      }),
     );
 
     const { app } = createApp({
@@ -464,10 +497,14 @@ describe("createApp", () => {
       staticDirPath: projectDir,
       packageJsonPath,
       fetchImpl: async () =>
-        new Response(JSON.stringify({ version: "0.2.0" }), {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        }),
+        new Response(
+          JSON.stringify({
+            tag_name: "v0.3.0",
+            html_url:
+              "https://github.com/peterhartree/roughdraft/releases/tag/v0.3.0",
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
     });
 
     const response = await request(app).get("/api/update-status");
@@ -475,10 +512,12 @@ describe("createApp", () => {
     expect(response.status).toBe(200);
     expect(response.body).toEqual({
       packageName: "roughdraft",
-      currentVersion: "0.1.0",
-      latestVersion: "0.2.0",
+      currentVersion: "0.2.0",
+      latestVersion: "0.3.0",
+      releaseUrl:
+        "https://github.com/peterhartree/roughdraft/releases/tag/v0.3.0",
       updateAvailable: true,
-      updateCommand: "npm i -g roughdraft@latest",
+      updateCommand: "roughdraft update",
     });
   });
 

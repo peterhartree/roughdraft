@@ -6,7 +6,7 @@
   "author": "Nathan Baschez",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Lex-Inc/roughdraft.git"
+    "url": "git+https://github.com/peterhartree/roughdraft.git"
   },
   "bin": {
     "roughdraft": "./packages/server/bin/roughdraft.mjs"
@@ -20,6 +20,7 @@
     "lint": "biome check . --assist-enabled=false",
     "lint:fix": "biome check --write . --assist-enabled=false",
     "test:selectors": "node scripts/check-test-selectors.mjs",
+    "release": "node scripts/release.mjs",
     "unused": "knip --no-progress",
     "format": "biome format --write .",
     "test": "pnpm --filter @roughdraft/rfm test && pnpm --filter @roughdraft/app test && pnpm --filter @roughdraft/server test && pnpm --filter @roughdraft/desktop test",

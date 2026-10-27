@@ -32,6 +32,28 @@ Roughdraft opens a single markdown file directly for CriticMarkup comments and s
   
 - **No cloud, no account, no telemetry** — Runs entirely on your machine
   
+## Installing this fork
+
+This fork runs from a clone of https://github.com/peterhartree/roughdraft, not from npm: `npm i -g roughdraft` installs upstream's package. It needs a Mac with Apple silicon, git, Node 22 or later and pnpm 10.
+
+```bash
+git clone https://github.com/peterhartree/roughdraft.git ~/roughdraft
+cd ~/roughdraft
+pnpm install
+pnpm build
+pnpm --filter @roughdraft/desktop package
+mkdir -p ~/Applications
+ditto packages/desktop/out/Roughdraft-darwin-arm64/Roughdraft.app ~/Applications/Roughdraft.app
+mkdir -p ~/.local/bin
+printf '#!/bin/sh\nexec "%s" "%s/packages/server/bin/roughdraft.mjs" "$@"\n' "$(command -v node)" "$PWD" > ~/.local/bin/roughdraft
+chmod +x ~/.local/bin/roughdraft
+open ~/Applications/Roughdraft.app
+```
+
+`~/.local/bin` must be on your `PATH`. The launcher records where Node is, so rerun the `printf` line if you move Node. The app is unsigned, so the first time it opens macOS may ask you to confirm it in **System Settings > Privacy & Security**.
+
+**Updates.** Twice a day the app checks for a new release. When there is one, it shows **Update available**: press **Update**, and Roughdraft downloads the release, rebuilds, and closes and reopens itself. `roughdraft update` does the same from a terminal. An update stops without changing anything if the clone has local changes or isn't on `main`, if the build fails, or if a document has unsaved changes.
+
 ## Quick start
 Install Roughdraft and start the local server:
 

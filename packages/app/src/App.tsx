@@ -1862,9 +1862,15 @@ export function App() {
     };
 
     void loadUpdateStatus();
+    // The app can stay open for days; the server answers from its cache.
+    const timer = window.setInterval(
+      () => void loadUpdateStatus(),
+      60 * 60 * 1000,
+    );
 
     return () => {
       cancelled = true;
+      window.clearInterval(timer);
     };
   }, []);
 
@@ -3771,6 +3777,11 @@ export function App() {
           onMoveToTrash={(path) => void moveFileToTrash(path)}
           onRename={setRenameTargetPath}
           browse={sidebarBrowseSection}
+          notice={
+            updateStatus ? (
+              <UpdateNotice updateStatus={updateStatus} compact />
+            ) : null
+          }
         />
       ) : null}
       {renameFileDialog}

@@ -23,6 +23,12 @@ import {
   runReviewCommand,
 } from "./review-commands.js";
 import {
+  createSelfUpdateDependencies,
+  defaultUpdateProgressFile,
+  runSelfUpdate,
+  writeUpdateProgress,
+} from "./self-update.js";
+import {
   defaultUpdateCheckCacheFile,
   resolveUpdateStatus,
   type UpdateStatus,
@@ -47,6 +53,7 @@ const KNOWN_COMMANDS = [
   "start",
   "status",
   "stop",
+  "update",
   "mcp",
   "doctor",
   "comments",
@@ -106,6 +113,7 @@ export interface CliDependencies {
   openUrl: (url: string) => OpenMode;
   openBrowserUrl: (url: string) => OpenMode;
   resolveUpdateStatus: () => Promise<UpdateStatus>;
+  runSelfUpdate: (options: { relaunch: boolean }) => Promise<unknown>;
   log: (message: string) => void;
   error: (message: string) => void;
   readStdin: () => Promise<string | null>;
@@ -650,6 +658,17 @@ export function createCliDependencies(
           fetchImpl,
           cacheFile: defaultUpdateCheckCacheFile(os.homedir()),
         })),
+    runSelfUpdate:
+      overrides.runSelfUpdate ??
+      ((options) =>
+        runSelfUpdate(
+          createSelfUpdateDependencies({
+            repoRoot: currentServerRoot,
+            progressFile: defaultUpdateProgressFile(os.homedir()),
+            log: (line) => console.log(line),
+            relaunch: options.relaunch,
+          }),
+        )),
     log: overrides.log ?? ((message) => console.log(message)),
     error: overrides.error ?? ((message) => console.error(message)),
     readStdin: overrides.readStdin ?? readProcessStdin,
@@ -679,6 +698,9 @@ function printHelp(log: (message: string) => void) {
   log("  start              Start or reuse the background server");
   log("  status             Show server status");
   log("  stop               Stop the managed background server");
+  log(
+    "  update             Update to the latest version and reinstall the app",
+  );
   log("  mcp                Start the experimental stdio MCP server");
   log("  doctor [path]      Diagnose setup or validate Markdown");
   log("  comments <path>    List review comments, replies and suggestions");
@@ -804,6 +826,17 @@ function printCommandHelp(
     log("  roughdraft mcp");
     log("");
     log("Starts Roughdraft's experimental stdio MCP server.");
+    return;
+  }
+
+  if (command === "update") {
+    log("Usage:");
+    log("  roughdraft update");
+    log("");
+    log(
+      "Pulls the latest main into this checkout, rebuilds, and replaces the installed app.",
+    );
+    log("Refuses if the checkout has local changes or isn't on main.");
     return;
   }
 
@@ -2436,6 +2469,33 @@ export async function runCli(
 
     if (isReviewCommand(command)) {
       return runReviewCommand(command, rest, deps, parsed.global.json);
+    }
+
+    if (command === "update") {
+      if (rest.includes("--help") || rest.includes("-h")) {
+        printCommandHelp("update", deps.log);
+        return 0;
+      }
+      const unknown = rest.filter((arg) => arg !== "--no-relaunch");
+      if (unknown.length > 0) {
+        deps.error("Usage: roughdraft update");
+        return USAGE_ERROR;
+      }
+      try {
+        await deps.runSelfUpdate({ relaunch: !rest.includes("--no-relaunch") });
+        return 0;
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : "The update failed.";
+        writeUpdateProgress(defaultUpdateProgressFile(os.homedir()), {
+          state: "failed",
+          step: null,
+          message,
+          updatedAt: new Date().toISOString(),
+        });
+        deps.error(message);
+        return 1;
+      }
     }
 
     if (command === "doctor") {

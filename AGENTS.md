@@ -146,6 +146,18 @@ ps -o lstart= -p "$(pgrep -f "$app_exe")"
 
 Run no other `roughdraft` command between quitting and `ditto`: `roughdraft start` and `roughdraft open` launch the installed app to start the server, so they relaunch the old build, and `open` afterwards only activates it. The new app starts a fresh server from the rebuilt `packages/server/dist`. The final `ps` must show a start time after the install.
 
+## Releases
+
+Colleagues run Roughdraft from their own clone. Their apps check this repository's GitHub Releases twice a day, offer **Update** for a newer version, and `roughdraft update` then pulls `main`, rebuilds and reinstalls.
+
+When you hand off a user-visible change, cut a release unless one was already published today (`gh release list --repo peterhartree/roughdraft --limit 1`):
+
+1. Bump `version` in both `package.json` and `packages/desktop/package.json`: patch for fixes, minor for features.
+2. Commit `chore(release): v<version>` and push `main`.
+3. Run `pnpm release`. It refuses unless `main` is clean and pushed, and writes the notes from the `feat` and `fix` commits since the last release. Pass `--notes-file <path>` to write them yourself, or `--dry-run` to preview.
+
+Upstream merges bring upstream's version numbers. The fork numbers its own releases, so keep the fork's version when resolving them.
+
 ### macOS app icon and Launch Services cache
 
 When the app icon changes, correct packaging is necessary but not sufficient. macOS Dock can keep showing Electron's generic icon even when the source `.icns`, packaged bundle, installed bundle, `NSWorkspace`, and running application all resolve to the new icon. Do not report an icon change as complete from hashes or bundle inspection alone.

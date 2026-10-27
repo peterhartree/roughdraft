@@ -133,7 +133,7 @@ describe("cli", () => {
       currentVersion: "0.1.0",
       latestVersion: "0.1.0",
       updateAvailable: false,
-      updateCommand: "npm i -g roughdraft@latest",
+      updateCommand: "roughdraft update",
     };
   }
 
@@ -395,13 +395,13 @@ describe("cli", () => {
         currentVersion: "0.1.1",
         latestVersion: "0.1.3",
         updateAvailable: true,
-        updateCommand: "npm i -g roughdraft@latest",
+        updateCommand: "roughdraft update",
       }),
     });
 
     expect(exitCode).toBe(0);
     expect(test.logs.at(-1)).toBe(
-      "Roughdraft update available: 0.1.1 -> 0.1.3. Run `npm i -g roughdraft@latest` to update.",
+      "Roughdraft update available: 0.1.1 -> 0.1.3. Run `roughdraft update` to update.",
     );
   });
 
@@ -417,7 +417,7 @@ describe("cli", () => {
         currentVersion: "0.1.1",
         latestVersion: "0.1.3",
         updateAvailable: true,
-        updateCommand: "npm i -g roughdraft@latest",
+        updateCommand: "roughdraft update",
       }),
     });
     const payload = parseOnlyJsonLog<{ opened: boolean }>(test.logs);

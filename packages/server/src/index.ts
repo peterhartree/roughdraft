@@ -1,4 +1,4 @@
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import { createServer as createHttpServer } from "node:http";
@@ -22,6 +22,12 @@ import {
 import { markdownTreeFromQuery } from "./markdown-tree.js";
 import { OpenRequestBroker } from "./open-requests.js";
 import { RenameRejectedError, renameMarkdownFile } from "./rename.js";
+import {
+  defaultUpdateLogFile,
+  defaultUpdateProgressFile,
+  readUpdateProgress,
+  writeUpdateProgress,
+} from "./self-update.js";
 import { moveToTrash } from "./trash.js";
 import {
   defaultUpdateCheckCacheFile,
@@ -87,6 +93,8 @@ interface CreateAppOptions {
   appOnly?: boolean;
   /** Launches or activates Roughdraft.app; returns false when it cannot. */
   launchDesktopApp?: () => boolean;
+  /** Starts `roughdraft update` in the background. */
+  startSelfUpdate?: () => void;
   /** Minimum time between fetches of one branch from GitHub; tests use 0. */
   gitHubFetchIntervalMs?: number;
 }
@@ -420,6 +428,24 @@ export function createApp(options: CreateAppOptions = {}): CreateAppResult {
   const trashFile = options.trashFile ?? ((filePath) => moveToTrash(filePath));
   const appOnly = options.appOnly ?? false;
   const launchDesktopApp = options.launchDesktopApp ?? launchDesktopAppOnMac;
+  const updateProgressFile = defaultUpdateProgressFile(homeDir);
+  const startSelfUpdate =
+    options.startSelfUpdate ??
+    (() => {
+      // Detached, because the update stops this server and quits the app.
+      const logFile = defaultUpdateLogFile(homeDir);
+      fs.mkdirSync(path.dirname(logFile), { recursive: true });
+      const output = fs.openSync(logFile, "w");
+      spawn(
+        process.execPath,
+        [
+          path.join(serverRoot, "packages", "server", "bin", "roughdraft.mjs"),
+          "update",
+        ],
+        { cwd: serverRoot, detached: true, stdio: ["ignore", output, output] },
+      ).unref();
+      fs.closeSync(output);
+    });
   const remoteDocumentToken =
     typeof options.remoteDocumentToken === "string" &&
     options.remoteDocumentToken.length > 0
@@ -1349,6 +1375,52 @@ export function createApp(options: CreateAppOptions = {}): CreateAppResult {
       previewUrl: `/api/files?projectPath=${encodeURIComponent(projectDir)}&path=${encodeURIComponent(relativePath)}`,
       mimeType: payload.mimeType || "application/octet-stream",
     });
+  });
+
+  app.post("/api/update", (req, res) => {
+    // A JSON body makes a cross-origin page's request need a preflight this
+    // server never grants, so only Roughdraft's own page can start an update.
+    if (!req.is("application/json")) {
+      res
+        .status(415)
+        .json({ error: "Send a JSON request to start an update." });
+      return;
+    }
+    const current = readUpdateProgress(updateProgressFile);
+    const staleAfterMs = 20 * 60 * 1000;
+    if (
+      current?.state === "running" &&
+      Date.now() - Date.parse(current.updatedAt) < staleAfterMs
+    ) {
+      res.status(409).json({ error: "An update is already running." });
+      return;
+    }
+    const progress = {
+      state: "running" as const,
+      step: "checking" as const,
+      message: "Starting the update…",
+      updatedAt: new Date().toISOString(),
+    };
+    writeUpdateProgress(updateProgressFile, progress);
+    try {
+      startSelfUpdate();
+    } catch (error) {
+      const failed = {
+        state: "failed" as const,
+        step: null,
+        message: `Couldn't start the update: ${String(error)}`,
+        updatedAt: new Date().toISOString(),
+      };
+      writeUpdateProgress(updateProgressFile, failed);
+      res.status(500).json(failed);
+      return;
+    }
+    res.status(202).json(progress);
+  });
+
+  app.get("/api/update-progress", (_req, res) => {
+    res.set("Cache-Control", "no-store");
+    res.json(readUpdateProgress(updateProgressFile) ?? { state: "idle" });
   });
 
   app.get(LIVE_HTML_FRAME_PATH, (_req, res) => {

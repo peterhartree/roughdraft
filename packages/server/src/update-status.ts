@@ -5,10 +5,12 @@ import { fileURLToPath } from "node:url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const defaultPackageJsonPath = path.resolve(__dirname, "../../../package.json");
 const DEFAULT_PACKAGE_NAME = "roughdraft";
+export const UPDATE_COMMAND = "roughdraft update";
 
 interface PackageManifest {
   name?: string;
   version?: string;
+  repository?: string | { url?: string };
 }
 
 interface ParsedVersion {
@@ -20,6 +22,8 @@ export interface UpdateStatus {
   packageName: string;
   currentVersion: string | null;
   latestVersion: string | null;
+  /** The release notes for the latest version. */
+  releaseUrl: string | null;
   updateAvailable: boolean;
   updateCommand: string;
 }
@@ -28,18 +32,25 @@ interface ResolveUpdateStatusOptions {
   fetchImpl?: typeof fetch;
   packageJsonPath?: string;
   packageName?: string;
+  /** `owner/name` on GitHub; defaults to the package's repository. */
+  releaseRepository?: string;
   /**
    * Where to remember the last check. Agents run the CLI many times an hour,
-   * so without this every command would ask the release source again.
+   * and GitHub allows 60 unauthenticated requests an hour.
    */
   cacheFile?: string;
   now?: () => number;
 }
 
+interface LatestRelease {
+  version: string;
+  url: string;
+}
+
 interface UpdateCheckCache {
-  packageName: string;
+  repository: string;
   checkedAt: number;
-  latestVersion: string | null;
+  latest: LatestRelease | null;
 }
 
 const CHECK_INTERVAL_MS = 12 * 60 * 60 * 1000;
@@ -50,58 +61,70 @@ export function defaultUpdateCheckCacheFile(homeDir: string): string {
   return path.join(homeDir, ".roughdraft", "update-check.json");
 }
 
-function readCachedLatestVersion(
-  cacheFile: string,
-  packageName: string,
-  now: number,
-): { latestVersion: string | null } | null {
-  try {
-    const cache = JSON.parse(
-      fs.readFileSync(cacheFile, "utf8"),
-    ) as Partial<UpdateCheckCache>;
-    if (cache.packageName !== packageName) return null;
-    if (typeof cache.checkedAt !== "number") return null;
-    const latestVersion =
-      typeof cache.latestVersion === "string" ? cache.latestVersion : null;
-    const interval = latestVersion
-      ? CHECK_INTERVAL_MS
-      : FAILED_CHECK_INTERVAL_MS;
-    if (now - cache.checkedAt < 0 || now - cache.checkedAt >= interval) {
-      return null;
-    }
-    return { latestVersion };
-  } catch {
-    return null;
-  }
-}
-
-function writeCachedLatestVersion(
-  cacheFile: string,
-  cache: UpdateCheckCache,
-): void {
-  try {
-    fs.mkdirSync(path.dirname(cacheFile), { recursive: true });
-    fs.writeFileSync(cacheFile, `${JSON.stringify(cache)}\n`);
-  } catch {}
-}
-
 function readInstalledPackageInfo(packageJsonPath = defaultPackageJsonPath): {
   packageName: string;
   currentVersion: string | null;
+  repository: string | null;
 } {
   try {
     const raw = fs.readFileSync(packageJsonPath, "utf8");
     const manifest = JSON.parse(raw) as PackageManifest;
+    const repositoryUrl =
+      typeof manifest.repository === "string"
+        ? manifest.repository
+        : manifest.repository?.url;
     return {
       packageName: manifest.name?.trim() || DEFAULT_PACKAGE_NAME,
       currentVersion: manifest.version?.trim() || null,
+      repository: gitHubRepository(repositoryUrl ?? ""),
     };
   } catch {
     return {
       packageName: DEFAULT_PACKAGE_NAME,
       currentVersion: null,
+      repository: null,
     };
   }
+}
+
+export function gitHubRepository(url: string): string | null {
+  const match =
+    /github\.com[/:]([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+?)(?:\.git)?\/?$/.exec(
+      url.trim(),
+    );
+  return match ? `${match[1]}/${match[2]}` : null;
+}
+
+function readCachedRelease(
+  cacheFile: string,
+  repository: string,
+  now: number,
+): { latest: LatestRelease | null } | null {
+  try {
+    const cache = JSON.parse(
+      fs.readFileSync(cacheFile, "utf8"),
+    ) as Partial<UpdateCheckCache>;
+    if (cache.repository !== repository) return null;
+    if (typeof cache.checkedAt !== "number") return null;
+    const latest =
+      typeof cache.latest?.version === "string" &&
+      typeof cache.latest?.url === "string"
+        ? { version: cache.latest.version, url: cache.latest.url }
+        : null;
+    const age = now - cache.checkedAt;
+    const interval = latest ? CHECK_INTERVAL_MS : FAILED_CHECK_INTERVAL_MS;
+    if (age < 0 || age >= interval) return null;
+    return { latest };
+  } catch {
+    return null;
+  }
+}
+
+function writeCachedRelease(cacheFile: string, cache: UpdateCheckCache): void {
+  try {
+    fs.mkdirSync(path.dirname(cacheFile), { recursive: true });
+    fs.writeFileSync(cacheFile, `${JSON.stringify(cache)}\n`);
+  } catch {}
 }
 
 function parseVersion(version: string): ParsedVersion {
@@ -174,23 +197,36 @@ export function compareVersions(leftVersion: string, rightVersion: string) {
   return comparePrerelease(left.prerelease, right.prerelease);
 }
 
-async function fetchLatestVersion(
-  packageName: string,
+async function fetchLatestRelease(
+  repository: string,
   fetchImpl: typeof fetch,
-): Promise<string | null> {
+): Promise<LatestRelease | null> {
   try {
     const response = await fetchImpl(
-      `https://registry.npmjs.org/${encodeURIComponent(packageName)}/latest`,
+      `https://api.github.com/repos/${repository}/releases/latest`,
       {
-        headers: { accept: "application/json" },
-        signal: AbortSignal.timeout(1500),
+        headers: {
+          accept: "application/vnd.github+json",
+          "user-agent": "roughdraft-update-check",
+        },
+        signal: AbortSignal.timeout(3000),
       },
     );
 
     if (!response.ok) return null;
 
-    const payload = (await response.json()) as PackageManifest;
-    return payload.version?.trim() || null;
+    const payload = (await response.json()) as {
+      tag_name?: unknown;
+      html_url?: unknown;
+    };
+    if (
+      typeof payload.tag_name !== "string" ||
+      typeof payload.html_url !== "string"
+    ) {
+      return null;
+    }
+    const version = payload.tag_name.trim().replace(/^v/i, "");
+    return version ? { version, url: payload.html_url } : null;
   } catch {
     return null;
   }
@@ -199,41 +235,40 @@ async function fetchLatestVersion(
 export async function resolveUpdateStatus(
   options: ResolveUpdateStatusOptions = {},
 ): Promise<UpdateStatus> {
-  const installedPackageInfo = readInstalledPackageInfo(
-    options.packageJsonPath,
-  );
-  const packageName =
-    options.packageName?.trim() || installedPackageInfo.packageName;
-  const currentVersion = installedPackageInfo.currentVersion;
-  const now = (options.now ?? Date.now)();
-  const cached = options.cacheFile
-    ? readCachedLatestVersion(options.cacheFile, packageName, now)
-    : null;
-  let latestVersion: string | null;
-  if (cached) {
-    latestVersion = cached.latestVersion;
-  } else {
-    latestVersion = await fetchLatestVersion(
-      packageName,
-      options.fetchImpl ?? fetch,
-    );
-    if (options.cacheFile) {
-      writeCachedLatestVersion(options.cacheFile, {
-        packageName,
-        checkedAt: now,
-        latestVersion,
-      });
+  const installed = readInstalledPackageInfo(options.packageJsonPath);
+  const packageName = options.packageName?.trim() || installed.packageName;
+  const currentVersion = installed.currentVersion;
+  const repository = options.releaseRepository ?? installed.repository;
+
+  let latest: LatestRelease | null = null;
+  if (repository) {
+    const now = (options.now ?? Date.now)();
+    const cached = options.cacheFile
+      ? readCachedRelease(options.cacheFile, repository, now)
+      : null;
+    if (cached) {
+      latest = cached.latest;
+    } else {
+      latest = await fetchLatestRelease(repository, options.fetchImpl ?? fetch);
+      if (options.cacheFile) {
+        writeCachedRelease(options.cacheFile, {
+          repository,
+          checkedAt: now,
+          latest,
+        });
+      }
     }
   }
 
   return {
     packageName,
     currentVersion,
-    latestVersion,
+    latestVersion: latest?.version ?? null,
+    releaseUrl: latest?.url ?? null,
     updateAvailable:
       !!currentVersion &&
-      !!latestVersion &&
-      compareVersions(currentVersion, latestVersion) < 0,
-    updateCommand: `npm i -g ${packageName}@latest`,
+      !!latest &&
+      compareVersions(currentVersion, latest.version) < 0,
+    updateCommand: UPDATE_COMMAND,
   };
 }

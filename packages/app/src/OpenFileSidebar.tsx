@@ -93,6 +93,7 @@ export function OpenFileSidebar({
   onMoveToTrash,
   onRename,
   browse,
+  notice,
 }: {
   files: OpenFileItem[];
   activePath: string | null;
@@ -103,6 +104,8 @@ export function OpenFileSidebar({
   onMoveToTrash?: (path: string) => void;
   onRename?: (path: string) => void;
   browse?: SidebarBrowseSection;
+  /** Shown above the shortcut hints, such as an available update. */
+  notice?: ReactNode;
 }) {
   const contextMenuPathRef = useRef<string | null>(null);
   const asideRef = useRef<HTMLElement>(null);
@@ -390,6 +393,8 @@ export function OpenFileSidebar({
           {error}
         </div>
       ) : null}
+
+      {notice}
 
       <div className="flex items-center justify-between gap-2 border-t border-stone-200 px-3 py-2 text-[0.62rem] leading-4 text-stone-400 dark:border-slate-800 dark:text-stone-500">
         <span>

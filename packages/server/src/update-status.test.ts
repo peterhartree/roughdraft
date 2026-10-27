@@ -2,7 +2,11 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { compareVersions, resolveUpdateStatus } from "./update-status";
+import {
+  compareVersions,
+  gitHubRepository,
+  resolveUpdateStatus,
+} from "./update-status";
 
 describe("compareVersions", () => {
   it("orders numeric versions correctly", () => {
@@ -17,6 +21,29 @@ describe("compareVersions", () => {
   });
 });
 
+function release(tag: string) {
+  return async () =>
+    new Response(
+      JSON.stringify({
+        tag_name: tag,
+        html_url: `https://github.com/peterhartree/roughdraft/releases/tag/${tag}`,
+      }),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    );
+}
+
+describe("gitHubRepository", () => {
+  it("reads owner and name from the usual repository URLs", () => {
+    expect(
+      gitHubRepository("git+https://github.com/peterhartree/roughdraft.git"),
+    ).toBe("peterhartree/roughdraft");
+    expect(gitHubRepository("git@github.com:peterhartree/roughdraft.git")).toBe(
+      "peterhartree/roughdraft",
+    );
+    expect(gitHubRepository("https://gitlab.com/a/b")).toBeNull();
+  });
+});
+
 describe("resolveUpdateStatus", () => {
   const tempPaths: string[] = [];
 
@@ -27,41 +54,63 @@ describe("resolveUpdateStatus", () => {
     tempPaths.length = 0;
   });
 
-  it("reports when the installed version is behind npm", async () => {
+  function installedPackage(version: string) {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "roughdraft-pkg-"));
-    const packageJsonPath = path.join(tempDir, "package.json");
     tempPaths.push(tempDir);
+    const packageJsonPath = path.join(tempDir, "package.json");
     fs.writeFileSync(
       packageJsonPath,
-      JSON.stringify({ name: "roughdraft", version: "0.1.0" }),
+      JSON.stringify({
+        name: "roughdraft",
+        version,
+        repository: {
+          type: "git",
+          url: "git+https://github.com/peterhartree/roughdraft.git",
+        },
+      }),
     );
+    return { tempDir, packageJsonPath };
+  }
+
+  it("reports a newer release of the fork, with its notes", async () => {
+    const { packageJsonPath } = installedPackage("0.2.0");
+    const requested: string[] = [];
 
     const status = await resolveUpdateStatus({
       packageJsonPath,
-      fetchImpl: async () =>
-        new Response(JSON.stringify({ version: "0.2.0" }), {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        }),
+      fetchImpl: async (url) => {
+        requested.push(String(url));
+        return release("v0.2.1")();
+      },
     });
 
+    expect(requested).toEqual([
+      "https://api.github.com/repos/peterhartree/roughdraft/releases/latest",
+    ]);
     expect(status).toEqual({
       packageName: "roughdraft",
-      currentVersion: "0.1.0",
-      latestVersion: "0.2.0",
+      currentVersion: "0.2.0",
+      latestVersion: "0.2.1",
+      releaseUrl:
+        "https://github.com/peterhartree/roughdraft/releases/tag/v0.2.1",
       updateAvailable: true,
-      updateCommand: "npm i -g roughdraft@latest",
+      updateCommand: "roughdraft update",
     });
   });
 
-  it("degrades cleanly when npm cannot be reached", async () => {
-    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "roughdraft-pkg-"));
-    const packageJsonPath = path.join(tempDir, "package.json");
-    tempPaths.push(tempDir);
-    fs.writeFileSync(
+  it("reports nothing when the installed version is current", async () => {
+    const { packageJsonPath } = installedPackage("0.2.1");
+
+    const status = await resolveUpdateStatus({
       packageJsonPath,
-      JSON.stringify({ name: "roughdraft", version: "0.1.0" }),
-    );
+      fetchImpl: release("v0.2.1"),
+    });
+
+    expect(status.updateAvailable).toBe(false);
+  });
+
+  it("degrades cleanly when GitHub cannot be reached", async () => {
+    const { packageJsonPath } = installedPackage("0.2.0");
 
     const status = await resolveUpdateStatus({
       packageJsonPath,
@@ -70,31 +119,20 @@ describe("resolveUpdateStatus", () => {
       },
     });
 
-    expect(status).toEqual({
-      packageName: "roughdraft",
-      currentVersion: "0.1.0",
+    expect(status).toMatchObject({
       latestVersion: null,
+      releaseUrl: null,
       updateAvailable: false,
-      updateCommand: "npm i -g roughdraft@latest",
     });
   });
 
-  it("asks the release source at most once per check interval", async () => {
-    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "roughdraft-pkg-"));
-    tempPaths.push(tempDir);
-    const packageJsonPath = path.join(tempDir, "package.json");
+  it("asks GitHub at most once per check interval", async () => {
+    const { tempDir, packageJsonPath } = installedPackage("0.2.0");
     const cacheFile = path.join(tempDir, "state", "update-check.json");
-    fs.writeFileSync(
-      packageJsonPath,
-      JSON.stringify({ name: "roughdraft", version: "0.1.0" }),
-    );
     let requests = 0;
     const fetchImpl = async () => {
       requests += 1;
-      return new Response(JSON.stringify({ version: "0.2.0" }), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      });
+      return release("v0.2.1")();
     };
     const hour = 60 * 60 * 1000;
     const check = (now: number) =>
@@ -105,8 +143,8 @@ describe("resolveUpdateStatus", () => {
         now: () => now,
       });
 
-    expect((await check(0)).latestVersion).toBe("0.2.0");
-    expect((await check(11 * hour)).latestVersion).toBe("0.2.0");
+    expect((await check(0)).latestVersion).toBe("0.2.1");
+    expect((await check(11 * hour)).releaseUrl).toContain("v0.2.1");
     expect(requests).toBe(1);
 
     await check(13 * hour);
@@ -114,14 +152,8 @@ describe("resolveUpdateStatus", () => {
   });
 
   it("retries an unreachable source sooner than a reachable one", async () => {
-    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "roughdraft-pkg-"));
-    tempPaths.push(tempDir);
-    const packageJsonPath = path.join(tempDir, "package.json");
+    const { tempDir, packageJsonPath } = installedPackage("0.2.0");
     const cacheFile = path.join(tempDir, "update-check.json");
-    fs.writeFileSync(
-      packageJsonPath,
-      JSON.stringify({ name: "roughdraft", version: "0.1.0" }),
-    );
     let requests = 0;
     const fetchImpl = async () => {
       requests += 1;
