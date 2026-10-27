@@ -41,6 +41,7 @@ import {
   type ManagedServerTarget,
   isAllowedExternalUrl,
   isAllowedNavigation,
+  isLiveHtmlFrameUrl,
   isServedFileNavigation,
   readManagedServerTarget,
   resolveManagedServerStateFile,
@@ -892,7 +893,8 @@ if (!app.requestSingleInstanceLock()) {
     session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
       if (
         !validatedOrigin ||
-        !isAllowedNavigation(details.url, validatedOrigin)
+        !isAllowedNavigation(details.url, validatedOrigin) ||
+        isLiveHtmlFrameUrl(details.url, validatedOrigin)
       ) {
         callback({ responseHeaders: details.responseHeaders });
         return;

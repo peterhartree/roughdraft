@@ -14,6 +14,11 @@ import {
   resolveBindHosts,
 } from "./network.js";
 import { createGitHubFiles, GitHubActionError } from "./github-link.js";
+import {
+  LIVE_HTML_FRAME_CSP,
+  LIVE_HTML_FRAME_DOCUMENT,
+  LIVE_HTML_FRAME_PATH,
+} from "./live-html-frame.js";
 import { markdownTreeFromQuery } from "./markdown-tree.js";
 import { OpenRequestBroker } from "./open-requests.js";
 import { RenameRejectedError, renameMarkdownFile } from "./rename.js";
@@ -1340,6 +1345,15 @@ export function createApp(options: CreateAppOptions = {}): CreateAppResult {
       previewUrl: `/api/files?projectPath=${encodeURIComponent(projectDir)}&path=${encodeURIComponent(relativePath)}`,
       mimeType: payload.mimeType || "application/octet-stream",
     });
+  });
+
+  app.get(LIVE_HTML_FRAME_PATH, (_req, res) => {
+    res.set({
+      "Cache-Control": "no-store",
+      "Content-Security-Policy": LIVE_HTML_FRAME_CSP,
+      "Content-Type": "text/html; charset=utf-8",
+    });
+    res.send(LIVE_HTML_FRAME_DOCUMENT);
   });
 
   // --- Static files & SPA fallback ---

@@ -46,6 +46,20 @@ describe("createApp", () => {
     expect(fs.readFileSync(filePath, "utf-8")).toBe("# Draft\n");
   });
 
+  it("serves the live-HTML frame under a policy that blocks the network", async () => {
+    const { app } = createApp({ homeDir, staticDirPath: projectDir });
+
+    const response = await request(app).get("/api/live-html-frame");
+
+    expect(response.status).toBe(200);
+    expect(response.headers["content-type"]).toMatch(/^text\/html/);
+    const policy = response.headers["content-security-policy"];
+    expect(policy).toContain("default-src 'none'");
+    expect(policy).toContain("script-src 'unsafe-inline'");
+    expect(policy).toContain("frame-ancestors 'self'");
+    expect(policy).not.toMatch(/connect-src|https?:/);
+  });
+
   it("reads nested markdown files inside the project", async () => {
     const nestedDir = path.join(projectDir, "notes");
     fs.mkdirSync(nestedDir, { recursive: true });

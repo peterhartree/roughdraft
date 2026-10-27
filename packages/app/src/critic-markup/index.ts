@@ -16,6 +16,8 @@ import {
   type CriticChangeKind,
 } from "../editor-extensions";
 import {
+  codeBlockOpeningHtml,
+  codeFenceInfo,
   createMarkedRenderer,
   createTurndownService,
   markedTokenizer,
@@ -1281,13 +1283,11 @@ function renderCriticCodeBlock(
   comments: Map<string, CriticComment>,
   endmatter?: ParsedEndmatter,
 ) {
-  const language = (token.lang || "").match(/\S+/)?.[0];
-  const classAttr = language ? ` class="language-${escapeHtml(language)}"` : "";
   const content = token.escaped
     ? token.text
     : renderCriticCodeText(token.text, comments, endmatter);
 
-  return `<pre><code${classAttr}>${content}</code></pre>\n`;
+  return `${codeBlockOpeningHtml(token.lang)}${content}</code></pre>\n`;
 }
 
 function addCriticCommentRule(
@@ -1418,17 +1418,14 @@ function addCriticCodeBlockRule(
 
       if (!codeElement) return "";
 
-      const language =
-        [...codeElement.classList]
-          .find((className) => className.startsWith("language-"))
-          ?.slice("language-".length) ?? "";
+      const info = codeFenceInfo(node as HTMLElement);
       const content = serializeCriticCodeChildren(
         service,
         codeElement,
         comments,
       ).trimEnd();
 
-      return `\n\n\`\`\`${language}\n${content}\n\`\`\`\n\n`;
+      return `\n\n\`\`\`${info}\n${content}\n\`\`\`\n\n`;
     },
   });
 }

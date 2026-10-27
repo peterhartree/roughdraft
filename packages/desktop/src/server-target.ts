@@ -139,6 +139,14 @@ export function isServedFileNavigation(url: string, origin: string): boolean {
   return new URL(url).pathname === "/api/files";
 }
 
+// The live-HTML frame carries its own, stricter Content Security Policy, which
+// the desktop policy must not replace: the desktop policy blocks inline
+// scripts, which are the point of the frame, and forbids framing.
+export function isLiveHtmlFrameUrl(url: string, origin: string): boolean {
+  if (!isAllowedNavigation(url, origin)) return false;
+  return new URL(url).pathname === "/api/live-html-frame";
+}
+
 export function isAllowedExternalUrl(url: string): boolean {
   try {
     const protocol = new URL(url).protocol;

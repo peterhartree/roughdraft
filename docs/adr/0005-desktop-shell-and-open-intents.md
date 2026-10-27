@@ -22,6 +22,8 @@ Roughdraft has a stable macOS app identity while Markdown, CriticMarkup, autosav
 
 The Electron runtime becomes a maintained dependency and must stay current. The renderer remains sandboxed with Node integration disabled, a restrictive Content Security Policy, loopback-only initial navigation, denied permissions, and no in-app navigation to external origins.
 
+The shell replaces the Content Security Policy of every page from the validated origin except `/api/live-html-frame`, the page that runs a ```` ```html live ```` fence. That page keeps the server's own, stricter policy: inline scripts and styles run, but nothing loads from the network. The editor loads it only in an iframe sandboxed with `allow-scripts`, so its opaque origin cannot reach Roughdraft's storage, API or IPC.
+
 ## What this explicitly does not mean
 
 The shell is not a document database, vault, editor implementation, global shortcut daemon, or remote-content browser. The pending intent slot is not tab state. Chrome-style tabs, moving documents between windows and simultaneous editors for the same file require separate decisions.

@@ -6,6 +6,7 @@ import {
   readManagedServerTarget,
   isAllowedExternalUrl,
   isAllowedNavigation,
+  isLiveHtmlFrameUrl,
   isServedFileNavigation,
   resolveManagedServerStateFile,
   validateManagedServerTarget,
@@ -152,6 +153,27 @@ describe("managed server target validation", () => {
     expect(
       isServedFileNavigation(
         "https://example.com/api/files?path=clip.mp3",
+        "http://localhost:7373",
+      ),
+    ).toBe(false);
+  });
+
+  it("leaves the live-HTML frame's own policy only on the Roughdraft origin", () => {
+    expect(
+      isLiveHtmlFrameUrl(
+        "http://localhost:7373/api/live-html-frame",
+        "http://localhost:7373",
+      ),
+    ).toBe(true);
+    expect(
+      isLiveHtmlFrameUrl(
+        "http://localhost:7373/?path=%2Ftmp%2Fa.md",
+        "http://localhost:7373",
+      ),
+    ).toBe(false);
+    expect(
+      isLiveHtmlFrameUrl(
+        "http://localhost:8080/api/live-html-frame",
         "http://localhost:7373",
       ),
     ).toBe(false);

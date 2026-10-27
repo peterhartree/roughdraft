@@ -12,6 +12,8 @@ The rich-text editor serialises the whole document, so saving keeps the source t
 
 Block-level raw HTML (a `<div>`, a sized `<img>`, an `<svg>` up to its closing tag, `<details>`, comments) has no rich-text node. Each such block is kept whole as a read-only, sanitised preview, so the editor can neither flatten it to its text nor rewrite it as Markdown. Markdown set off by blank lines between an opening and a closing tag stays editable.
 
+A code fence keeps its whole info string, not only the language: ```` ```html live ```` and ```` ```ts title="a.ts" ```` save as written. The language picks the fence's view (a Mermaid diagram, a live HTML widget), and the rest only needs to survive.
+
 ## Consequences
 
 Round-trip tests are part of the product contract. New Markdown support should add fixture coverage before broad parser refactors.

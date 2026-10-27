@@ -32,12 +32,17 @@ import {
   getDocumentFindActiveIndex,
 } from "./document-find";
 import {
+  codeInfoAttribute,
   type MarkdownOptions,
   rawMarkdownBlockAttribute,
   renderRawMarkdownBlockPreview,
   softBreakAttribute,
   thematicBreakAttribute,
 } from "./markdown";
+import {
+  isLiveHtmlCodeBlock,
+  LiveHtmlCodeBlockView,
+} from "./live-html-code-block";
 import { MarkdownAlerts } from "./markdown-alerts";
 import { MermaidCodeBlockView } from "./mermaid-code-block";
 import { reviewAuthorFromBy, reviewAuthorToBy } from "./review-author";
@@ -959,10 +964,26 @@ const MarkdownCode = Code.extend({
 const MarkdownCodeBlock = CodeBlock.extend({
   marks: "commentRef criticChange",
 
+  addAttributes() {
+    return {
+      ...this.parent?.(),
+      // The rest of the fence's info string, such as `live` in ```html live.
+      meta: {
+        default: null,
+        parseHTML: (element) => element.getAttribute(codeInfoAttribute),
+        renderHTML: (attributes) =>
+          attributes.meta ? { [codeInfoAttribute]: attributes.meta } : {},
+      },
+    };
+  },
+
   addNodeView() {
     return ({ node, editor }) => {
       if (node.attrs.language === "mermaid") {
         return new MermaidCodeBlockView(node, editor);
+      }
+      if (isLiveHtmlCodeBlock(node)) {
+        return new LiveHtmlCodeBlockView(node);
       }
 
       const dom = document.createElement("pre");
@@ -975,11 +996,12 @@ const MarkdownCodeBlock = CodeBlock.extend({
       return {
         dom,
         contentDOM,
-        // A change of language rebuilds the view, so a fence that becomes
-        // Mermaid starts drawing its diagram.
+        // A change of info string rebuilds the view, so a fence that becomes
+        // Mermaid or live HTML starts drawing.
         update: (updated) =>
           updated.type === node.type &&
-          updated.attrs.language === node.attrs.language,
+          updated.attrs.language === node.attrs.language &&
+          updated.attrs.meta === node.attrs.meta,
       };
     };
   },

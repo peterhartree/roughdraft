@@ -7,6 +7,37 @@ import TurndownService from "turndown";
 export const rawMarkdownBlockAttribute = "data-markdown-raw-block";
 export const softBreakAttribute = "data-soft-break";
 export const thematicBreakAttribute = "data-markdown-hr";
+export const codeInfoAttribute = "data-markdown-info";
+
+/**
+ * Splits a fence's info string into its language, which the editor keys on,
+ * and the rest (for example `live` in ```` ```html live ````), which only needs
+ * to survive a save.
+ */
+export function splitCodeInfo(info: string | undefined): {
+  language: string | null;
+  meta: string | null;
+} {
+  const match = /^\s*(\S+)(?:\s+(.*?))?\s*$/.exec(info ?? "");
+  return { language: match?.[1] ?? null, meta: match?.[2] || null };
+}
+
+export function codeBlockOpeningHtml(info: string | undefined): string {
+  const { language, meta } = splitCodeInfo(info);
+  const metaAttr = meta ? ` ${codeInfoAttribute}="${escapeHtml(meta)}"` : "";
+  const classAttr = language ? ` class="language-${escapeHtml(language)}"` : "";
+  return `<pre${metaAttr}><code${classAttr}>`;
+}
+
+export function codeFenceInfo(pre: Element): string {
+  const code = pre.firstElementChild;
+  const language =
+    [...(code?.classList ?? [])]
+      .find((className) => className.startsWith("language-"))
+      ?.slice("language-".length) ?? "";
+  const meta = pre.getAttribute(codeInfoAttribute);
+  return language && meta ? `${language} ${meta}` : language;
+}
 
 export interface MarkdownOptions {
   resolveFileUrl?: (path: string) => string | null;
@@ -385,13 +416,9 @@ export function createMarkedRenderer(options?: MarkdownOptions) {
   const resolveLinkUrl = options?.resolveLinkUrl;
 
   renderer.code = ({ text, lang, escaped }) => {
-    const language = (lang || "").match(/\S+/)?.[0];
     const content = escaped ? text : escapeHtml(text);
-    const classAttr = language
-      ? ` class="language-${escapeHtml(language)}"`
-      : "";
 
-    return `<pre><code${classAttr}>${content}</code></pre>\n`;
+    return `${codeBlockOpeningHtml(lang)}${content}</code></pre>\n`;
   };
 
   renderer.link = function ({ href, title, tokens, raw }) {
@@ -574,6 +601,21 @@ export function createTurndownService(): TurndownService {
       node.nodeName === "BR" &&
       (node as HTMLElement).getAttribute(softBreakAttribute) === "true",
     replacement: () => "\n",
+  });
+
+  // Turndown's own rule keeps only the language from a fence's info string.
+  service.addRule("fencedCodeBlockInfo", {
+    filter: (node) =>
+      node.nodeName === "PRE" && node.firstElementChild?.nodeName === "CODE",
+    replacement(_content, node) {
+      const code = (node as HTMLElement).firstElementChild?.textContent ?? "";
+      const longestRun = Math.max(
+        2,
+        ...Array.from(code.matchAll(/^`{3,}/gm), (match) => match[0].length),
+      );
+      const fence = "`".repeat(longestRun + 1);
+      return `\n\n${fence}${codeFenceInfo(node as HTMLElement)}\n${code.replace(/\n$/, "")}\n${fence}\n\n`;
+    },
   });
 
   service.addRule("thematicBreak", {
