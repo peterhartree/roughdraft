@@ -158,7 +158,12 @@ export async function runSelfUpdate(
     deps.run("pnpm", ["--dir", deps.repoRoot, ...args]);
   step("installing", "Installing dependencies…");
   must(
-    pnpm(["install", "--frozen-lockfile"]),
+    pnpm([
+      "install",
+      "--frozen-lockfile",
+      // No one is there to answer pnpm's prompt to rebuild node_modules.
+      "--config.confirmModulesPurge=false",
+    ]),
     "Installing dependencies failed.",
   );
   step("building", "Building Roughdraft…");
