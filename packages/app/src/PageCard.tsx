@@ -924,7 +924,10 @@ const RichTextEditorSurface = memo(function RichTextEditorSurface({
   const editor = useEditor(
     {
       extensions: [
-        ...createEditorExtensions("Start writing...", { resolveFileUrl }),
+        ...createEditorExtensions("Start writing...", {
+          resolveFileUrl,
+          resolveLinkUrl,
+        }),
         GitHubChangeMarks,
       ],
       content: parsedContent.doc,

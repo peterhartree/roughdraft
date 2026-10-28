@@ -1063,6 +1063,7 @@ const MarkdownImage = Image.extend({
 
 interface RawMarkdownBlockOptions {
   resolveFileUrl?: MarkdownOptions["resolveFileUrl"];
+  resolveLinkUrl?: MarkdownOptions["resolveLinkUrl"];
 }
 
 const RawMarkdownBlock = Node.create<RawMarkdownBlockOptions>({
@@ -1072,7 +1073,7 @@ const RawMarkdownBlock = Node.create<RawMarkdownBlockOptions>({
   selectable: true,
 
   addOptions() {
-    return { resolveFileUrl: undefined };
+    return { resolveFileUrl: undefined, resolveLinkUrl: undefined };
   },
 
   addAttributes() {
@@ -1105,7 +1106,10 @@ const RawMarkdownBlock = Node.create<RawMarkdownBlockOptions>({
       const apply = (current: ProseMirrorNode) => {
         const preview = renderRawMarkdownBlockPreview(
           String(current.attrs.rawMarkdown ?? ""),
-          { resolveFileUrl: this.options.resolveFileUrl },
+          {
+            resolveFileUrl: this.options.resolveFileUrl,
+            resolveLinkUrl: this.options.resolveLinkUrl,
+          },
         );
         dom.className = preview?.hasTable
           ? "raw-markdown-block tableWrapper"
@@ -1198,7 +1202,7 @@ const MarkdownSourceDetails = Extension.create({
 
 export function createEditorExtensions(
   placeholder: string,
-  options?: Pick<MarkdownOptions, "resolveFileUrl">,
+  options?: Pick<MarkdownOptions, "resolveFileUrl" | "resolveLinkUrl">,
 ) {
   return [
     StarterKit.configure({
@@ -1239,7 +1243,10 @@ export function createEditorExtensions(
     }),
     CommentRef,
     CriticChange,
-    RawMarkdownBlock.configure({ resolveFileUrl: options?.resolveFileUrl }),
+    RawMarkdownBlock.configure({
+      resolveFileUrl: options?.resolveFileUrl,
+      resolveLinkUrl: options?.resolveLinkUrl,
+    }),
     MarkdownCodeBlock,
     CommentHighlight,
     CriticChangeHighlight,

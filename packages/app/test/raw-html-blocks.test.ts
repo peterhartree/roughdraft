@@ -182,6 +182,83 @@ describe("block-level raw HTML in the rich-text editor", () => {
     }
   });
 
+  it("resolves side-by-side <img> tags on one line as a raw block", () => {
+    // Two tags on a line are a Markdown paragraph of inline HTML, not an HTML
+    // block, so they need the same protection and path resolution.
+    const pair =
+      '<img src="assets/a.png" alt="A" width="49%"> <img src="https://example.com/b.png" alt="B" width="49%">';
+    const source = doc(pair);
+    const { doc: state } = criticMarkdownToEditorState(source);
+    expect(rawBlocks(state as JsonNode)).toHaveLength(1);
+
+    const editor = new Editor({
+      extensions: createEditorExtensions("", {
+        resolveFileUrl: (path) => `/api/files?path=${path}`,
+      }),
+      content: state,
+    });
+    try {
+      const images = Array.from(
+        editor.view.dom.querySelectorAll(
+          '[data-testid="raw-markdown-block"] img',
+        ),
+      );
+      expect(
+        images.map((image) => [
+          image.getAttribute("src"),
+          image.getAttribute("alt"),
+          image.getAttribute("width"),
+        ]),
+      ).toEqual([
+        ["/api/files?path=assets/a.png", "A", "49%"],
+        ["https://example.com/b.png", "B", "49%"],
+      ]);
+    } finally {
+      editor.destroy();
+    }
+    expect(editAndSave(source, [["Outro", "Closing"]])).toBe(
+      source.replace("Outro", "Closing"),
+    );
+  });
+
+  it("resolves srcset and local link targets in raw HTML previews", () => {
+    const picture =
+      '<a href="assets/full.png"><picture><source srcset="assets/a.webp 1x, assets/a@2x.webp 2x" type="image/webp"><img src="assets/a.png" srcset="assets/a.png, https://example.com/a.png 2x" alt="A"></picture></a>';
+    const { doc: state } = criticMarkdownToEditorState(doc(picture));
+    expect(rawBlocks(state as JsonNode)).toHaveLength(1);
+
+    const editor = new Editor({
+      extensions: createEditorExtensions("", {
+        resolveFileUrl: (path) => `/api/files?path=${path}`,
+      }),
+      content: state,
+    });
+    try {
+      const block = editor.view.dom.querySelector(
+        '[data-testid="raw-markdown-block"]',
+      );
+      expect(
+        block
+          ?.querySelector('[data-testid="raw-markdown-block"] source')
+          ?.getAttribute("srcset"),
+      ).toBe(
+        "/api/files?path=assets/a.webp 1x, /api/files?path=assets/a@2x.webp 2x",
+      );
+      expect(
+        block
+          ?.querySelector('[data-testid="raw-markdown-block"] img')
+          ?.getAttribute("srcset"),
+      ).toBe("/api/files?path=assets/a.png, https://example.com/a.png 2x");
+      expect(
+        block
+          ?.querySelector('[data-testid="raw-markdown-block"] a')
+          ?.getAttribute("href"),
+      ).toBe("/api/files?path=assets/full.png");
+    } finally {
+      editor.destroy();
+    }
+  });
+
   it("keeps Markdown between HTML tags editable, so its comments anchor", () => {
     const wrapped =
       '<div class="callout">\n\n{==Hello==}{>>Tone?<<}{#c1} there\n\n</div>\n\n---\ncomments:\n  c1:\n    by: user\n    at: "2026-10-27T10:00:00.000Z"\n';

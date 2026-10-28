@@ -1,7 +1,7 @@
 import { tables, taskListItems } from "@joplin/turndown-plugin-gfm";
 import { detectRoughdraftEndmatter } from "@roughdraft/rfm";
 import DOMPurify from "dompurify";
-import { Marked, marked, type TokenizerObject } from "marked";
+import { Marked, marked, type Token, type TokenizerObject } from "marked";
 import TurndownService from "turndown";
 
 export const rawMarkdownBlockAttribute = "data-markdown-raw-block";
@@ -90,6 +90,23 @@ function createRawMarkdownBlock(markdown: string): string {
 }
 
 const svgOpeningPattern = /^\s*<svg\b/i;
+const htmlImageTagPattern = /^<(?:img|picture)\b/i;
+
+// Images set side by side (`<img …> <img …>`) form a Markdown paragraph of
+// inline HTML rather than an HTML block, but need the same protection.
+function isHtmlImageParagraph(token: Token): boolean {
+  if (token.type !== "paragraph" || !("tokens" in token)) return false;
+  const inline = token.tokens ?? [];
+  return (
+    inline.some(
+      (child) => child.type === "html" && htmlImageTagPattern.test(child.raw),
+    ) &&
+    inline.every(
+      (child) =>
+        child.type === "html" || (child.type === "text" && !child.raw.trim()),
+    )
+  );
+}
 
 function isOwnRawMarkdownBlock(raw: string): boolean {
   return raw.trimStart().startsWith(`<div ${rawMarkdownBlockAttribute}=`);
@@ -126,9 +143,10 @@ function protectHtmlBlockTokens(markdown: string): string {
         end = lineEnd === -1 ? markdown.length : lineEnd + 1;
       }
     } else if (
-      token.type === "html" &&
-      token.block &&
-      !isOwnRawMarkdownBlock(token.raw)
+      (token.type === "html" &&
+        token.block &&
+        !isOwnRawMarkdownBlock(token.raw)) ||
+      isHtmlImageParagraph(token)
     ) {
       end = searchFrom;
     }
@@ -495,10 +513,44 @@ export interface RawMarkdownBlockPreview {
   hasTable: boolean;
 }
 
+// A srcset lists "url descriptor" candidates separated by commas. Each URL
+// runs to the next whitespace, since a data: URL may itself hold a comma; a
+// URL ending in a comma has no descriptor.
+function resolveSrcset(
+  srcset: string,
+  resolveFileUrl?: MarkdownOptions["resolveFileUrl"],
+): string {
+  const candidates: string[] = [];
+  const pattern = /[\s,]*(\S+)/y;
+  for (let match = pattern.exec(srcset); match; match = pattern.exec(srcset)) {
+    let url = match[1] ?? "";
+    let descriptor = "";
+    if (url.endsWith(",")) {
+      url = url.replace(/,+$/, "");
+    } else {
+      const comma = srcset.indexOf(",", pattern.lastIndex);
+      const end = comma === -1 ? srcset.length : comma + 1;
+      descriptor = srcset
+        .slice(pattern.lastIndex, end)
+        .replace(/,$/, "")
+        .trim();
+      pattern.lastIndex = end;
+    }
+    candidates.push(
+      [resolveRenderedUrl(url, resolveFileUrl), descriptor]
+        .filter(Boolean)
+        .join(" "),
+    );
+  }
+  return candidates.join(", ");
+}
+
 function sanitizePreviewHtml(
   html: string,
-  resolveFileUrl?: MarkdownOptions["resolveFileUrl"],
+  options?: MarkdownOptions,
 ): RawMarkdownBlockPreview {
+  const resolveFileUrl = options?.resolveFileUrl;
+  const resolveLinkUrl = options?.resolveLinkUrl;
   const sanitized = DOMPurify.sanitize(html, {
     USE_PROFILES: { html: true, svg: true, svgFilters: true },
     FORBID_TAGS: ["form", "style"],
@@ -512,6 +564,26 @@ function sanitizePreviewHtml(
     const src = image.getAttribute("src") ?? "";
     if (!image.hasAttribute("data-markdown-src")) {
       image.setAttribute("src", resolveRenderedUrl(src, resolveFileUrl));
+    }
+  }
+  for (const element of doc.body.querySelectorAll(
+    "img[srcset], source[srcset]",
+  )) {
+    element.setAttribute(
+      "srcset",
+      resolveSrcset(element.getAttribute("srcset") ?? "", resolveFileUrl),
+    );
+  }
+  for (const anchor of doc.body.querySelectorAll("a[href]")) {
+    const href = anchor.getAttribute("href") ?? "";
+    if (!anchor.hasAttribute("data-markdown-src")) {
+      anchor.setAttribute(
+        "href",
+        resolveRenderedUrl(
+          href,
+          (path) => resolveLinkUrl?.(path) ?? resolveFileUrl?.(path) ?? null,
+        ),
+      );
     }
   }
 
@@ -540,7 +612,7 @@ export function renderRawMarkdownBlockPreview(
   // An SVG is markup throughout; parsing it as Markdown would split it at
   // blank lines.
   if (svgOpeningPattern.test(raw)) {
-    return sanitizePreviewHtml(raw, options?.resolveFileUrl);
+    return sanitizePreviewHtml(raw, options);
   }
 
   // Pipe tables are protected precisely because GFM would split cells on
@@ -554,10 +626,7 @@ export function renderRawMarkdownBlockPreview(
     async: false,
     renderer: createMarkedRenderer(options),
   });
-  return sanitizePreviewHtml(
-    parser.parse(source) as string,
-    options?.resolveFileUrl,
-  );
+  return sanitizePreviewHtml(parser.parse(source) as string, options);
 }
 
 const doubleTildeDelPattern =
