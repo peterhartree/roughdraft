@@ -2177,7 +2177,7 @@ const RichTextEditorSurface = memo(function RichTextEditorSurface({
   const hasReviewRail = comments.size > 0 || criticChanges.length > 0;
   const documentShellRef = useReviewLayoutShiftAnimation<HTMLDivElement>(
     hasReviewRail,
-    ".document-rich-text-layout .tiptap > :not(.tableWrapper, img[data-breakout])",
+    ".document-rich-text-layout .tiptap > :not(.tableWrapper, img[data-breakout], .mermaid-block[data-breakout])",
   );
   const activeComments = collectAnchoredThreadComments(
     activeCommentIds,

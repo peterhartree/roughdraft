@@ -157,6 +157,59 @@ describe("Mermaid fences", () => {
     expect(block(editor).hasAttribute("data-source-open")).toBe(true);
   });
 
+  it("zooms with Shift-scroll but leaves a plain scroll to the page", async () => {
+    editor = openEditor("```mermaid\nflowchart LR\n  A --> B\n```\n");
+    await vi.runAllTimersAsync();
+    const diagram = testId(editor, "mermaid-diagram");
+    const resetZoom = testId(editor, "mermaid-zoom-reset");
+
+    const scroll = new WheelEvent("wheel", { deltaY: -100, cancelable: true });
+    diagram.dispatchEvent(scroll);
+    expect(scroll.defaultPrevented).toBe(false);
+    expect(resetZoom.hidden).toBe(true);
+
+    const zoom = new WheelEvent("wheel", {
+      deltaY: -100,
+      shiftKey: true,
+      cancelable: true,
+    });
+    diagram.dispatchEvent(zoom);
+    expect(zoom.defaultPrevented).toBe(true);
+    expect(resetZoom.hidden).toBe(false);
+
+    resetZoom.click();
+    expect(resetZoom.hidden).toBe(true);
+  });
+
+  it("zooms when macOS reports a Shift-held mouse wheel as horizontal", async () => {
+    editor = openEditor("```mermaid\nflowchart LR\n  A --> B\n```\n");
+    await vi.runAllTimersAsync();
+
+    testId(editor, "mermaid-diagram").dispatchEvent(
+      new WheelEvent("wheel", { deltaX: -100, shiftKey: true }),
+    );
+
+    expect(testId(editor, "mermaid-zoom-reset").hidden).toBe(false);
+  });
+
+  it("opens the diagram full screen and closes it again", async () => {
+    editor = openEditor("```mermaid\nflowchart LR\n  A --> B\n```\n");
+    expect(testId(editor, "mermaid-full-screen").hidden).toBe(true);
+    await vi.runAllTimersAsync();
+
+    testId(editor, "mermaid-full-screen").click();
+    await vi.runAllTimersAsync();
+    const viewer = () =>
+      document.querySelector<HTMLElement>('[data-testid="mermaid-viewer"]');
+    expect(viewer()?.textContent).toContain("flowchart LR");
+
+    document
+      .querySelector<HTMLElement>('[data-testid="mermaid-viewer-close"]')
+      ?.click();
+    await vi.runAllTimersAsync();
+    expect(viewer()).toBeNull();
+  });
+
   it("leaves other code blocks as plain code", async () => {
     editor = openEditor("```ts\nconst a = 1;\n```\n");
     await vi.runAllTimersAsync();

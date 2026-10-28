@@ -403,14 +403,34 @@
 
   .tiptap .mermaid-diagram {
     @apply overflow-x-auto rounded-2xl border p-4;
-    display: flex;
-    justify-content: center;
     min-height: 3rem;
     border-color: var(--code-block-border);
   }
 
-  .tiptap .mermaid-diagram:empty {
+  .tiptap .mermaid-diagram:has(> .mermaid-canvas:empty) {
     display: none;
+  }
+
+  /* Zoomed content stays inside the frame instead of scrolling it. */
+  .tiptap .mermaid-diagram[data-zoomed] {
+    overflow: hidden;
+  }
+
+  .tiptap .mermaid-diagram[data-pannable],
+  .mermaid-viewer-stage[data-pannable] {
+    cursor: grab;
+    touch-action: none;
+    user-select: none;
+  }
+
+  .tiptap .mermaid-diagram[data-panning],
+  .mermaid-viewer-stage[data-panning] {
+    cursor: grabbing;
+  }
+
+  .tiptap .mermaid-canvas {
+    display: flex;
+    justify-content: center;
   }
 
   .tiptap .mermaid-diagram svg {
@@ -628,6 +648,41 @@
       100%,
       calc(var(--rich-text-measure) + 2 * var(--rich-text-image-outset))
     );
+  }
+
+  /* Diagrams wider than the text column break out across the editor, up to
+     their natural width, while their toolbar and source stay in the column. */
+  .document-rich-text-layout .tiptap > .mermaid-block[data-breakout] {
+    grid-column: 1 / -1;
+  }
+
+  .document-rich-text-layout
+    .tiptap
+    > .mermaid-block[data-breakout]
+    > .mermaid-diagram {
+    width: min(100%, var(--mermaid-frame-width));
+    margin-inline: auto;
+  }
+
+  .document-rich-text-layout
+    .tiptap
+    > .mermaid-block[data-breakout]
+    > :not(.mermaid-diagram) {
+    width: min(var(--rich-text-measure), 100%);
+    margin-inline: auto;
+  }
+
+  /* The document outline sits in the left margin, so there a diagram starts
+     at the text column and breaks out to the right only. */
+  :has(> [data-document-outline-margin])
+    .document-rich-text-layout
+    .tiptap
+    > .mermaid-block[data-breakout]
+    > .mermaid-diagram {
+    --mermaid-text-inset: calc(50% - min(var(--rich-text-measure), 100%) / 2);
+    width: min(100% - var(--mermaid-text-inset), var(--mermaid-frame-width));
+    margin-left: var(--mermaid-text-inset);
+    margin-right: 0;
   }
 
   .tiptap .raw-markdown-block {

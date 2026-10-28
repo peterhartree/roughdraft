@@ -637,6 +637,9 @@ export function DocumentOutline({
         <div
           ref={layerRef}
           data-testid="document-outline-layer"
+          // Wide Mermaid diagrams break out to the right only while the outline
+          // occupies the left margin (style.css).
+          data-document-outline-margin={geometry ? "" : undefined}
           className="sticky z-30 h-0"
           style={{
             top: (geometry?.headerHeight ?? 0) + OUTLINE_TOP_OFFSET,

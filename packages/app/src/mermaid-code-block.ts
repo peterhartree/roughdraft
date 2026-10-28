@@ -8,8 +8,11 @@ import {
   type MermaidTheme,
   renderMermaid,
 } from "./mermaid-render";
+import { openMermaidViewer } from "./mermaid-viewer";
+import { PanZoom } from "./pan-zoom";
 
 const renderDelayMs = 300;
+const maxInlineScale = 8;
 const toolbarButtonClass = buttonVariants({ variant: "ghost", size: "xs" });
 
 let nextSourceId = 0;
@@ -21,6 +24,10 @@ let nextSourceId = 0;
  * by itself whenever it carries comments or suggestions; while suggestions
  * are pending the diagram shows the proposed version, with a toggle back to
  * the original.
+ *
+ * A diagram wider than the text column breaks out across the editor, up to
+ * its natural width. Shift-scroll or a pinch zooms it within its frame, and a
+ * "Full screen" button opens it over the whole window.
  */
 export class MermaidCodeBlockView implements NodeView {
   dom: HTMLElement;
@@ -28,8 +35,12 @@ export class MermaidCodeBlockView implements NodeView {
 
   private node: ProseMirrorNode;
   private diagram: HTMLElement;
+  private canvas: HTMLElement;
+  private panZoom: PanZoom;
   private error: HTMLElement;
   private sourceToggle: HTMLButtonElement;
+  private fullScreenButton: HTMLButtonElement;
+  private resetZoomButton: HTMLButtonElement;
   private versionToggle: HTMLButtonElement;
   private pendingNote: HTMLElement;
   private sourceOpen = false;
@@ -54,6 +65,11 @@ export class MermaidCodeBlockView implements NodeView {
     this.diagram.setAttribute("aria-label", "Mermaid diagram");
     this.diagram.setAttribute("data-testid", "mermaid-diagram");
 
+    this.canvas = document.createElement("div");
+    this.canvas.className = "mermaid-canvas";
+    this.canvas.setAttribute("data-testid", "mermaid-canvas");
+    this.diagram.append(this.canvas);
+
     this.error = document.createElement("p");
     this.error.className = "mermaid-error";
     this.error.contentEditable = "false";
@@ -63,6 +79,7 @@ export class MermaidCodeBlockView implements NodeView {
 
     const toolbar = document.createElement("div");
     toolbar.className = "mermaid-toolbar";
+    toolbar.setAttribute("data-testid", "mermaid-toolbar");
     toolbar.contentEditable = "false";
 
     nextSourceId += 1;
@@ -77,6 +94,24 @@ export class MermaidCodeBlockView implements NodeView {
       this.setSourceOpen(!this.sourceOpen);
     });
 
+    this.fullScreenButton = document.createElement("button");
+    this.fullScreenButton.type = "button";
+    this.fullScreenButton.className = toolbarButtonClass;
+    this.fullScreenButton.setAttribute("data-testid", "mermaid-full-screen");
+    this.fullScreenButton.textContent = "Full screen";
+    this.fullScreenButton.hidden = true;
+    this.fullScreenButton.addEventListener("click", () => {
+      openMermaidViewer(this.canvas.innerHTML, this.fullScreenButton);
+    });
+
+    this.resetZoomButton = document.createElement("button");
+    this.resetZoomButton.type = "button";
+    this.resetZoomButton.className = toolbarButtonClass;
+    this.resetZoomButton.setAttribute("data-testid", "mermaid-zoom-reset");
+    this.resetZoomButton.textContent = "Reset zoom";
+    this.resetZoomButton.hidden = true;
+    this.resetZoomButton.addEventListener("click", () => this.panZoom.reset());
+
     this.pendingNote = document.createElement("span");
     this.pendingNote.className = "mermaid-pending-note";
     this.pendingNote.setAttribute("data-testid", "mermaid-pending-note");
@@ -90,7 +125,13 @@ export class MermaidCodeBlockView implements NodeView {
       this.refresh(0);
     });
 
-    toolbar.append(this.sourceToggle, this.pendingNote, this.versionToggle);
+    toolbar.append(
+      this.sourceToggle,
+      this.fullScreenButton,
+      this.resetZoomButton,
+      this.pendingNote,
+      this.versionToggle,
+    );
 
     const pre = document.createElement("pre");
     pre.id = sourceId;
@@ -99,6 +140,17 @@ export class MermaidCodeBlockView implements NodeView {
     pre.append(this.contentDOM);
 
     this.dom.append(this.diagram, this.error, toolbar, pre);
+
+    this.panZoom = new PanZoom(this.diagram, this.canvas, {
+      minScale: () => 1,
+      maxScale: maxInlineScale,
+      bounds: "cover",
+      wheelPans: false,
+      // Inline, a diagram only moves once it is zoomed in.
+      onChange: ({ scale }) => {
+        this.resetZoomButton.hidden = scale === 1;
+      },
+    });
 
     this.themeObserver = new MutationObserver(() => this.refresh(0));
     this.themeObserver.observe(document.documentElement, {
@@ -134,6 +186,7 @@ export class MermaidCodeBlockView implements NodeView {
 
   destroy(): void {
     this.themeObserver.disconnect();
+    this.panZoom.destroy();
     if (this.renderTimer) clearTimeout(this.renderTimer);
     this.renderToken += 1;
   }
@@ -185,7 +238,9 @@ export class MermaidCodeBlockView implements NodeView {
 
     if (!source.trim()) {
       this.renderedKey = key;
-      this.diagram.replaceChildren();
+      this.canvas.replaceChildren();
+      this.panZoom.reset();
+      this.fullScreenButton.hidden = true;
       this.error.hidden = true;
       return;
     }
@@ -195,8 +250,12 @@ export class MermaidCodeBlockView implements NodeView {
 
     this.renderedKey = key;
     if (result.ok) {
-      this.diagram.innerHTML = result.svg;
+      this.canvas.innerHTML = result.svg;
+      this.fullScreenButton.hidden = false;
       this.error.hidden = true;
+      this.markBreakout();
+      // Keep the zoom across edits, within the new diagram's bounds.
+      this.panZoom.set(this.panZoom.transform);
       return;
     }
 
@@ -207,6 +266,37 @@ export class MermaidCodeBlockView implements NodeView {
     this.error.title = result.error;
     this.error.hidden = false;
     // With nothing drawn, the source is the only thing to look at.
-    if (!this.diagram.hasChildNodes()) this.setSourceOpen(true);
+    if (!this.canvas.hasChildNodes()) {
+      this.fullScreenButton.hidden = true;
+      this.setSourceOpen(true);
+    }
+  }
+
+  // Mermaid caps its SVG at the diagram's natural width. A diagram that would
+  // be shrunk to fit the text column is marked so the stylesheet can widen its
+  // frame into the gutters, up to that width.
+  private markBreakout(): void {
+    const svg = this.canvas.querySelector("svg");
+    const naturalWidth =
+      Number.parseFloat(svg?.style.maxWidth ?? "") ||
+      svg?.viewBox?.baseVal?.width ||
+      0;
+    const frame = getComputedStyle(this.diagram);
+    const frameWidth =
+      naturalWidth +
+      [
+        frame.paddingLeft,
+        frame.paddingRight,
+        frame.borderLeftWidth,
+        frame.borderRightWidth,
+      ].reduce((sum, value) => sum + (Number.parseFloat(value) || 0), 0);
+    const measure = Number.parseFloat(
+      getComputedStyle(this.dom).getPropertyValue("--rich-text-measure"),
+    );
+    this.dom.style.setProperty("--mermaid-frame-width", `${frameWidth}px`);
+    this.dom.toggleAttribute(
+      "data-breakout",
+      Number.isFinite(measure) && frameWidth > measure,
+    );
   }
 }
