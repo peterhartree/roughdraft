@@ -689,6 +689,13 @@
     position: relative;
   }
 
+  /* HTML images sharing a line (`<img width="49%"> <img width="49%">`) sit
+     side by side, as they would in a browser. */
+  .tiptap .raw-markdown-block p img {
+    display: inline-block;
+    vertical-align: top;
+  }
+
   .tiptap .raw-markdown-block.ProseMirror-selectednode {
     outline: 2px solid rgb(14 165 233 / 0.45);
     outline-offset: 2px;
