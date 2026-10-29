@@ -146,15 +146,28 @@ function activeWindow(): DesktopWindow | undefined {
 }
 
 // Automated tests set this so their windows never take over the screen or
-// the keyboard of the person working at the machine.
+// the keyboard of the person working at the machine. On macOS
+// `showInactive()` still orders a window in front of every other app's
+// windows (and pulls an off-screen one back on screen), while a window that is
+// never shown takes no input. So test windows are shown inactive but fully
+// transparent, without a shadow, and let clicks pass through to whatever is
+// underneath. Playwright drives them through the renderer, so none of this
+// changes what the tests see.
 const backgroundOnly = process.env.ROUGHDRAFT_DESKTOP_BACKGROUND === "1";
+
+function showUnseen(window: BrowserWindow): void {
+  window.setOpacity(0);
+  window.setHasShadow(false);
+  window.setIgnoreMouseEvents(true);
+  window.showInactive();
+}
 
 function focusWindow(entry: DesktopWindow): void {
   if (entry.window.isDestroyed()) return;
   if (entry.window.isMinimized()) entry.window.restore();
   focusedId = entry.id;
   if (backgroundOnly) {
-    entry.window.showInactive();
+    if (!entry.window.isVisible()) showUnseen(entry.window);
     return;
   }
   entry.window.show();
@@ -320,10 +333,13 @@ async function routeOpen(
 }
 
 function showOpenError(error: unknown): void {
-  dialog.showErrorBox(
-    "Could not open Markdown file",
-    error instanceof Error ? error.message : String(error),
-  );
+  const message = error instanceof Error ? error.message : String(error);
+  // A native alert would appear over the work of the person at the machine.
+  if (backgroundOnly) {
+    console.error(`Could not open Markdown file: ${message}`);
+    return;
+  }
+  dialog.showErrorBox("Could not open Markdown file", message);
 }
 
 async function openMarkdownPath(
@@ -572,8 +588,9 @@ async function createWindow(
   });
   window.once("ready-to-show", () => {
     if (saved?.maximized) window.maximize();
-    if (restoring) window.showInactive();
-    else focusWindow(entry);
+    if (!restoring) focusWindow(entry);
+    else if (backgroundOnly) showUnseen(window);
+    else window.showInactive();
   });
   window.on("focus", () => {
     focusedId = id;
