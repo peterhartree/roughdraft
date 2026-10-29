@@ -102,9 +102,11 @@ test.describe("document outline", () => {
     await expect(delivery).toHaveAttribute("aria-current", "location");
   });
 
-  test("keeps wide tables and callouts holding them clear of the pinned outline", async ({
+  test("lets wide tables pass over the pinned outline, which comes forward on hover", async ({
     page,
   }) => {
+    const row = (n: number) =>
+      `> | ${n} | Element ${n} | Option A, option B | **A** | Edit is findable but quiet, and only shows on the chosen option. |`;
     const tablePath = writeProjectFile(
       projectDir,
       "outline-tables.md",
@@ -113,12 +115,17 @@ test.describe("document outline", () => {
         "",
         "## Summary",
         "",
+        ...Array(8).fill(`${FILLER}\n`),
+        "## Decisions",
+        "",
+        FILLER,
+        "",
         "> [!IMPORTANT]",
         "> **Decisions**",
         ">",
         "> | # | Element | Options | Recommendation | Why |",
         "> | --- | --- | --- | --- | --- |",
-        "> | 1 | How an option looks | 1A text link, 1B pencil icon | **1A** | Edit is findable but quiet, and only shows on the chosen option. |",
+        ...[1, 2, 3, 4, 5, 6, 7, 8].map(row),
         "",
         "## Delivery in detail",
         "",
@@ -136,15 +143,71 @@ test.describe("document outline", () => {
 
     const outline = page.getByTestId("document-outline");
     await expect(outline).toBeVisible();
-    const outlineBox = await outline.boundingBox();
-    const outlineRight = (outlineBox?.x ?? 0) + (outlineBox?.width ?? 0);
     const editor = page.getByTestId("rich-text-editor");
-    const blocks = editor.locator("blockquote, .tableWrapper"); // selector-check-ignore -- the rendered callout and table boxes are the contract
-    await expect(blocks).toHaveCount(3);
-    for (const block of await blocks.all()) {
-      const blockBox = await block.boundingBox();
-      expect(blockBox?.x ?? 0).toBeGreaterThan(outlineRight);
+    const prose = editor.locator("p").first(); // selector-check-ignore -- rendered paragraph geometry is the contract
+    const tables = editor.locator(".tableWrapper"); // selector-check-ignore -- Tiptap's table scroll viewport is the product boundary
+    await expect(tables).toHaveCount(2);
+    const box = async (locator: typeof prose) => {
+      const result = await locator.boundingBox();
+      if (!result) throw new Error("missing geometry");
+      return result;
+    };
+
+    // Both tables break out symmetrically about the text column.
+    const proseBox = await box(prose);
+    const proseCentre = proseBox.x + proseBox.width / 2;
+    for (const table of await tables.all()) {
+      const tableBox = await box(table);
+      expect(tableBox.width).toBeGreaterThan(proseBox.width * 1.3);
+      expect(
+        Math.abs(tableBox.x + tableBox.width / 2 - proseCentre),
+      ).toBeLessThanOrEqual(12);
     }
+
+    // Bring the callout's table up alongside the outline.
+    const calloutTable = tables.first();
+    const outlineBox = await box(outline);
+    await page.getByTestId("document-workspace-scroll").evaluate(
+      (scroller, top) => {
+        scroller.scrollBy(0, top);
+      },
+      (await box(calloutTable)).y - outlineBox.y - 4,
+    );
+    const tableBox = await box(calloutTable);
+    const point = {
+      x: Math.max(outlineBox.x, tableBox.x) + 12,
+      y: outlineBox.y + 30,
+    };
+    expect(point.x).toBeLessThan(outlineBox.x + outlineBox.width);
+    expect(point.y).toBeGreaterThan(tableBox.y);
+    const topmostIsIn = (testId: string, selector?: string) =>
+      page.evaluate(
+        ({ x, y, testId, selector }) => {
+          const hit = document.elementFromPoint(x, y);
+          return Boolean(hit?.closest(selector ?? `[data-testid="${testId}"]`));
+        },
+        { ...point, testId, selector },
+      );
+
+    // The table is drawn over the outline until the pointer reaches it.
+    await page.mouse.move(point.x + 600, point.y);
+    expect(await topmostIsIn("", ".tableWrapper")).toBe(true);
+
+    await page.mouse.move(point.x, point.y);
+    await expect.poll(() => topmostIsIn("document-outline")).toBe(true);
+    await expect(outline).toHaveCSS("background-color", "rgb(255, 255, 255)");
+
+    // Leaving the outline sends it back behind the table.
+    await page.mouse.move(outlineBox.x + outlineBox.width + 600, point.y);
+    await expect.poll(() => topmostIsIn("", ".tableWrapper")).toBe(true);
+
+    // An item under the table is still reachable.
+    await page.mouse.move(point.x, point.y);
+    const target = outline
+      .getByTestId("document-outline-item")
+      .filter({ hasText: "Open questions" });
+    await target.click();
+    await expect(target).toHaveAttribute("aria-current", "location");
   });
 
   test("collapses to ticks when the margin is narrow and expands on hover @smoke", async ({

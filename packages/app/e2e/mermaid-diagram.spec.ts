@@ -53,7 +53,7 @@ test.describe("Mermaid diagrams", () => {
     expect(frame.x + frame.width).toBeGreaterThan(column.x + column.width);
   });
 
-  test("a wide diagram breaks out to the right beside the outline", async ({
+  test("a wide diagram breaks out on both sides past the outline", async ({
     page,
   }) => {
     await openDiagram(
@@ -64,7 +64,7 @@ test.describe("Mermaid diagrams", () => {
 
     const frame = await box(page, "mermaid-diagram");
     const column = await box(page, "mermaid-toolbar");
-    expect(Math.abs(frame.x - column.x)).toBeLessThan(1);
+    expect(frame.x).toBeLessThan(column.x);
     expect(frame.x + frame.width).toBeGreaterThan(column.x + column.width);
   });
 

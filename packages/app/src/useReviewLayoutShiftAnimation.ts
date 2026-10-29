@@ -1,6 +1,7 @@
 import { useLayoutEffect, useRef, type RefObject } from "react";
 
 const animationClass = "review-layout-grid--animating";
+const shiftedClass = "review-layout-grid--shifted";
 const shiftProperty = "--review-layout-shift-x";
 const reducedMotionQuery = "(prefers-reduced-motion: reduce)";
 const animationDurationMs = 180;
@@ -52,7 +53,7 @@ export function useReviewLayoutShiftAnimation<TElement extends HTMLElement>(
     const finish = () => {
       if (finished) return;
       finished = true;
-      element.classList.remove(animationClass);
+      element.classList.remove(animationClass, shiftedClass);
       element.style.removeProperty(shiftProperty);
       element.removeEventListener("transitionend", handleTransitionEnd);
       if (timeoutRef.current !== null) {
@@ -68,6 +69,7 @@ export function useReviewLayoutShiftAnimation<TElement extends HTMLElement>(
 
     element.classList.remove(animationClass);
     element.style.setProperty(shiftProperty, `${deltaX}px`);
+    element.classList.add(shiftedClass);
     void element.offsetWidth;
     element.classList.add(animationClass);
     element.addEventListener("transitionend", handleTransitionEnd);

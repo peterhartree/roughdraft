@@ -650,13 +650,28 @@
     max-width: calc(var(--rich-text-measure) - 1.25rem);
   }
 
-  /* The document outline sits in the left margin, so there tables start at
-     the text column and break out to the right only. */
-  :has(> [data-document-outline-margin])
-    .document-rich-text-layout
+  /* Blocks that break out pass over the document outline in the left margin,
+     on the page's own background; the outline comes forward while the
+     pointer or focus is on it (DocumentOutline.tsx). */
+  .document-rich-text-layout {
+    --rich-text-surface: white;
+  }
+
+  .dark .document-rich-text-layout {
+    --rich-text-surface: var(--card);
+  }
+
+  .document-rich-text-layout
     .tiptap
-    > :is(.tableWrapper, blockquote:has(> .tableWrapper)) {
-    grid-column: 2 / -1;
+    > :is(
+      .tableWrapper,
+      blockquote:has(> .tableWrapper),
+      img[data-breakout],
+      .mermaid-block[data-breakout]
+    ) {
+    position: relative;
+    z-index: 2;
+    background-color: var(--rich-text-surface);
   }
 
   /* Images wider than the text column break out symmetrically into the
@@ -690,19 +705,6 @@
     > :not(.mermaid-diagram) {
     width: min(var(--rich-text-measure), 100%);
     margin-inline: auto;
-  }
-
-  /* The document outline sits in the left margin, so there a diagram starts
-     at the text column and breaks out to the right only. */
-  :has(> [data-document-outline-margin])
-    .document-rich-text-layout
-    .tiptap
-    > .mermaid-block[data-breakout]
-    > .mermaid-diagram {
-    --mermaid-text-inset: calc(50% - min(var(--rich-text-measure), 100%) / 2);
-    width: min(100% - var(--mermaid-text-inset), var(--mermaid-frame-width));
-    margin-left: var(--mermaid-text-inset);
-    margin-right: 0;
   }
 
   .tiptap .raw-markdown-block {
@@ -1062,7 +1064,6 @@
   display: flex;
   flex-direction: column;
   gap: 1.5rem;
-  transform: translateX(var(--review-layout-shift-x));
 }
 
 @media (min-width: 1100px) {
@@ -1090,6 +1091,13 @@
     grid-column: 2;
     min-width: 0;
   }
+}
+
+/* The shift applies only while it animates: a standing transform would make
+   the page a stacking context, and wide blocks could no longer pass over the
+   document outline. */
+.review-layout-grid.review-layout-grid--shifted {
+  transform: translateX(var(--review-layout-shift-x));
 }
 
 .review-layout-grid.review-layout-grid--animating {

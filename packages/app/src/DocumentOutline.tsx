@@ -365,7 +365,10 @@ export function DocumentOutline({
     width: number;
     height: number;
   } | null>(null);
+  const [pointerOnOutline, setPointerOnOutline] = useState(false);
+  const [focusInOutline, setFocusInOutline] = useState(false);
   const layerRef = useRef<HTMLDivElement | null>(null);
+  const outlineRef = useRef<HTMLElement | null>(null);
   const anchorRef = useRef<HTMLDivElement | null>(null);
   const tickPopoverTimerRef = useRef<number | null>(null);
   const tickPopoverPinnedOpenRef = useRef(false);
@@ -506,6 +509,41 @@ export function DocumentOutline({
     };
   }, [enabled, headerHeight, itemElements, scrollContainerRef]);
 
+  // Wide blocks pass over the outline, so they, not the outline, receive
+  // the pointer where they overlap it. Track the pointer against the
+  // outline's own box instead, and bring the outline forward while it is
+  // there.
+  useEffect(() => {
+    if (!marginVisible) {
+      setPointerOnOutline(false);
+      return;
+    }
+    const update = (event: PointerEvent) => {
+      const boxes = [
+        outlineRef.current,
+        document.getElementById("document-outline-popover"),
+      ].flatMap((element) =>
+        element ? [element.getBoundingClientRect()] : [],
+      );
+      setPointerOnOutline(
+        boxes.some(
+          (box) =>
+            event.clientX >= box.left &&
+            event.clientX <= box.right &&
+            event.clientY >= box.top &&
+            event.clientY <= box.bottom,
+        ),
+      );
+    };
+    const leave = () => setPointerOnOutline(false);
+    window.addEventListener("pointermove", update, { passive: true });
+    document.documentElement.addEventListener("pointerleave", leave);
+    return () => {
+      window.removeEventListener("pointermove", update);
+      document.documentElement.removeEventListener("pointerleave", leave);
+    };
+  }, [marginVisible]);
+
   const closeTickPopover = useCallback(() => {
     if (tickPopoverTimerRef.current !== null) {
       window.clearTimeout(tickPopoverTimerRef.current);
@@ -615,6 +653,7 @@ export function DocumentOutline({
   const roomToPin = geometry?.mode === "pinned";
   const showPinned = marginVisible && roomToPin && !collapsed;
   const showTicks = marginVisible && geometry !== null && !showPinned;
+  const outlineForward = pointerOnOutline || focusInOutline || tickPopoverOpen;
 
   return (
     <>
@@ -637,19 +676,32 @@ export function DocumentOutline({
         <div
           ref={layerRef}
           data-testid="document-outline-layer"
-          // Wide Mermaid diagrams break out to the right only while the outline
-          // occupies the left margin (style.css).
-          data-document-outline-margin={geometry ? "" : undefined}
-          className="sticky z-30 h-0"
+          // Behind wide blocks (style.css) until the pointer or focus is on it.
+          className={cn("sticky h-0", outlineForward ? "z-30" : "z-[1]")}
+          // Keyboard focus only: a clicked item keeps focus after the jump.
+          onFocus={(event) =>
+            setFocusInOutline(event.target.matches(":focus-visible"))
+          }
+          onBlur={(event) => {
+            if (
+              !event.currentTarget.contains(event.relatedTarget as Node | null)
+            )
+              setFocusInOutline(false);
+          }}
           style={{
             top: (geometry?.headerHeight ?? 0) + OUTLINE_TOP_OFFSET,
           }}
         >
           {showPinned && geometry ? (
             <nav
+              ref={outlineRef}
               data-testid="document-outline"
               aria-label="Document outline"
-              className="group/outline absolute top-0 overflow-y-auto overscroll-contain pb-2"
+              className={cn(
+                "group/outline absolute top-0 overflow-y-auto overscroll-contain rounded-md pb-2",
+                outlineForward &&
+                  "bg-white shadow-[0_0_0_1px_rgb(0_0_0/0.06),0_10px_30px_rgb(0_0_0/0.12)] dark:bg-card dark:shadow-[0_0_0_1px_rgb(255_255_255/0.08),0_10px_30px_rgb(0_0_0/0.45)]",
+              )}
               style={{
                 left: geometry.pinnedLeft,
                 width: geometry.pinnedWidth,
@@ -685,7 +737,13 @@ export function DocumentOutline({
           ) : null}
           {showTicks && geometry ? (
             <div
-              className="absolute top-0"
+              ref={(element) => {
+                outlineRef.current = element;
+              }}
+              className={cn(
+                "absolute top-0 rounded-md",
+                outlineForward && "bg-white dark:bg-card",
+              )}
               style={{ left: geometry.ticksLeft }}
               onMouseEnter={() => scheduleTickPopover(true)}
               onMouseLeave={() => scheduleTickPopover(false)}
