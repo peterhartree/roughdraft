@@ -42,9 +42,11 @@ const HEADING_SELECTOR = [1, 2, 3, 4, 5, 6]
   .map((level) => `:scope > h${level}`)
   .join(", ");
 const HEADER_SELECTOR = '[data-testid="document-page-header"]';
+const CONTENT_CARD_SELECTOR = '[data-testid="document-content-card"]';
 /** Gap between the sticky header and the outline, and the jump landing line. */
 const OUTLINE_TOP_OFFSET = 16;
 const PINNED_OUTLINE_TEXT_GAP = 24;
+const PINNED_OUTLINE_EDGE_GAP = 40;
 const TICKS_TEXT_GAP = 44;
 const TICK_POPOVER_OPEN_DELAY_MS = 60;
 const TICK_POPOVER_CLOSE_DELAY_MS = 260;
@@ -432,11 +434,21 @@ export function DocumentOutline({
     const textLeft = firstHeading.getBoundingClientRect().left;
     const layout = getDocumentOutlineMarginLayout(textLeft - scrollerRect.left);
     const pinnedWidth = layout.mode === "pinned" ? layout.width : 0;
+    // Pinned, the outline keeps to the page's left edge, so the room between
+    // it and the text grows with the window; it moves in towards the text
+    // only when the page edge is too close.
+    const pageLeft =
+      scroller.querySelector(CONTENT_CARD_SELECTOR)?.getBoundingClientRect()
+        .left ?? scrollerRect.left;
+    const pinnedLeft = Math.min(
+      pageLeft + PINNED_OUTLINE_EDGE_GAP,
+      textLeft - PINNED_OUTLINE_TEXT_GAP - pinnedWidth,
+    );
     const height = headerHeight();
     const next: MarginGeometry = {
       mode: layout.mode,
       pinnedWidth,
-      pinnedLeft: textLeft - layerLeft - PINNED_OUTLINE_TEXT_GAP - pinnedWidth,
+      pinnedLeft: pinnedLeft - layerLeft,
       ticksLeft: textLeft - layerLeft - TICKS_TEXT_GAP,
       headerHeight: height,
       maxHeight: Math.max(

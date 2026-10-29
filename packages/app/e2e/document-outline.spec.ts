@@ -210,6 +210,30 @@ test.describe("document outline", () => {
     await expect(target).toHaveAttribute("aria-current", "location");
   });
 
+  test("anchors the pinned outline to the page's left edge in a wide window", async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 2200, height: 900 });
+    await openMarkdownFile(page, filePath);
+
+    const outline = page.getByTestId("document-outline");
+    await expect(outline).toBeVisible();
+    const outlineBox = await outline.boundingBox();
+    const cardBox = await page
+      .getByTestId("document-content-card")
+      .boundingBox();
+    const headingBox = await headingInEditor(page, "Summary").boundingBox();
+    if (!outlineBox || !cardBox || !headingBox)
+      throw new Error("missing geometry");
+    // A modest gutter from the page's edge, with the spare room between the
+    // outline and the text.
+    expect(outlineBox.x - cardBox.x).toBeGreaterThanOrEqual(32);
+    expect(outlineBox.x - cardBox.x).toBeLessThanOrEqual(48);
+    expect(headingBox.x - (outlineBox.x + outlineBox.width)).toBeGreaterThan(
+      100,
+    );
+  });
+
   test("collapses to ticks when the margin is narrow and expands on hover @smoke", async ({
     page,
   }) => {

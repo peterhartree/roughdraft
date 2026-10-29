@@ -23,6 +23,8 @@ export const MIN_DOCUMENT_OUTLINE_ITEMS = 3;
 const MAX_OUTLINE_DEPTH = 2;
 const PINNED_OUTLINE_MAX_WIDTH = 256;
 const PINNED_OUTLINE_MIN_WIDTH = 200;
+const PINNED_OUTLINE_WIDEST = 320;
+const PINNED_OUTLINE_WIDENING_MARGIN = 480;
 /** Space kept between the pinned outline and the text, and the window edge. */
 const PINNED_OUTLINE_GUTTER = 40;
 
@@ -93,9 +95,17 @@ export function getActiveOutlineItemIndex(
 export function getDocumentOutlineMarginLayout(
   availableWidth: number,
 ): DocumentOutlineMarginLayout {
+  // Past a comfortable margin the outline widens by a quarter of the extra
+  // room, so long headings wrap less while most of it stays as space between
+  // the outline and the text.
   const width = Math.min(
-    PINNED_OUTLINE_MAX_WIDTH,
+    PINNED_OUTLINE_WIDEST,
     Math.floor(availableWidth - PINNED_OUTLINE_GUTTER),
+    PINNED_OUTLINE_MAX_WIDTH +
+      Math.max(
+        0,
+        Math.floor((availableWidth - PINNED_OUTLINE_WIDENING_MARGIN) / 4),
+      ),
   );
   return width >= PINNED_OUTLINE_MIN_WIDTH
     ? { mode: "pinned", width }

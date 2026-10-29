@@ -107,6 +107,21 @@ describe("getDocumentOutlineMarginLayout", () => {
     });
   });
 
+  it("widens the outline a little in a very wide margin", () => {
+    expect(getDocumentOutlineMarginLayout(480)).toEqual({
+      mode: "pinned",
+      width: 256,
+    });
+    expect(getDocumentOutlineMarginLayout(640)).toEqual({
+      mode: "pinned",
+      width: 296,
+    });
+    expect(getDocumentOutlineMarginLayout(2000)).toEqual({
+      mode: "pinned",
+      width: 320,
+    });
+  });
+
   it("falls back to ticks when the margin is narrow", () => {
     expect(getDocumentOutlineMarginLayout(239)).toEqual({ mode: "ticks" });
   });
