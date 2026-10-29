@@ -318,4 +318,97 @@ test.describe("markdown round-trips", () => {
       typingMs,
     });
   });
+  test("Enter writes a single newline, as in a raw Markdown file", async ({
+    page,
+  }) => {
+    const original = ["# Lines", "", "First line", "", "- one", ""].join("\n");
+    const filePath = writeProjectFile(projectDir, "lines.md", original);
+    const saved = () => readProjectFile(projectDir, "lines.md");
+
+    await openMarkdownFile(page, filePath);
+    await expect(richTextEditor(page)).toContainText("First line");
+
+    const placeCaretIn = async (text: string) => {
+      await expect(async () => {
+        await richTextEditor(page).getByText(text, { exact: true }).click();
+        expect(
+          await page.evaluate(
+            () => window.getSelection()?.anchorNode?.textContent,
+          ),
+        ).toBe(text);
+      }).toPass();
+    };
+    // In a list, Enter still starts the next item.
+    await placeCaretIn("one");
+    await page.keyboard.press("End");
+    await page.keyboard.press("Enter");
+    await page.keyboard.type("two");
+    const withList = original.replace("- one\n", "- one\n- two\n");
+    await expect.poll(saved).toBe(withList);
+
+    // One Enter continues the paragraph on a new line.
+    await placeCaretIn("First line");
+    await page.keyboard.press("End");
+    await page.keyboard.press("Enter");
+    await page.keyboard.type("Second line");
+    await expect
+      .poll(saved)
+      .toBe(withList.replace("First line", "First line\nSecond line"));
+    const lineTops = await richTextEditor(page)
+      .locator("p", { hasText: "Second line" }) // selector-check-ignore -- the rendered paragraph is the contract
+      .evaluate((paragraph) => {
+        const range = document.createRange();
+        range.selectNodeContents(paragraph);
+        return new Set(
+          [...range.getClientRects()].map((rect) => Math.round(rect.top)),
+        ).size;
+      });
+    expect(lineTops).toBeGreaterThan(1);
+
+    // Enter on the empty line that follows ends the paragraph.
+    await page.keyboard.press("Enter");
+    await page.keyboard.press("Enter");
+    await page.keyboard.type("New paragraph");
+    // Shift+Enter is the same single newline.
+    await page.keyboard.press("Shift+Enter");
+    await page.keyboard.type("continued");
+    await expect
+      .poll(saved)
+      .toBe(
+        withList.replace(
+          "First line",
+          "First line\nSecond line\n\nNew paragraph\ncontinued",
+        ),
+      );
+  });
+
+  test("saving an untouched hard-wrapped file keeps its newlines", async ({
+    page,
+  }) => {
+    const original = [
+      "# Wrapped",
+      "",
+      "A paragraph hard-wrapped at a fixed width, as many editors",
+      "write them, continues on this line",
+      "and ends on this one.",
+      "",
+      "- A list item that also",
+      "  wraps onto a second line.",
+      "",
+    ].join("\n");
+    const filePath = writeProjectFile(projectDir, "wrapped.md", original);
+
+    await openMarkdownFile(page, filePath);
+    const editor = richTextEditor(page);
+    await expect(editor).toContainText("and ends on this one.");
+    await editor.click();
+    await page.keyboard.press(
+      process.platform === "darwin" ? "Meta+S" : "Control+S",
+    );
+    await expect(documentSaveStatus(page)).toHaveAttribute(
+      "aria-label",
+      "Saved",
+    );
+    expect(readProjectFile(projectDir, "wrapped.md")).toBe(original);
+  });
 });

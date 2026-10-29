@@ -1200,6 +1200,65 @@ const MarkdownSourceDetails = Extension.create({
   },
 });
 
+// Enter behaves as it does in a raw Markdown file: one press is a single
+// newline inside the paragraph (saved as a plain "\n" and shown as a line
+// break), and a press on the empty line that follows ends the paragraph.
+// Lists, headings, code and tables keep the editor's own Enter.
+const lineBreakContainers = new Set([
+  "listItem",
+  "taskItem",
+  "tableCell",
+  "tableHeader",
+]);
+
+const MarkdownLineBreaks = Extension.create({
+  name: "markdownLineBreaks",
+  priority: 1000,
+
+  addKeyboardShortcuts() {
+    const insertNewline = (endsParagraphOnEmptyLine: boolean) => {
+      const { state } = this.editor;
+      const { $from, empty } = state.selection;
+      if (!empty || $from.parent.type.name !== "paragraph") return false;
+      for (let depth = $from.depth - 1; depth > 0; depth -= 1) {
+        const name = $from.node(depth).type.name;
+        if (name === "tableCell" || name === "tableHeader") return false;
+        if (endsParagraphOnEmptyLine && lineBreakContainers.has(name))
+          return false;
+      }
+      const before = $from.nodeBefore;
+      // At the start of a paragraph a newline would only open a blank line.
+      if (!before) return false;
+      const after = $from.nodeAfter;
+      const onEmptyLine =
+        before.type.name === "hardBreak" &&
+        (!after || after.type.name === "hardBreak");
+      if (endsParagraphOnEmptyLine && onEmptyLine) {
+        return this.editor
+          .chain()
+          .command(({ tr }) => {
+            const position = tr.selection.from;
+            tr.delete(
+              position - 1,
+              after ? position + after.nodeSize : position,
+            );
+            return true;
+          })
+          .splitBlock()
+          .run();
+      }
+      return this.editor
+        .chain()
+        .insertContent({ type: "hardBreak", attrs: { soft: true } })
+        .run();
+    };
+    return {
+      Enter: () => insertNewline(true),
+      "Shift-Enter": () => insertNewline(false),
+    };
+  },
+});
+
 export function createEditorExtensions(
   placeholder: string,
   options?: Pick<MarkdownOptions, "resolveFileUrl" | "resolveLinkUrl">,
@@ -1215,6 +1274,7 @@ export function createEditorExtensions(
     }),
     LooseLists,
     MarkdownSourceDetails,
+    MarkdownLineBreaks,
     MarkdownAlerts,
     Placeholder.configure({
       placeholder,
