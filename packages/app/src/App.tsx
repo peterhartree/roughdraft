@@ -2380,22 +2380,28 @@ export function App() {
       }
 
       const activePath = activeDocumentAbsolutePathRef.current;
+      let flushed = false;
       if (activeDocumentPathRef.current) {
         const controller = documentSaveControllerRef.current;
         if (!controller) return false;
         try {
           const result = await controller.flushSave();
           if (result.status !== "saved") return false;
+          flushed = true;
         } catch (error) {
           console.error("Failed to save before closing the window:", error);
           return false;
         }
       }
 
+      // A flushed save is final; the save-state refs follow it only on the
+      // next render, so a close straight after a save would otherwise read
+      // "saving" and refuse.
       if (
         diskChangeStateBlocksFileSwitch(documentDiskChangeStateRef.current) ||
-        documentDirtyRef.current ||
-        documentSaveStateRef.current !== "saved"
+        (!flushed &&
+          (documentDirtyRef.current ||
+            documentSaveStateRef.current !== "saved"))
       ) {
         return false;
       }

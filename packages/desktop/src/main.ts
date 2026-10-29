@@ -490,8 +490,17 @@ function prepareClose(entry: DesktopWindow): Promise<boolean> {
   });
 }
 
+// Captured before any test replaces it, so test mode can tell the native
+// dialog from a test's stand-in.
+const nativeShowMessageBox = dialog.showMessageBox;
+
 function explainBlockedClose(entry: DesktopWindow): void {
   focusWindow(entry);
+  // A native alert would appear over the work of the person at the machine.
+  if (backgroundOnly && dialog.showMessageBox === nativeShowMessageBox) {
+    console.error("Roughdraft could not safely close this window.");
+    return;
+  }
   void dialog.showMessageBox(entry.window, {
     type: "warning",
     title: "Window remains open",
