@@ -15,7 +15,10 @@ import {
   OPEN_DOCUMENT_CHANNEL,
   PREPARE_CLOSE_CHANNEL,
   PREPARE_CLOSE_RESULT_CHANNEL,
+  LIST_OTHER_WINDOWS_CHANNEL,
+  MOVE_DOCUMENT_CHANNEL,
   type DesktopOpenIntent,
+  type DesktopWindowSummary,
 } from "./window-channels.js";
 
 let closePending = false;
@@ -53,6 +56,10 @@ contextBridge.exposeInMainWorld("roughdraftDesktop", {
   releaseDocument: (path: string) =>
     ipcRenderer.send(RELEASE_DOCUMENT_CHANNEL, path),
   ready: () => ipcRenderer.send(WINDOW_READY_CHANNEL),
+  listOtherWindows: (): Promise<DesktopWindowSummary[]> =>
+    ipcRenderer.invoke(LIST_OTHER_WINDOWS_CHANNEL),
+  moveDocument: (path: string, windowId: string | null): Promise<boolean> =>
+    ipcRenderer.invoke(MOVE_DOCUMENT_CHANNEL, path, windowId),
   onOpenDocument: (listener: (intent: DesktopOpenIntent) => void) => {
     const handler = (
       _event: Electron.IpcRendererEvent,

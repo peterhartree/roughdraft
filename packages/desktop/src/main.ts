@@ -63,6 +63,9 @@ import {
   PREPARE_CLOSE_CHANNEL,
   PREPARE_CLOSE_RESULT_CHANNEL,
   type DesktopOpenIntent,
+  LIST_OTHER_WINDOWS_CHANNEL,
+  MOVE_DOCUMENT_CHANNEL,
+  type DesktopWindowSummary,
 } from "./window-channels.js";
 import {
   MAX_WINDOWS,
@@ -232,6 +235,13 @@ function senderWindow(
   )
     return undefined;
   return entry;
+}
+
+function windowLabel(entry: DesktopWindow): string {
+  const title = entry.window.getTitle();
+  return title.toLowerCase().endsWith(".md")
+    ? path.basename(title)
+    : "Window without a document";
 }
 
 function validPath(value: unknown): value is string {
@@ -813,6 +823,63 @@ function installIpc(): void {
     const entry = senderWindow(event);
     if (entry && validPath(filePath)) owners.release(entry.id, filePath);
   });
+  ipcMain.handle(LIST_OTHER_WINDOWS_CHANNEL, (event) => {
+    const entry = senderWindow(event);
+    if (!entry) return [];
+    return [...windows.values()]
+      .filter(
+        (candidate) =>
+          candidate !== entry &&
+          !candidate.window.isDestroyed() &&
+          !candidate.closing &&
+          !candidate.allowClose &&
+          !candidate.crashed,
+      )
+      .map(
+        (candidate): DesktopWindowSummary => ({
+          id: candidate.id,
+          label: windowLabel(candidate),
+        }),
+      );
+  });
+  // The sender has already closed the document; it opens in the target
+  // window, or in a new one when no target is given.
+  ipcMain.handle(
+    MOVE_DOCUMENT_CHANNEL,
+    async (event, filePath: unknown, windowId: unknown) => {
+      const entry = senderWindow(event);
+      if (!entry || !validPath(filePath) || quitting || preparingQuit)
+        return false;
+      if (!routingAvailable) return false;
+      let destination: DesktopWindow | undefined;
+      if (windowId === null) {
+        if (windows.size >= MAX_WINDOWS) return false;
+      } else {
+        destination =
+          typeof windowId === "string" ? windows.get(windowId) : undefined;
+        if (
+          !destination ||
+          destination === entry ||
+          destination.window.isDestroyed() ||
+          destination.closing ||
+          destination.crashed
+        )
+          return false;
+      }
+      owners.release(entry.id, filePath);
+      destination ??= await createWindow();
+      await routeOpen(
+        { path: filePath, modifiedAt: null, activate: true },
+        destination.id,
+      );
+      appendDesktopSlog("desktop.document.moved", {
+        fromWindowId: entry.id,
+        toWindowId: destination.id,
+        path: filePath,
+      });
+      return true;
+    },
+  );
   ipcMain.on(WINDOW_READY_CHANNEL, (event) => {
     const entry = senderWindow(event);
     if (!entry) return;

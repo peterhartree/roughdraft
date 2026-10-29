@@ -1,4 +1,5 @@
 import { ContextMenu as ContextMenuPrimitive } from "@base-ui/react/context-menu";
+import { ChevronRight } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 
@@ -72,10 +73,38 @@ function ContextMenuSeparator({
   );
 }
 
+function ContextMenuSub(props: ContextMenuPrimitive.SubmenuRoot.Props) {
+  return (
+    <ContextMenuPrimitive.SubmenuRoot data-slot="context-menu-sub" {...props} />
+  );
+}
+
+function ContextMenuSubTrigger({
+  className,
+  children,
+  ...props
+}: ContextMenuPrimitive.SubmenuTrigger.Props) {
+  return (
+    <ContextMenuPrimitive.SubmenuTrigger
+      data-slot="context-menu-sub-trigger"
+      className={cn(
+        "flex cursor-default items-center gap-2 rounded-md px-2 py-1.5 text-[0.72rem] leading-none outline-none select-none data-[highlighted]:bg-[#EEE9E1] data-[highlighted]:text-stone-900 data-[popup-open]:bg-[#EEE9E1] data-[popup-open]:text-stone-900 dark:data-[highlighted]:bg-slate-700 dark:data-[highlighted]:text-slate-100 dark:data-[popup-open]:bg-slate-700 dark:data-[popup-open]:text-slate-100",
+        className,
+      )}
+      {...props}
+    >
+      {children}
+      <ChevronRight className="ml-auto size-3.5 text-stone-400 dark:text-slate-500" />
+    </ContextMenuPrimitive.SubmenuTrigger>
+  );
+}
+
 export {
   ContextMenu,
   ContextMenuContent,
   ContextMenuItem,
   ContextMenuSeparator,
+  ContextMenuSub,
+  ContextMenuSubTrigger,
   ContextMenuTrigger,
 };

@@ -1,10 +1,21 @@
-import { ChevronDown, Copy, FileText, Pencil, Trash2 } from "lucide-react";
+import {
+  AppWindow,
+  ChevronDown,
+  Copy,
+  FileText,
+  Pencil,
+  SquareArrowOutUpRight,
+  Trash2,
+} from "lucide-react";
 import { type ReactNode, useRef, useState } from "react";
 import { Button } from "./components/ui/button";
 import {
   ContextMenu,
   ContextMenuContent,
   ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuSub,
+  ContextMenuSubTrigger,
   ContextMenuTrigger,
 } from "./components/ui/context-menu";
 import { cn } from "./lib/utils";
@@ -92,6 +103,7 @@ export function OpenFileSidebar({
   onCopyPath,
   onMoveToTrash,
   onRename,
+  windowMoves,
   browse,
   notice,
 }: {
@@ -103,6 +115,11 @@ export function OpenFileSidebar({
   onCopyPath: (path: string) => void | Promise<void>;
   onMoveToTrash?: (path: string) => void;
   onRename?: (path: string) => void;
+  /** Moving an open file into another desktop window. */
+  windowMoves?: {
+    listOtherWindows: () => Promise<{ id: string; label: string }[]>;
+    onMove: (path: string, windowId: string | null) => void;
+  };
   browse?: SidebarBrowseSection;
   /** Shown above the shortcut hints, such as an available update. */
   notice?: ReactNode;
@@ -111,6 +128,9 @@ export function OpenFileSidebar({
   const asideRef = useRef<HTMLElement>(null);
   const openSectionRef = useRef<HTMLElement>(null);
   const [dragHeight, setDragHeight] = useState<number | null>(null);
+  const [otherWindows, setOtherWindows] = useState<
+    { id: string; label: string }[]
+  >([]);
 
   const openCollapsed = browse?.openSectionCollapsed ?? false;
   const browseCollapsed = browse?.browseSectionCollapsed ?? false;
@@ -165,7 +185,16 @@ export function OpenFileSidebar({
 
         {openCollapsed ? null : (
           <nav className="min-h-0 flex-1 overflow-y-auto p-1.5">
-            <ContextMenu>
+            <ContextMenu
+              onOpenChange={(open) => {
+                if (!open || !windowMoves) return;
+                setOtherWindows([]);
+                void windowMoves
+                  .listOtherWindows()
+                  .then(setOtherWindows)
+                  .catch(() => setOtherWindows([]));
+              }}
+            >
               <ContextMenuTrigger
                 render={
                   <ol
@@ -297,6 +326,50 @@ export function OpenFileSidebar({
                     <Trash2 className="size-3.5 text-stone-500 dark:text-slate-400" />
                     Move to Trash
                   </ContextMenuItem>
+                ) : null}
+                {windowMoves ? (
+                  <>
+                    <ContextMenuSeparator />
+                    <ContextMenuItem
+                      data-testid="open-file-sidebar-move-to-new-window"
+                      onClick={() => {
+                        const path = contextMenuPathRef.current;
+                        if (path && files.some((file) => file.path === path)) {
+                          windowMoves.onMove(path, null);
+                        }
+                      }}
+                    >
+                      <SquareArrowOutUpRight className="size-3.5 text-stone-500 dark:text-slate-400" />
+                      Move to new window
+                    </ContextMenuItem>
+                    {otherWindows.length > 0 ? (
+                      <ContextMenuSub>
+                        <ContextMenuSubTrigger data-testid="open-file-sidebar-move-to-window">
+                          <AppWindow className="size-3.5 text-stone-500 dark:text-slate-400" />
+                          Move to window
+                        </ContextMenuSubTrigger>
+                        <ContextMenuContent aria-label="Windows">
+                          {otherWindows.map((target) => (
+                            <ContextMenuItem
+                              key={target.id}
+                              data-testid="open-file-sidebar-move-to-window-item"
+                              onClick={() => {
+                                const path = contextMenuPathRef.current;
+                                if (
+                                  path &&
+                                  files.some((file) => file.path === path)
+                                ) {
+                                  windowMoves.onMove(path, target.id);
+                                }
+                              }}
+                            >
+                              {target.label}
+                            </ContextMenuItem>
+                          ))}
+                        </ContextMenuContent>
+                      </ContextMenuSub>
+                    ) : null}
+                  </>
                 ) : null}
               </ContextMenuContent>
             </ContextMenu>

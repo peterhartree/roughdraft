@@ -3395,6 +3395,50 @@ export function App() {
     ],
   );
 
+  // Moving a file to another window closes it here first, saving the active
+  // file, so the two windows never edit it at once.
+  const moveFileToWindow = useCallback(
+    async (path: string, windowId: string | null) => {
+      const moveDocument = window.roughdraftDesktop?.moveDocument;
+      if (!moveDocument) return;
+      setFileSwitchError(null);
+      const move = async () => {
+        try {
+          if (await moveDocument(path, windowId)) return true;
+        } catch (error) {
+          console.error("Failed to move a Markdown file:", error);
+        }
+        setFileSwitchError(
+          `Couldn't move ${getPathLeaf(path) ?? "the file"} to another window.`,
+        );
+        return false;
+      };
+
+      if (
+        path === activeDocumentAbsolutePathRef.current &&
+        path !== missingOpenFilePath
+      ) {
+        await closeActiveOpenFile(move);
+        return;
+      }
+      if (!openFilesRef.current.some((file) => file.path === path)) return;
+      pruneOpenFileSessionEntries([path]);
+      if (path === missingOpenFilePath) setMissingOpenFilePath(null);
+      await move();
+    },
+    [closeActiveOpenFile, missingOpenFilePath, pruneOpenFileSessionEntries],
+  );
+  const desktopWindowMoves = useMemo(() => {
+    const desktop = window.roughdraftDesktop;
+    const listOtherWindows = desktop?.listOtherWindows;
+    if (!listOtherWindows || !desktop?.moveDocument) return undefined;
+    return {
+      listOtherWindows,
+      onMove: (path: string, windowId: string | null) =>
+        void moveFileToWindow(path, windowId),
+    };
+  }, [moveFileToWindow]);
+
   // Renaming the active file saves it first and reopens it under its new
   // name, so no pending save can recreate the old path.
   const renameFile = useCallback(
@@ -3776,6 +3820,7 @@ export function App() {
           onCopyPath={copyPathToClipboard}
           onMoveToTrash={(path) => void moveFileToTrash(path)}
           onRename={setRenameTargetPath}
+          windowMoves={desktopWindowMoves}
           browse={sidebarBrowseSection}
           notice={
             updateStatus ? (

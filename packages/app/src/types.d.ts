@@ -24,6 +24,8 @@ interface Window {
     reportOpenDocuments: (paths: string[]) => void;
     releaseDocument: (path: string) => void;
     ready: () => void;
+    listOtherWindows?: () => Promise<{ id: string; label: string }[]>;
+    moveDocument?: (path: string, windowId: string | null) => Promise<boolean>;
     onOpenDocument: (
       listener: (intent: RoughdraftDesktopOpenIntent) => void,
     ) => () => void;
