@@ -476,7 +476,7 @@
   }
 
   .tiptap blockquote {
-    @apply border-l-4 border-slate-300 dark:border-slate-600 pl-4 text-slate-600 dark:text-slate-400;
+    @apply border-l-4 border-slate-300 dark:border-slate-600 pl-4;
     margin: 1.3em 0;
   }
 
@@ -488,7 +488,6 @@
   .tiptap blockquote.markdown-alert {
     --markdown-alert-color: #0969da;
     border-left-color: var(--markdown-alert-color);
-    color: inherit;
   }
 
   .tiptap blockquote.markdown-alert-tip {

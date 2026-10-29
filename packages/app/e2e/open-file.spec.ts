@@ -350,6 +350,36 @@ test.describe("opening local markdown files", () => {
     expect(plainAlertBox.x).toBeCloseTo(proseBox.x, 0);
   });
 
+  for (const colorScheme of ["light", "dark"] as const) {
+    test(`sets quotations and callouts in the body text colour (${colorScheme})`, async ({
+      page,
+    }) => {
+      await page.emulateMedia({ colorScheme });
+      const filePath = writeProjectFile(
+        projectDir,
+        "quote-colour.md",
+        [
+          "Body paragraph.",
+          "",
+          "> A plain quotation.",
+          "",
+          "> [!NOTE]",
+          "> A callout.",
+          "",
+        ].join("\n"),
+      );
+      await openMarkdownFile(page, filePath);
+      const editor = page.getByTestId("rich-text-editor");
+      const colourOf = (text: string) =>
+        editor
+          .getByText(text)
+          .evaluate((element) => getComputedStyle(element).color);
+      const body = await colourOf("Body paragraph.");
+      expect(await colourOf("A plain quotation.")).toBe(body);
+      expect(await colourOf("A callout.")).toBe(body);
+    });
+  }
+
   test("lets wide images break out of the text column without overflowing @smoke", async ({
     page,
   }) => {
