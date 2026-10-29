@@ -1139,3 +1139,59 @@
     animation-delay: 0.8s;
   }
 }
+
+.notes-dock-editor.tiptap {
+  --editor-font-size: 14px;
+  min-height: 100%;
+  line-height: 1.6;
+}
+
+.notes-dock-editor.tiptap p,
+.notes-dock-editor.tiptap > p {
+  margin: 0;
+  min-height: 1.6em;
+}
+
+.notes-dock-tag {
+  display: inline-block;
+  max-width: 16rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: -0.35em;
+  border-radius: 0.3rem;
+  background-color: rgb(245 245 244);
+  padding: 0 0.4rem;
+  color: rgb(87 83 78);
+  font-size: 12px;
+  line-height: 20px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.notes-dock-tag:hover {
+  background-color: rgb(253 230 138);
+  color: rgb(120 53 15);
+}
+
+.notes-dock-tag-ghost {
+  border: 1px dashed rgb(214 211 209);
+  background-color: transparent;
+  color: rgb(168 162 158);
+}
+
+.dark .notes-dock-tag {
+  background-color: rgb(30 41 59);
+  color: rgb(203 213 225);
+}
+
+.dark .notes-dock-tag:hover {
+  background-color: rgb(250 204 21 / 0.2);
+  color: rgb(254 240 138);
+}
+
+.dark .notes-dock-tag-ghost {
+  border-color: rgb(71 85 105);
+  background-color: transparent;
+  color: rgb(100 116 139);
+}

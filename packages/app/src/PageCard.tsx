@@ -5,6 +5,7 @@ import type { Editor } from "@tiptap/react";
 import { EditorContent, useEditor, useEditorState } from "@tiptap/react";
 import {
   memo,
+  type RefObject,
   useCallback,
   useContext,
   useEffect,
@@ -40,6 +41,11 @@ import type {
   DocumentEditorViewController,
   DocumentEditorViewState,
 } from "./document-view-state";
+import {
+  readDocumentNotes,
+  withFrontmatterOf,
+  writeDocumentNotes,
+} from "./document-notes";
 import { getDocumentEditorSelectionForMode } from "./document-view-state";
 import { EditorContextMenu } from "./EditorContextMenu";
 import {
@@ -60,6 +66,7 @@ import {
 } from "./editor-extensions";
 import { cn } from "./lib/utils";
 import { MarkdownCodeEditor } from "./MarkdownCodeEditor";
+import { NotesDock } from "./NotesDock";
 import { createDocumentUpdateTransaction } from "./prosemirror-document-update";
 import { buildLocationForLinkedMarkdownDocument } from "./app-navigation";
 import { toHtml } from "./markdown";
@@ -103,6 +110,8 @@ interface PageCardProps {
   ) => void;
   saveBlocked?: boolean;
   forceResetKey?: string | null;
+  /** The document's scroller; when given, the notes dock is shown. */
+  notesScrollContainerRef?: RefObject<HTMLDivElement | null>;
 }
 
 interface PageCardEditorSurfaceProps {
@@ -127,6 +136,8 @@ interface PageCardEditorSurfaceProps {
   ) => void;
   saveBlocked?: boolean;
   forceResetKey?: string | null;
+  /** The document's scroller; when given, the notes dock is shown. */
+  notesScrollContainerRef?: RefObject<HTMLDivElement | null>;
 }
 
 interface RichTextEditorSurfaceProps {
@@ -2435,6 +2446,7 @@ const PageCardEditorSurface = memo(function PageCardEditorSurface({
   onViewControllerChange,
   saveBlocked = false,
   forceResetKey = null,
+  notesScrollContainerRef,
 }: PageCardEditorSurfaceProps) {
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const saveBlockedRef = useRef(saveBlocked);
@@ -2608,6 +2620,30 @@ const PageCardEditorSurface = memo(function PageCardEditorSurface({
     [onLocalContentChange, reportDirtyState, scheduleSave],
   );
 
+  // The rich-text editor never edits frontmatter, so its output keeps the
+  // frontmatter as it is now, including notes written since it loaded.
+  const handleRichTextMarkdownChange = useCallback(
+    (nextMarkdown: string) =>
+      handleMarkdownChange(
+        withFrontmatterOf(nextMarkdown, pendingMarkdownRef.current),
+      ),
+    [handleMarkdownChange],
+  );
+
+  const documentNotes = useMemo(() => readDocumentNotes(markdown), [markdown]);
+  const handleNotesChange = useCallback(
+    (notes: string) => {
+      const nextMarkdown = writeDocumentNotes(
+        pendingMarkdownRef.current,
+        notes,
+      );
+      if (nextMarkdown !== pendingMarkdownRef.current) {
+        handleMarkdownChange(nextMarkdown);
+      }
+    },
+    [handleMarkdownChange],
+  );
+
   useEffect(() => {
     const forceResetChanged = forceResetKeyRef.current !== forceResetKey;
     forceResetKeyRef.current = forceResetKey;
@@ -2704,23 +2740,34 @@ const PageCardEditorSurface = memo(function PageCardEditorSurface({
       : richTextSourceMarkdown;
 
   return (
-    <RichTextEditorSurface
-      key={page.id}
-      page={page}
-      activeDocumentPath={activeDocumentPath}
-      selected={selected}
-      layout={layout}
-      focusRequestKey={focusRequestKey}
-      sourceMarkdown={effectiveRichTextSourceMarkdown}
-      onMarkdownChange={handleMarkdownChange}
-      interactionMode={interactionMode}
-      onCommentRailPresenceChange={onCommentRailPresenceChange}
-      onPendingWorkStart={handlePendingWorkStart}
-      onExternalContentRefresh={onExternalContentRefresh}
-      onViewControllerChange={onViewControllerChange}
-      backend={backend}
-      onEditorReady={onEditorReady}
-    />
+    <>
+      <RichTextEditorSurface
+        key={page.id}
+        page={page}
+        activeDocumentPath={activeDocumentPath}
+        selected={selected}
+        layout={layout}
+        focusRequestKey={focusRequestKey}
+        sourceMarkdown={effectiveRichTextSourceMarkdown}
+        onMarkdownChange={handleRichTextMarkdownChange}
+        interactionMode={interactionMode}
+        onCommentRailPresenceChange={onCommentRailPresenceChange}
+        onPendingWorkStart={handlePendingWorkStart}
+        onExternalContentRefresh={onExternalContentRefresh}
+        onViewControllerChange={onViewControllerChange}
+        backend={backend}
+        onEditorReady={onEditorReady}
+      />
+      {notesScrollContainerRef ? (
+        <NotesDock
+          key={page.id}
+          notes={documentNotes}
+          onNotesChange={handleNotesChange}
+          scrollContainerRef={notesScrollContainerRef}
+          enabled={layout === "default"}
+        />
+      ) : null}
+    </>
   );
 });
 
@@ -2744,6 +2791,7 @@ export function PageCard({
   onViewControllerChange,
   saveBlocked,
   forceResetKey,
+  notesScrollContainerRef,
 }: PageCardProps) {
   const [saveState, setSaveState] = useState<DocumentSaveState>("saved");
 
@@ -2773,6 +2821,7 @@ export function PageCard({
         onViewControllerChange={onViewControllerChange}
         saveBlocked={saveBlocked}
         forceResetKey={forceResetKey}
+        notesScrollContainerRef={notesScrollContainerRef}
       />
     </div>
   );

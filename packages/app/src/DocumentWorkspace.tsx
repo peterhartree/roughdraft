@@ -1197,6 +1197,7 @@ export function DocumentWorkspace({
               onViewControllerChange={handleViewControllerChange}
               saveBlocked={documentDiskChangeState !== "clean"}
               forceResetKey={documentForceResetKey}
+              notesScrollContainerRef={workspaceScrollRef}
             />
           ) : null
         ) : (
