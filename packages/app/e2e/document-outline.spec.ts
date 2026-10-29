@@ -102,6 +102,51 @@ test.describe("document outline", () => {
     await expect(delivery).toHaveAttribute("aria-current", "location");
   });
 
+  test("keeps wide tables and callouts holding them clear of the pinned outline", async ({
+    page,
+  }) => {
+    const tablePath = writeProjectFile(
+      projectDir,
+      "outline-tables.md",
+      [
+        "# Strategy and impact",
+        "",
+        "## Summary",
+        "",
+        "> [!IMPORTANT]",
+        "> **Decisions**",
+        ">",
+        "> | # | Element | Options | Recommendation | Why |",
+        "> | --- | --- | --- | --- | --- |",
+        "> | 1 | How an option looks | 1A text link, 1B pencil icon | **1A** | Edit is findable but quiet, and only shows on the chosen option. |",
+        "",
+        "## Delivery in detail",
+        "",
+        "| Location | Before | After | Rationale | Verification |",
+        "| --- | --- | --- | --- | --- |",
+        "| SubscribeForm.tsx:69-77 | Fixed overlay | Shared dialog primitive | Consistent keyboard behaviour | Focus enters and returns |",
+        "",
+        "## Open questions",
+        "",
+        ...Array(30).fill(`${FILLER}\n`),
+      ].join("\n"),
+    );
+    await page.setViewportSize({ width: 1680, height: 900 });
+    await openMarkdownFile(page, tablePath);
+
+    const outline = page.getByTestId("document-outline");
+    await expect(outline).toBeVisible();
+    const outlineBox = await outline.boundingBox();
+    const outlineRight = (outlineBox?.x ?? 0) + (outlineBox?.width ?? 0);
+    const editor = page.getByTestId("rich-text-editor");
+    const blocks = editor.locator("blockquote, .tableWrapper"); // selector-check-ignore -- the rendered callout and table boxes are the contract
+    await expect(blocks).toHaveCount(3);
+    for (const block of await blocks.all()) {
+      const blockBox = await block.boundingBox();
+      expect(blockBox?.x ?? 0).toBeGreaterThan(outlineRight);
+    }
+  });
+
   test("collapses to ticks when the margin is narrow and expands on hover @smoke", async ({
     page,
   }) => {

@@ -271,6 +271,85 @@ test.describe("opening local markdown files", () => {
     ).toBeLessThanOrEqual(1);
   });
 
+  test("lets tables inside callouts use the wide-table width while their prose stays readable", async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 1600, height: 900 });
+    const filePath = writeProjectFile(
+      projectDir,
+      "callout-table.md",
+      [
+        "# Callout table review",
+        "",
+        "This paragraph sets the readable text column that wide tables break out from on a wide window.",
+        "",
+        "> [!IMPORTANT]",
+        "> This callout paragraph should keep a readable line length even though the decision table below it uses the full width of the window.",
+        ">",
+        "> | # | Element | Options | Recommendation | Why |",
+        "> | --- | --- | --- | --- | --- |",
+        "> | 1 | How an option looks | 1A text link, 1B pencil icon | **1A** | Edit is findable but quiet, and only shows on the chosen option. |",
+        "> | 2 | Editing and saving | 2A Done and Cancel, 2B saved as you type | **2A** | It answers how to save with the most familiar pattern. |",
+        "",
+        "> A plain quotation with a table also gets the room it needs.",
+        ">",
+        "> | Location | Before | After | Rationale | Verification |",
+        "> | --- | --- | --- | --- | --- |",
+        "> | SubscribeForm.tsx:69-77 | Fixed overlay | Shared dialog primitive | Consistent keyboard behaviour | Focus enters and returns |",
+        "",
+        "> [!NOTE]",
+        "> A callout without a table stays in the text column, however long its paragraph happens to be on a wide window.",
+        "",
+      ].join("\n"),
+    );
+
+    await openMarkdownFile(page, filePath);
+
+    const editor = page.getByTestId("rich-text-editor");
+    const workspace = page.getByTestId("document-workspace-scroll");
+    const prose = editor.locator("p").first(); // selector-check-ignore -- rendered block geometry is the contract
+    const quotes = editor.locator("blockquote"); // selector-check-ignore -- rendered block geometry is the contract
+    await expect(quotes).toHaveCount(3);
+    const [alertWithTable, quoteWithTable, alertWithoutTable] = [
+      quotes.nth(0),
+      quotes.nth(1),
+      quotes.nth(2),
+    ];
+    const alertTable = alertWithTable.locator(".tableWrapper"); // selector-check-ignore -- Tiptap's table scroll viewport is the product boundary
+    const quoteTable = quoteWithTable.locator(".tableWrapper"); // selector-check-ignore -- Tiptap's table scroll viewport is the product boundary
+    const alertProse = alertWithTable.locator(":scope > p").first(); // selector-check-ignore -- rendered paragraph geometry is the contract
+    await expect(alertTable).toBeVisible();
+    await expect(quoteTable).toBeVisible();
+
+    const box = async (locator: typeof prose) => {
+      const result = await locator.boundingBox();
+      if (!result) throw new Error("missing geometry");
+      return result;
+    };
+    const proseBox = await box(prose);
+    const workspaceBox = await box(workspace);
+    const alertTableBox = await box(alertTable);
+    const quoteTableBox = await box(quoteTable);
+    const alertProseBox = await box(alertProse);
+    const plainAlertBox = await box(alertWithoutTable);
+    logE2eEvent("open-file.callout-table-layout", {
+      proseWidth: proseBox.width,
+      workspaceWidth: workspaceBox.width,
+      alertTableWidth: alertTableBox.width,
+      quoteTableWidth: quoteTableBox.width,
+      alertProseWidth: alertProseBox.width,
+      plainAlertWidth: plainAlertBox.width,
+    });
+
+    for (const tableBox of [alertTableBox, quoteTableBox]) {
+      expect(tableBox.width).toBeGreaterThan(workspaceBox.width * 0.75);
+      expect(tableBox.width).toBeGreaterThan(proseBox.width * 1.4);
+    }
+    expect(alertProseBox.width).toBeLessThanOrEqual(760);
+    expect(plainAlertBox.width).toBeLessThanOrEqual(proseBox.width);
+    expect(plainAlertBox.x).toBeCloseTo(proseBox.x, 0);
+  });
+
   test("lets wide images break out of the text column without overflowing @smoke", async ({
     page,
   }) => {

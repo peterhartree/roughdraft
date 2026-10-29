@@ -634,9 +634,29 @@
     min-width: 0;
   }
 
-  .document-rich-text-layout .tiptap > .tableWrapper {
+  /* Wide tables use the editor's full width. A quotation or callout holding
+     one breaks out with it; its other blocks keep the text measure. */
+  .document-rich-text-layout .tiptap > .tableWrapper,
+  .document-rich-text-layout .tiptap > blockquote:has(> .tableWrapper) {
     grid-column: 1 / -1;
     width: 100%;
+  }
+
+  .document-rich-text-layout
+    .tiptap
+    > blockquote:has(> .tableWrapper)
+    > :not(.tableWrapper) {
+    /* Less the quotation's border and padding, as in the text column. */
+    max-width: calc(var(--rich-text-measure) - 1.25rem);
+  }
+
+  /* The document outline sits in the left margin, so there tables start at
+     the text column and break out to the right only. */
+  :has(> [data-document-outline-margin])
+    .document-rich-text-layout
+    .tiptap
+    > :is(.tableWrapper, blockquote:has(> .tableWrapper)) {
+    grid-column: 2 / -1;
   }
 
   /* Images wider than the text column break out symmetrically into the
