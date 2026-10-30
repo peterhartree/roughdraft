@@ -98,6 +98,41 @@ test.describe("Mermaid diagrams", () => {
     await expect(page.getByTestId("mermaid-zoom-reset")).toBeHidden();
   });
 
+  test("a light node fill gets dark label text in dark mode unless coloured", async ({
+    page,
+  }) => {
+    await page.emulateMedia({ colorScheme: "dark" });
+    const filePath = writeProjectFile(
+      projectDir,
+      "fill.md",
+      [
+        "```mermaid",
+        "flowchart LR",
+        "  A[Light node] --> B[Plain node] --> C[Coloured node]",
+        "  classDef new fill:#fde8d8,stroke:#e0a080",
+        "  classDef red fill:#fde8d8,color:#ff0000",
+        "  class A new",
+        "  class C red",
+        "```",
+        "",
+      ].join("\n"),
+    );
+    await openMarkdownFile(page, filePath);
+    const colourOf = (text: string) =>
+      page
+        .getByTestId("mermaid-canvas")
+        .getByText(text)
+        .evaluate((element) => getComputedStyle(element).color);
+    const channels = (colour: string) =>
+      (colour.match(/\d+/g) ?? []).slice(0, 3).map(Number);
+    const brightness = (colour: string) =>
+      channels(colour).reduce((sum, value) => sum + value, 0) / 3;
+
+    expect(brightness(await colourOf("Light node"))).toBeLessThan(100);
+    expect(brightness(await colourOf("Plain node"))).toBeGreaterThan(150);
+    expect(await colourOf("Coloured node")).toBe("rgb(255, 0, 0)");
+  });
+
   test("opens a diagram over the whole window", async ({ page }) => {
     await openDiagram(page, "# Diagram");
 
